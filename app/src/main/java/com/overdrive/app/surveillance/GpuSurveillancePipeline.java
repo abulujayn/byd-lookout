@@ -637,8 +637,12 @@ public class GpuSurveillancePipeline {
 
         encoder.init();
 
+        com.overdrive.app.camera.ResolvedCameraConfig resolvedCamera =
+            com.overdrive.app.camera.CameraConfigResolver.resolve(getVehicleModel());
+        float[] quadrantStripOffsetX = resolvedCamera.getQuadrantStripOffsetX();
+
         // 2. Create GPU mosaic recorder (shared)
-        recorder = new GpuMosaicRecorder();
+        recorder = new GpuMosaicRecorder(quadrantStripOffsetX);
         // Note: recorder.init() will be called after EGL context is created by camera
 
         // Wire up telemetry collector to new recorder if available
@@ -649,7 +653,7 @@ public class GpuSurveillancePipeline {
         recorder.setOverlayEnabled(overlayEnabledConfig);
 
         // 3. Create GPU downscaler
-        downscaler = new GpuDownscaler();
+        downscaler = new GpuDownscaler(quadrantStripOffsetX);
         // Note: downscaler.init() will be called after EGL context is created by camera
 
         // 4. Create surveillance engine (uses shared recorder)
@@ -674,8 +678,6 @@ public class GpuSurveillancePipeline {
             logger.warn("Failed to load saved config, using defaults: " + e.getMessage());
         }
 
-        com.overdrive.app.camera.ResolvedCameraConfig resolvedCamera =
-            com.overdrive.app.camera.CameraConfigResolver.resolve(getVehicleModel());
         if (cameraWidth != resolvedCamera.getPanoWidth() || cameraHeight != resolvedCamera.getPanoHeight()) {
             logger.warn("Pipeline geometry " + cameraWidth + "x" + cameraHeight
                 + " differs from resolved camera profile "
@@ -684,7 +686,7 @@ public class GpuSurveillancePipeline {
         }
         
         // 5. Create camera (this creates EGL context)
-        camera = new PanoramicCameraGpu(cameraWidth, cameraHeight);
+        camera = new PanoramicCameraGpu(cameraWidth, cameraHeight, quadrantStripOffsetX);
         camera.setConsumers(recorder, downscaler, sentry);
         
         // Camera FPS config — must match the encoder FPS used above (loadTargetFps())
@@ -1274,7 +1276,14 @@ public class GpuSurveillancePipeline {
         
         // Create stream scaler
         logger.info("Creating stream scaler...");
-        streamScaler = new com.overdrive.app.streaming.GpuStreamScaler(streamWidth, streamHeight);
+        float[] quadrantStripOffsetX = com.overdrive.app.camera.CameraConfigResolver
+            .resolve(getVehicleModel())
+            .getQuadrantStripOffsetX();
+        streamScaler = new com.overdrive.app.streaming.GpuStreamScaler(
+            streamWidth,
+            streamHeight,
+            quadrantStripOffsetX
+        );
         
         // Always 4-camera mosaic for streaming
         streamScaler.setCameraLayout(0);

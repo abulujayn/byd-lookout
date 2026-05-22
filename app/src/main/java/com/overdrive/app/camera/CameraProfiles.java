@@ -21,10 +21,10 @@ public final class CameraProfiles {
 
     static {
         EnumMap<CameraRole, CameraSourceRef> legacyMappings = new EnumMap<>(CameraRole.class);
-        legacyMappings.put(CameraRole.PANO_FRONT, CameraSourceRef.panoramic(CameraVirtualView.FRONT));
-        legacyMappings.put(CameraRole.PANO_RIGHT, CameraSourceRef.panoramic(CameraVirtualView.RIGHT));
-        legacyMappings.put(CameraRole.PANO_REAR, CameraSourceRef.panoramic(CameraVirtualView.REAR));
-        legacyMappings.put(CameraRole.PANO_LEFT, CameraSourceRef.panoramic(CameraVirtualView.LEFT));
+        legacyMappings.put(CameraRole.PANO_FRONT, CameraSourceRef.panoramicSlice(PanoramicSlice.SLICE_4));
+        legacyMappings.put(CameraRole.PANO_RIGHT, CameraSourceRef.panoramicSlice(PanoramicSlice.SLICE_3));
+        legacyMappings.put(CameraRole.PANO_REAR, CameraSourceRef.panoramicSlice(PanoramicSlice.SLICE_1));
+        legacyMappings.put(CameraRole.PANO_LEFT, CameraSourceRef.panoramicSlice(PanoramicSlice.SLICE_2));
 
         register(new CameraProfile(
                 PROFILE_LEGACY_SEAL_ATTO,

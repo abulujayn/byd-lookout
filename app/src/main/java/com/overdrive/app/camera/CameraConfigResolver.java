@@ -79,8 +79,8 @@ public final class CameraConfigResolver {
             putSafely(item, "previewHeight", resolved.getProfile().getDirectPreviewHeight());
             out.put(item);
         }
-        for (CameraVirtualView view : CameraVirtualView.values()) {
-            JSONObject item = CameraSourceRef.panoramic(view).toJson();
+        for (PanoramicSlice slice : PanoramicSlice.values()) {
+            JSONObject item = CameraSourceRef.panoramicSlice(slice).toJson();
             putSafely(item, "previewWidth", resolved.getPanoWidth() / 4);
             putSafely(item, "previewHeight", resolved.getPanoHeight());
             out.put(item);
@@ -163,6 +163,7 @@ public final class CameraConfigResolver {
         putSafely(out, "cameraProfiles", CameraProfiles.toJsonArray());
         putSafely(out, "cameraRoleOptions", roleOptionsJson());
         putSafely(out, "cameraRoleMappings", resolved.roleMappingsToJson());
+        putSafely(out, "cameraPanoramicSlices", resolved.panoramicSlicesToJson());
         putSafely(out, "cameraPreviewCandidates", buildPreviewCandidates(resolved));
         return out;
     }

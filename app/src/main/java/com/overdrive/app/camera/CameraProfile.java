@@ -89,6 +89,14 @@ public final class CameraProfile {
         return out;
     }
 
+    public JSONArray getPanoramicSlicesJson() {
+        JSONArray out = new JSONArray();
+        for (PanoramicSlice slice : PanoramicSlice.values()) {
+            out.put(slice.toJson());
+        }
+        return out;
+    }
+
     public JSONObject toJson() {
         JSONObject out = new JSONObject();
         putSafely(out, "id", id);
@@ -105,6 +113,7 @@ public final class CameraProfile {
             putSafely(mappings, entry.getKey().getKey(), entry.getValue().toJson());
         }
         putSafely(out, "defaultRoleMappings", mappings);
+        putSafely(out, "panoramicSlices", getPanoramicSlicesJson());
         putSafely(out, "virtualViews", getVirtualViewsJson());
         return out;
     }

@@ -1,5 +1,7 @@
 package com.overdrive.app.camera;
 
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.ImageFormat;
 import android.graphics.Rect;
 import android.graphics.YuvImage;
@@ -46,6 +48,41 @@ public final class CameraPreviewHelper {
                 return jpeg;
             }
         }
+        return null;
+    }
+
+    public static byte[] captureDirectPreviewJpegExact(int cameraId, int width, int height,
+                                                       int fps, int timeoutMs) {
+        if (width <= 0 || height <= 0) return null;
+        return captureWithSize(cameraId, width, height, fps, timeoutMs);
+    }
+
+    public static byte[] capturePanoramicSliceJpeg(int cameraId, int panoWidth, int panoHeight,
+                                                   PanoramicSlice slice) {
+        if (slice == null || panoWidth <= 0 || panoHeight <= 0) return null;
+
+        int[][] candidates = new int[][] {
+            {panoWidth, panoHeight},
+            {Math.max(1, panoWidth / 2), Math.max(1, panoHeight / 2)},
+            {Math.max(1, panoWidth / 4), Math.max(1, panoHeight / 4)}
+        };
+
+        for (int[] candidate : candidates) {
+            byte[] fullJpeg = captureDirectPreviewJpegExact(
+                cameraId,
+                candidate[0],
+                candidate[1],
+                10,
+                DEFAULT_TIMEOUT_MS
+            );
+            if (fullJpeg == null || fullJpeg.length == 0) continue;
+
+            byte[] cropped = cropJpegToSlice(fullJpeg, slice, 82);
+            if (cropped != null && cropped.length > 0) {
+                return cropped;
+            }
+        }
+
         return null;
     }
 
@@ -128,6 +165,33 @@ public final class CameraPreviewHelper {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         yuvImage.compressToJpeg(new Rect(0, 0, image.getWidth(), image.getHeight()), quality, out);
         return out.toByteArray();
+    }
+
+    private static byte[] cropJpegToSlice(byte[] jpegBytes, PanoramicSlice slice, int quality) {
+        Bitmap bitmap = null;
+        Bitmap cropped = null;
+        try {
+            bitmap = BitmapFactory.decodeByteArray(jpegBytes, 0, jpegBytes.length);
+            if (bitmap == null) return null;
+
+            int sliceWidth = Math.max(1, bitmap.getWidth() / 4);
+            int startX = Math.min(bitmap.getWidth() - sliceWidth, Math.max(0, slice.getIndex() * sliceWidth));
+            cropped = Bitmap.createBitmap(bitmap, startX, 0, sliceWidth, bitmap.getHeight());
+
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            cropped.compress(Bitmap.CompressFormat.JPEG, quality, out);
+            return out.toByteArray();
+        } catch (Exception e) {
+            logger.debug("Panoramic slice crop failed: " + e.getMessage());
+            return null;
+        } finally {
+            if (cropped != null) {
+                try { cropped.recycle(); } catch (Exception ignored) {}
+            }
+            if (bitmap != null) {
+                try { bitmap.recycle(); } catch (Exception ignored) {}
+            }
+        }
     }
 
     private static byte[] yuv420888ToNv21(Image image) {

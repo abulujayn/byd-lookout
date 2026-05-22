@@ -221,6 +221,7 @@ public class PanoramicCameraGpu {
     private static final int AI_READBACK_FRAME_MODULO = 3;
 
     private int targetFps = 15;  // Desired frame rate for camera
+    private final float[] quadrantStripOffsetX;
     
     /**
      * Creates a GPU-based panoramic camera.
@@ -229,8 +230,15 @@ public class PanoramicCameraGpu {
      * @param height Camera height (typically 960)
      */
     public PanoramicCameraGpu(int width, int height) {
+        this(width, height, null);
+    }
+
+    public PanoramicCameraGpu(int width, int height, float[] quadrantStripOffsetX) {
         this.width = width;
         this.height = height;
+        this.quadrantStripOffsetX = quadrantStripOffsetX != null && quadrantStripOffsetX.length == 4
+            ? quadrantStripOffsetX.clone()
+            : null;
     }
     
     /**
@@ -430,7 +438,7 @@ public class PanoramicCameraGpu {
         }
         
         // Initialize foveated cropper for high-res AI crops
-        foveatedCropper = new FoveatedCropper(width, height);
+        foveatedCropper = new FoveatedCropper(width, height, quadrantStripOffsetX);
         foveatedCropper.init();
         
         logger.info( "OpenGL initialized (texture=" + cameraTextureId + ")");

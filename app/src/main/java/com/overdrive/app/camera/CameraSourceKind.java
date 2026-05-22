@@ -5,6 +5,7 @@ package com.overdrive.app.camera;
  */
 public enum CameraSourceKind {
     DIRECT("direct"),
+    PANORAMIC_SLICE("panoramicSlice"),
     PANORAMIC_VIRTUAL("panoramicVirtual");
 
     private final String id;

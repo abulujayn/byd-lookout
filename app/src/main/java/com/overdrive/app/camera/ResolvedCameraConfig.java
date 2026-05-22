@@ -4,7 +4,9 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.EnumMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Fully resolved runtime camera configuration.
@@ -92,6 +94,82 @@ public final class ResolvedCameraConfig {
 
     public EnumMap<CameraRole, CameraSourceRef> getRoleMappings() {
         return new EnumMap<>(roleMappings);
+    }
+
+    private EnumMap<CameraRole, PanoramicSlice> buildResolvedPanoramicSlices() {
+        EnumMap<CameraRole, PanoramicSlice> resolved = new EnumMap<>(CameraRole.class);
+        EnumMap<CameraRole, PanoramicSlice> defaults = new EnumMap<>(CameraRole.class);
+        Set<PanoramicSlice> used = new HashSet<>();
+        CameraRole[] panoRoles = new CameraRole[] {
+                CameraRole.PANO_FRONT,
+                CameraRole.PANO_RIGHT,
+                CameraRole.PANO_REAR,
+                CameraRole.PANO_LEFT
+        };
+
+        for (CameraRole role : panoRoles) {
+            CameraSourceRef defaultSource = profile.getDefaultRoleMappings().get(role);
+            if (defaultSource != null && defaultSource.getPanoramicSlice() != null) {
+                defaults.put(role, defaultSource.getPanoramicSlice());
+            }
+        }
+
+        for (CameraRole role : panoRoles) {
+            CameraSourceRef mappedSource = roleMappings.get(role);
+            PanoramicSlice slice = mappedSource != null ? mappedSource.getPanoramicSlice() : null;
+            if (slice != null && !used.contains(slice)) {
+                resolved.put(role, slice);
+                used.add(slice);
+            }
+        }
+
+        for (CameraRole role : panoRoles) {
+            if (resolved.containsKey(role)) continue;
+
+            PanoramicSlice fallback = defaults.get(role);
+            if (fallback != null && !used.contains(fallback)) {
+                resolved.put(role, fallback);
+                used.add(fallback);
+                continue;
+            }
+
+            for (PanoramicSlice candidate : PanoramicSlice.values()) {
+                if (!used.contains(candidate)) {
+                    resolved.put(role, candidate);
+                    used.add(candidate);
+                    break;
+                }
+            }
+
+            if (!resolved.containsKey(role) && fallback != null) {
+                resolved.put(role, fallback);
+            }
+        }
+
+        return resolved;
+    }
+
+    public PanoramicSlice getSliceForRole(CameraRole role) {
+        return buildResolvedPanoramicSlices().get(role);
+    }
+
+    public float[] getQuadrantStripOffsetX() {
+        EnumMap<CameraRole, PanoramicSlice> slices = buildResolvedPanoramicSlices();
+        return new float[] {
+            slices.get(CameraRole.PANO_FRONT).getStripOffsetX(),
+            slices.get(CameraRole.PANO_RIGHT).getStripOffsetX(),
+            slices.get(CameraRole.PANO_REAR).getStripOffsetX(),
+            slices.get(CameraRole.PANO_LEFT).getStripOffsetX()
+        };
+    }
+
+    public JSONObject panoramicSlicesToJson() {
+        EnumMap<CameraRole, PanoramicSlice> slices = buildResolvedPanoramicSlices();
+        JSONObject out = new JSONObject();
+        for (Map.Entry<CameraRole, PanoramicSlice> entry : slices.entrySet()) {
+            putSafely(out, entry.getKey().getKey(), entry.getValue().toJson());
+        }
+        return out;
     }
 
     public JSONObject roleMappingsToJson() {

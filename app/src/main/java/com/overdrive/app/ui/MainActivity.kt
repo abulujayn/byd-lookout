@@ -959,6 +959,7 @@ class MainActivity : AppCompatActivity() {
         val kind: String,
         val label: String,
         val cameraId: Int?,
+        val slice: String?,
         val view: String?,
         val width: Int,
         val height: Int
@@ -966,6 +967,7 @@ class MainActivity : AppCompatActivity() {
         fun toJson(): org.json.JSONObject = org.json.JSONObject().apply {
             put("kind", kind)
             cameraId?.let { put("cameraId", it) }
+            slice?.let { put("slice", it) }
             view?.let { put("view", it) }
         }
     }
@@ -1033,10 +1035,11 @@ class MainActivity : AppCompatActivity() {
                 val item = candidateArray.optJSONObject(i) ?: continue
                 candidates += CameraPreviewCandidate(
                     id = item.optString("id", "candidate-$i"),
-                    kind = item.optString("kind", "panoramicVirtual"),
+                    kind = item.optString("kind", "panoramicSlice"),
                     label = item.optString("label", item.optString("id", "Candidate")),
                     cameraId = if (item.has("cameraId")) item.optInt("cameraId") else null,
-                    view = item.optString("view", null),
+                    slice = if (item.has("slice")) item.optString("slice") else null,
+                    view = if (item.has("view")) item.optString("view") else null,
                     width = item.optInt("previewWidth", 1280),
                     height = item.optInt("previewHeight", 720)
                 )
@@ -1046,7 +1049,7 @@ class MainActivity : AppCompatActivity() {
             val mappingsJson = config.optJSONObject("cameraRoleMappings")
             roles.forEach { role ->
                 val source = mappingsJson?.optJSONObject(role.key)
-                val sourceId = source?.optString("id", null)
+                val sourceId = if (source != null && source.has("id")) source.optString("id") else null
                 if (!sourceId.isNullOrEmpty()) {
                     mappings[role.key] = sourceId
                 }
@@ -1298,6 +1301,8 @@ class MainActivity : AppCompatActivity() {
     private fun buildCameraPreviewPath(candidate: CameraPreviewCandidate): String {
         return if (candidate.kind.equals("direct", ignoreCase = true) && candidate.cameraId != null) {
             "/api/surveillance/camera-preview?kind=direct&cameraId=${candidate.cameraId}&width=${candidate.width}&height=${candidate.height}"
+        } else if (candidate.kind.equals("panoramicSlice", ignoreCase = true) && !candidate.slice.isNullOrEmpty()) {
+            "/api/surveillance/camera-preview?kind=panoramicSlice&slice=${candidate.slice}&width=${candidate.width}&height=${candidate.height}"
         } else {
             "/api/surveillance/camera-preview?kind=panoramic&view=${candidate.view ?: "front"}"
         }

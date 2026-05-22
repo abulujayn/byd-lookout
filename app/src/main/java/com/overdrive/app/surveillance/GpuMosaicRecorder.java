@@ -14,6 +14,7 @@ import com.overdrive.app.telemetry.TelemetryDataCollector;
 import com.overdrive.app.telemetry.TelemetrySnapshot;
 
 import java.nio.FloatBuffer;
+import java.util.Locale;
 
 /**
  * GpuMosaicRecorder - GPU-based 2x2 grid compositor for zero-copy recording.
@@ -104,6 +105,8 @@ public class GpuMosaicRecorder {
     private int consecutiveSurfaceErrors = 0;
     private static final int SURFACE_ERROR_REINIT_THRESHOLD = 3;
     private volatile boolean needsReinit = false;
+    private final float[] quadrantStripOffsetX;
+    private final String fragmentShader;
     
     // Fullscreen quad vertices (NDC coordinates)
     private static final float[] VERTEX_COORDS = {
@@ -119,6 +122,10 @@ public class GpuMosaicRecorder {
         1.0f, 1.0f,  // Bottom-right (flipped to top-right)
         0.0f, 0.0f,  // Top-left (flipped to bottom-left)
         1.0f, 0.0f   // Top-right (flipped to bottom-right)
+    };
+
+    private static final float[] DEFAULT_QUADRANT_STRIP_OFFSET_X = {
+        0.75f, 0.50f, 0.00f, 0.25f
     };
     
     // Vertex shader - simple passthrough
@@ -193,6 +200,15 @@ public class GpuMosaicRecorder {
         "void main() {\n" +
         "    gl_FragColor = texture2D(uTexture, vTexCoord);\n" +
         "}\n";
+
+    public GpuMosaicRecorder() {
+        this(null);
+    }
+
+    public GpuMosaicRecorder(float[] quadrantStripOffsetX) {
+        this.quadrantStripOffsetX = normalizeOffsets(quadrantStripOffsetX);
+        this.fragmentShader = buildFragmentShader(this.quadrantStripOffsetX);
+    }
     
     /**
      * Initializes the GPU mosaic recorder.
@@ -264,7 +280,7 @@ public class GpuMosaicRecorder {
         encoderSurface = eglCore.createWindowSurface(encoderInputSurface);
         
         // Compile shaders and create program
-        programId = GlUtil.createProgram(VERTEX_SHADER, FRAGMENT_SHADER);
+        programId = GlUtil.createProgram(VERTEX_SHADER, fragmentShader);
         if (programId == 0) {
             throw new RuntimeException("Failed to create shader program");
         }
@@ -777,6 +793,58 @@ public class GpuMosaicRecorder {
     
     public void setApaMode(boolean apa) {
         setCameraLayout(apa ? 1 : 0);
+    }
+
+    private static float[] normalizeOffsets(float[] quadrantStripOffsetX) {
+        if (quadrantStripOffsetX == null || quadrantStripOffsetX.length != 4) {
+            return DEFAULT_QUADRANT_STRIP_OFFSET_X.clone();
+        }
+        return quadrantStripOffsetX.clone();
+    }
+
+    private static String buildFragmentShader(float[] offsets) {
+        return String.format(Locale.US,
+            "#extension GL_OES_EGL_image_external : require\n" +
+            "precision mediump float;\n" +
+            "uniform samplerExternalOES uCameraTex;\n" +
+            "uniform float uApaMode;\n" +
+            "varying vec2 vTexCoord;\n" +
+            "void main() {\n" +
+            "    vec2 samplePos;\n" +
+            "    if (uApaMode > 1.5) {\n" +
+            "        if (vTexCoord.x < 0.5) {\n" +
+            "            float localX = vTexCoord.x * 0.5;\n" +
+            "            float localY = mod(vTexCoord.y, 0.5) * 2.0;\n" +
+            "            if (vTexCoord.y < 0.5) {\n" +
+            "                samplePos = vec2(localX + 0.75, localY);\n" +
+            "            } else {\n" +
+            "                samplePos = vec2(localX, localY);\n" +
+            "            }\n" +
+            "        } else {\n" +
+            "            float localX = (vTexCoord.x - 0.5) * 1.0;\n" +
+            "            samplePos = vec2(0.25 + localX * 0.5, vTexCoord.y);\n" +
+            "        }\n" +
+            "    } else if (uApaMode > 0.5) {\n" +
+            "        samplePos = vTexCoord;\n" +
+            "    } else {\n" +
+            "        vec2 gridPos = step(0.5, vTexCoord);\n" +
+            "        float tlOffset = %.5ff;\n" +
+            "        float trOffset = %.5ff;\n" +
+            "        float blOffset = %.5ff;\n" +
+            "        float brOffset = %.5ff;\n" +
+            "        float stripOffsetX;\n" +
+            "        if (gridPos.x < 0.5) {\n" +
+            "            stripOffsetX = gridPos.y < 0.5 ? tlOffset : blOffset;\n" +
+            "        } else {\n" +
+            "            stripOffsetX = gridPos.y < 0.5 ? trOffset : brOffset;\n" +
+            "        }\n" +
+            "        float localX = mod(vTexCoord.x, 0.5) * 0.5;\n" +
+            "        float localY = mod(vTexCoord.y, 0.5) * 2.0;\n" +
+            "        samplePos = vec2(localX + stripOffsetX, localY);\n" +
+            "    }\n" +
+            "    gl_FragColor = texture2D(uCameraTex, samplePos);\n" +
+            "}\n",
+            offsets[0], offsets[1], offsets[2], offsets[3]);
     }
     
     // (TBC timestamp is computed inline in drawFrame)

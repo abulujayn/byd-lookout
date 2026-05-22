@@ -18,6 +18,7 @@ import com.overdrive.app.camera.GlUtil;
 
 import java.nio.ByteBuffer;
 import java.nio.FloatBuffer;
+import java.util.Locale;
 
 /**
  * AsyncGpuDownscaler - Zero-stutter GPU thumbnail generator.
@@ -69,6 +70,8 @@ public class GpuDownscaler {
     
     // Shared context from main thread
     private EGLContext sharedContext;
+    private final float[] quadrantStripOffsetX;
+    private final String fragmentShader;
     
     // Shader program
     private int programId;
@@ -109,23 +112,9 @@ public class GpuDownscaler {
         "    vTexCoord = aTexCoord;\n" +
         "}\n";
     
-    // Fragment shader - mosaic transformation (5120x960 strip → 2x2 grid)
-    // Grid layout: TL=Front, TR=Right, BL=Rear, BR=Left
-    // Strip layout: cam1(Rear)=0.00, cam2(Left)=0.25, cam3(Right)=0.50, cam4(Front)=0.75
-    private static final String FRAGMENT_SHADER =
-        "#extension GL_OES_EGL_image_external : require\n" +
-        "precision mediump float;\n" +
-        "uniform samplerExternalOES uCameraTex;\n" +
-        "varying vec2 vTexCoord;\n" +
-        "void main() {\n" +
-        "    vec2 gridPos = step(0.5, vTexCoord);\n" +
-        "    // TL=Front(0.75), TR=Right(0.50), BL=Rear(0.00), BR=Left(0.25)\n" +
-        "    float stripOffsetX = 0.75 - (gridPos.x * 0.25) - (gridPos.y * 0.75) + (gridPos.x * gridPos.y * 0.50);\n" +
-        "    float localX = mod(vTexCoord.x, 0.5) * 0.5;\n" +
-        "    float localY = mod(vTexCoord.y, 0.5) * 2.0;\n" +
-        "    vec2 samplePos = vec2(localX + stripOffsetX, localY);\n" +
-        "    gl_FragColor = texture2D(uCameraTex, samplePos);\n" +
-        "}\n";
+    private static final float[] DEFAULT_QUADRANT_STRIP_OFFSET_X = {
+        0.75f, 0.50f, 0.00f, 0.25f
+    };
 
     /**
      * Creates the async downscaler with shared EGL context.
@@ -133,7 +122,13 @@ public class GpuDownscaler {
      * @param mainThreadContext EGL context from main render thread (for texture sharing)
      */
     public GpuDownscaler(EGLContext mainThreadContext) {
+        this(mainThreadContext, null);
+    }
+
+    public GpuDownscaler(EGLContext mainThreadContext, float[] quadrantStripOffsetX) {
         this.sharedContext = mainThreadContext;
+        this.quadrantStripOffsetX = normalizeOffsets(quadrantStripOffsetX);
+        this.fragmentShader = buildFragmentShader(this.quadrantStripOffsetX);
         
         // Start background thread
         renderThread = new HandlerThread("GpuDownscalerThread");
@@ -148,7 +143,15 @@ public class GpuDownscaler {
      * Default constructor - call init() later with context.
      */
     public GpuDownscaler() {
-        // Will be initialized via init()
+        this.sharedContext = null;
+        this.quadrantStripOffsetX = DEFAULT_QUADRANT_STRIP_OFFSET_X.clone();
+        this.fragmentShader = buildFragmentShader(this.quadrantStripOffsetX);
+    }
+
+    public GpuDownscaler(float[] quadrantStripOffsetX) {
+        this.sharedContext = null;
+        this.quadrantStripOffsetX = normalizeOffsets(quadrantStripOffsetX);
+        this.fragmentShader = buildFragmentShader(this.quadrantStripOffsetX);
     }
     
     /**
@@ -245,7 +248,7 @@ public class GpuDownscaler {
     }
     
     private void setupShaders() {
-        programId = GlUtil.createProgram(VERTEX_SHADER, FRAGMENT_SHADER);
+        programId = GlUtil.createProgram(VERTEX_SHADER, fragmentShader);
         if (programId == 0) {
             throw new RuntimeException("Failed to create shader program");
         }
@@ -527,7 +530,7 @@ public class GpuDownscaler {
     
     private void initDirectFbo() {
         try {
-            directProgram = GlUtil.createProgram(VERTEX_SHADER, FRAGMENT_SHADER);
+            directProgram = GlUtil.createProgram(VERTEX_SHADER, fragmentShader);
             if (directProgram == 0) { logger.error("Direct FBO shader failed"); return; }
             directAPosition = GLES20.glGetAttribLocation(directProgram, "aPosition");
             directATexCoord = GLES20.glGetAttribLocation(directProgram, "aTexCoord");
@@ -678,5 +681,38 @@ public class GpuDownscaler {
         }
         
         logger.info("AsyncGpuDownscaler released");
+    }
+
+    private static float[] normalizeOffsets(float[] quadrantStripOffsetX) {
+        if (quadrantStripOffsetX == null || quadrantStripOffsetX.length != 4) {
+            return DEFAULT_QUADRANT_STRIP_OFFSET_X.clone();
+        }
+        return quadrantStripOffsetX.clone();
+    }
+
+    private static String buildFragmentShader(float[] offsets) {
+        return String.format(Locale.US,
+            "#extension GL_OES_EGL_image_external : require\n" +
+            "precision mediump float;\n" +
+            "uniform samplerExternalOES uCameraTex;\n" +
+            "varying vec2 vTexCoord;\n" +
+            "void main() {\n" +
+            "    vec2 gridPos = step(0.5, vTexCoord);\n" +
+            "    float tlOffset = %.5ff;\n" +
+            "    float trOffset = %.5ff;\n" +
+            "    float blOffset = %.5ff;\n" +
+            "    float brOffset = %.5ff;\n" +
+            "    float stripOffsetX;\n" +
+            "    if (gridPos.x < 0.5) {\n" +
+            "        stripOffsetX = gridPos.y < 0.5 ? tlOffset : blOffset;\n" +
+            "    } else {\n" +
+            "        stripOffsetX = gridPos.y < 0.5 ? trOffset : brOffset;\n" +
+            "    }\n" +
+            "    float localX = mod(vTexCoord.x, 0.5) * 0.5;\n" +
+            "    float localY = mod(vTexCoord.y, 0.5) * 2.0;\n" +
+            "    vec2 samplePos = vec2(localX + stripOffsetX, localY);\n" +
+            "    gl_FragColor = texture2D(uCameraTex, samplePos);\n" +
+            "}\n",
+            offsets[0], offsets[1], offsets[2], offsets[3]);
     }
 }

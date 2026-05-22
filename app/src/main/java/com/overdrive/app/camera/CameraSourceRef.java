@@ -9,20 +9,20 @@ import org.json.JSONObject;
 public final class CameraSourceRef {
     private final CameraSourceKind kind;
     private final Integer cameraId;
-    private final CameraVirtualView virtualView;
+    private final PanoramicSlice panoramicSlice;
 
-    private CameraSourceRef(CameraSourceKind kind, Integer cameraId, CameraVirtualView virtualView) {
+    private CameraSourceRef(CameraSourceKind kind, Integer cameraId, PanoramicSlice panoramicSlice) {
         this.kind = kind;
         this.cameraId = cameraId;
-        this.virtualView = virtualView;
+        this.panoramicSlice = panoramicSlice;
     }
 
     public static CameraSourceRef direct(int cameraId) {
         return new CameraSourceRef(CameraSourceKind.DIRECT, cameraId, null);
     }
 
-    public static CameraSourceRef panoramic(CameraVirtualView virtualView) {
-        return new CameraSourceRef(CameraSourceKind.PANORAMIC_VIRTUAL, null, virtualView);
+    public static CameraSourceRef panoramicSlice(PanoramicSlice panoramicSlice) {
+        return new CameraSourceRef(CameraSourceKind.PANORAMIC_SLICE, null, panoramicSlice);
     }
 
     public CameraSourceKind getKind() {
@@ -33,22 +33,22 @@ public final class CameraSourceRef {
         return cameraId;
     }
 
-    public CameraVirtualView getVirtualView() {
-        return virtualView;
+    public PanoramicSlice getPanoramicSlice() {
+        return panoramicSlice;
     }
 
     public String getStableId() {
         if (kind == CameraSourceKind.DIRECT) {
             return "direct:" + cameraId;
         }
-        return "pano:" + (virtualView != null ? virtualView.getId() : "unknown");
+        return "panoSlice:" + (panoramicSlice != null ? panoramicSlice.getId() : "unknown");
     }
 
     public String getDisplayLabel() {
         if (kind == CameraSourceKind.DIRECT) {
             return "Direct camera " + cameraId;
         }
-        return virtualView != null ? virtualView.getDisplayName() : "Panoramic view";
+        return panoramicSlice != null ? panoramicSlice.getDisplayName() : "Merged panoramic slice";
     }
 
     public JSONObject toJson() {
@@ -57,8 +57,8 @@ public final class CameraSourceRef {
         if (cameraId != null) {
             putSafely(out, "cameraId", cameraId.intValue());
         }
-        if (virtualView != null) {
-            putSafely(out, "view", virtualView.getId());
+        if (panoramicSlice != null) {
+            putSafely(out, "slice", panoramicSlice.getId());
         }
         putSafely(out, "id", getStableId());
         putSafely(out, "label", getDisplayLabel());
@@ -79,10 +79,17 @@ public final class CameraSourceRef {
         if (kind == CameraSourceKind.DIRECT && obj.has("cameraId")) {
             return direct(obj.optInt("cameraId", -1));
         }
+        if (kind == CameraSourceKind.PANORAMIC_SLICE) {
+            PanoramicSlice slice = PanoramicSlice.fromId(obj.optString("slice", null));
+            if (slice != null) {
+                return panoramicSlice(slice);
+            }
+        }
         if (kind == CameraSourceKind.PANORAMIC_VIRTUAL) {
             CameraVirtualView view = CameraVirtualView.fromId(obj.optString("view", null));
-            if (view != null) {
-                return panoramic(view);
+            PanoramicSlice slice = PanoramicSlice.fromLegacyView(view);
+            if (slice != null) {
+                return panoramicSlice(slice);
             }
         }
         return null;

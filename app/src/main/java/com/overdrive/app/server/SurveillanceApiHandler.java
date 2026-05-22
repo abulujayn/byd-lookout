@@ -1016,6 +1016,19 @@ public class SurveillanceApiHandler {
             int height = safeParseInt(getQueryParam(path, "height"), resolvedCamera.getProfile().getDirectPreviewHeight());
             jpegBytes = com.overdrive.app.camera.CameraPreviewHelper
                 .captureDirectPreviewJpeg(cameraId, width, height);
+        } else if ("panoramicSlice".equalsIgnoreCase(kind)) {
+            com.overdrive.app.camera.PanoramicSlice slice = com.overdrive.app.camera.PanoramicSlice
+                .fromId(getQueryParam(path, "slice"));
+            if (slice == null) {
+                HttpResponse.sendJsonError(out, "Invalid panoramic slice");
+                return;
+            }
+            jpegBytes = com.overdrive.app.camera.CameraPreviewHelper.capturePanoramicSliceJpeg(
+                resolvedCamera.getPanoCameraId(),
+                resolvedCamera.getPanoWidth(),
+                resolvedCamera.getPanoHeight(),
+                slice
+            );
         } else {
             com.overdrive.app.camera.CameraVirtualView view = com.overdrive.app.camera.CameraVirtualView
                 .fromId(getQueryParam(path, "view"));

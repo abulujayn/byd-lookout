@@ -131,7 +131,7 @@
      <string name="camera_mapping_summary_probing">Panoramic stream: Legacy auto-detect / probing</string>
      <string name="camera_mapping_current_format">Current mapping: %1$s</string>
      <string name="camera_mapping_current_none">Current mapping: Auto / default</string>
-     <string name="camera_mapping_hint">OverDrive keeps the legacy Seal/Atto-style startup behavior by default. Use this dialog to preview live streams and pin each role to the direct stream or 360 subview that actually works on your vehicle. Saving restarts the camera daemon automatically.</string>
+     <string name="camera_mapping_hint">OverDrive keeps the legacy startup behavior by default, but now lets you calibrate the merged panoramic strip properly. Preview each raw merged slice, map the logical 360 roles to the slice that actually shows front/right/rear/left on your vehicle, and the daemon will reuse that layout for recording, streaming, and AI after restart.</string>
 
     <!-- fragment_dashboard -->
     <string name="dashboard_scan_to_connect">Scan to Connect</string>
