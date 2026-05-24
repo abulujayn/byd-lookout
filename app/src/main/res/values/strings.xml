@@ -118,6 +118,20 @@
     <string name="camera_option_4">Camera 4</string>
     <string name="camera_option_5">Camera 5</string>
     <string name="camera_selection_hint">Auto picks the right camera for your trim on every boot. Camera 1 = BYD Seal, Camera 0 = Atto trims. Restart the daemon after changing camera ID for the setting to take effect.</string>
+     <string name="camera_mapping_title">Camera Mapping</string>
+     <string name="camera_role_label">Role mapping</string>
+     <string name="camera_candidate_previous">Previous</string>
+     <string name="camera_candidate_next">Next</string>
+     <string name="camera_preview_unavailable">Preview unavailable yet. Try another candidate or refresh by reopening the dialog after the daemon restarts.</string>
+     <string name="camera_mapping_save">Save mapping</string>
+     <string name="camera_mapping_clear">Clear role</string>
+     <string name="camera_mapping_saved">Camera mapping saved.</string>
+     <string name="camera_mapping_cleared">Camera role mapping cleared.</string>
+     <string name="camera_mapping_summary_format">Panoramic stream: Camera %1$d · %2$dx%3$d</string>
+     <string name="camera_mapping_summary_probing">Panoramic stream: Legacy auto-detect / probing</string>
+     <string name="camera_mapping_current_format">Current mapping: %1$s</string>
+     <string name="camera_mapping_current_none">Current mapping: Auto / default</string>
+     <string name="camera_mapping_hint">OverDrive keeps the legacy startup behavior by default, but now lets you calibrate the merged panoramic strip properly. Preview each raw merged slice, map the logical 360 roles to the slice that actually shows front/right/rear/left on your vehicle, and the daemon will reuse that layout for recording, streaming, and AI after restart.</string>
 
     <!-- fragment_dashboard -->
     <string name="dashboard_scan_to_connect">Scan to Connect</string>
@@ -334,6 +348,8 @@
     <string name="toast_restarting_camera_daemon">Restarting camera daemon…</string>
     <string name="toast_camera_daemon_restarting">Camera daemon restarting with full probe</string>
     <string name="toast_camera_restart_failed">Config cleared but daemon restart failed. Please restart manually.</string>
+     <string name="toast_camera_settings_saved_restarting">Camera settings saved — restarting camera daemon…</string>
+     <string name="toast_camera_settings_restart_failed">Camera settings were saved, but daemon restart failed. Please restart it manually.</string>
     <string name="toast_failed_with_message_x">Failed: %1$s</string>
     <string name="toast_soh_reset_success">SOH estimation reset — will recalculate from next data</string>
     <string name="toast_soh_reset_failed_no_daemon">Reset failed — daemon not responding and file not writable</string>

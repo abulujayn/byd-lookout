@@ -953,110 +953,359 @@ class MainActivity : AppCompatActivity() {
      */
     private fun updateCameraProbeMenuItem() { /* intentionally empty */ }
 
+    private data class CameraRoleOption(val key: String, val label: String)
+    private data class CameraPreviewCandidate(
+        val id: String,
+        val kind: String,
+        val label: String,
+        val cameraId: Int?,
+        val slice: String?,
+        val view: String?,
+        val width: Int,
+        val height: Int
+    ) {
+        fun toJson(): org.json.JSONObject = org.json.JSONObject().apply {
+            put("kind", kind)
+            cameraId?.let { put("cameraId", it) }
+            slice?.let { put("slice", it) }
+            view?.let { put("view", it) }
+        }
+    }
+
+    private data class CameraMappingState(
+        val summary: String,
+        val roles: List<CameraRoleOption>,
+        val candidates: List<CameraPreviewCandidate>,
+        val currentMappings: Map<String, String>
+    )
+
 
     /**
      * Handle "Reconfigure Camera" menu item click.
-     * Shows a styled dialog to manually select camera ID or use auto-detection.
+    * Shows a role-mapping dialog with live preview candidates.
      */
     private fun onReconfigureCameraClicked() {
-        var currentId = -1
-        var isManual = false
-        try {
-            val config = com.overdrive.app.config.UnifiedConfigManager.loadConfig()
-            val cameraConfig = config.optJSONObject("camera")
-            if (cameraConfig != null) {
-                currentId = cameraConfig.optInt("probedCameraId", -1)
-                isManual = cameraConfig.optBoolean("manualOverride", false)
+        Thread {
+            val state = fetchCameraMappingState()
+            runOnUiThread {
+                if (state == null) {
+                    Toast.makeText(this, getString(R.string.toast_failed_to_save_short), Toast.LENGTH_SHORT).show()
+                    return@runOnUiThread
+                }
+                showCameraMappingDialog(state)
             }
-        } catch (e: Exception) { /* ignore */ }
+        }.start()
+    }
 
-        val dialogView = layoutInflater.inflate(R.layout.dialog_camera_selection, null)
-        
-        // Set current status
-        val statusText = dialogView.findViewById<TextView>(R.id.tvCurrentCamera)
-        if (isManual && currentId >= 0) {
-            statusText.text = getString(R.string.camera_current_manual, currentId)
-        } else {
-            statusText.text = getString(R.string.camera_current_auto_label)
+    private fun fetchCameraMappingState(): CameraMappingState? {
+        return try {
+            val conn = com.overdrive.app.util.DaemonHttpClient.open(
+                "/api/surveillance/config", "GET", 3000, 4000)
+            val body = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+            val config = org.json.JSONObject(body).optJSONObject("config") ?: return null
+
+            val panoCameraId = config.optInt("panoCameraId", config.optInt("cameraId", -1))
+            val panoWidth = config.optInt("panoWidth", -1)
+            val panoHeight = config.optInt("panoHeight", -1)
+            val summary = if (panoCameraId >= 0 && panoWidth > 0 && panoHeight > 0) {
+                getString(
+                    R.string.camera_mapping_summary_format,
+                    panoCameraId,
+                    panoWidth,
+                    panoHeight
+                )
+            } else {
+                getString(R.string.camera_mapping_summary_probing)
+            }
+
+            val roles = mutableListOf<CameraRoleOption>()
+            val roleArray = config.optJSONArray("cameraRoleOptions") ?: org.json.JSONArray()
+            for (i in 0 until roleArray.length()) {
+                val item = roleArray.optJSONObject(i) ?: continue
+                roles += CameraRoleOption(
+                    item.optString("key", ""),
+                    item.optString("label", item.optString("key", "Role"))
+                )
+            }
+
+            val candidates = mutableListOf<CameraPreviewCandidate>()
+            val candidateArray = config.optJSONArray("cameraPreviewCandidates") ?: org.json.JSONArray()
+            for (i in 0 until candidateArray.length()) {
+                val item = candidateArray.optJSONObject(i) ?: continue
+                candidates += CameraPreviewCandidate(
+                    id = item.optString("id", "candidate-$i"),
+                    kind = item.optString("kind", "panoramicSlice"),
+                    label = item.optString("label", item.optString("id", "Candidate")),
+                    cameraId = if (item.has("cameraId")) item.optInt("cameraId") else null,
+                    slice = if (item.has("slice")) item.optString("slice") else null,
+                    view = if (item.has("view")) item.optString("view") else null,
+                    width = item.optInt("previewWidth", 1280),
+                    height = item.optInt("previewHeight", 720)
+                )
+            }
+
+            val mappings = mutableMapOf<String, String>()
+            val mappingsJson = config.optJSONObject("cameraRoleMappings")
+            roles.forEach { role ->
+                val source = mappingsJson?.optJSONObject(role.key)
+                val sourceId = if (source != null && source.has("id")) source.optString("id") else null
+                if (!sourceId.isNullOrEmpty()) {
+                    mappings[role.key] = sourceId
+                }
+            }
+
+            CameraMappingState(
+                summary = summary,
+                roles = roles,
+                candidates = candidates,
+                currentMappings = mappings
+            )
+        } catch (e: Exception) {
+            logsViewModel.error("Camera", "Failed to load camera mapping state: ${e.message}")
+            null
         }
-        
-        // Set radio button selection
-        val radioGroup = dialogView.findViewById<android.widget.RadioGroup>(R.id.rgCameraOptions)
-        val radioIds = arrayOf(
-            R.id.rbCameraAuto, R.id.rbCamera0, R.id.rbCamera1,
-            R.id.rbCamera2, R.id.rbCamera3, R.id.rbCamera4, R.id.rbCamera5
+    }
+
+    private fun showCameraMappingDialog(state: CameraMappingState) {
+        val dialogView = layoutInflater.inflate(R.layout.dialog_camera_mapping, null)
+        val summaryView = dialogView.findViewById<TextView>(R.id.tvCameraProfileSummary)
+        val roleSpinner = dialogView.findViewById<android.widget.Spinner>(R.id.spinnerCameraRole)
+        val currentMappingView = dialogView.findViewById<TextView>(R.id.tvCurrentRoleMapping)
+        val candidateLabelView = dialogView.findViewById<TextView>(R.id.tvCandidateLabel)
+        val previewImageView = dialogView.findViewById<ImageView>(R.id.ivCameraCandidatePreview)
+        val previewPlaceholderView = dialogView.findViewById<TextView>(R.id.tvCameraPreviewPlaceholder)
+        val prevButton = dialogView.findViewById<View>(R.id.btnPrevCandidate)
+        val nextButton = dialogView.findViewById<View>(R.id.btnNextCandidate)
+        val saveMappingButton = dialogView.findViewById<View>(R.id.btnSaveCameraRoleMapping)
+        val clearMappingButton = dialogView.findViewById<View>(R.id.btnClearCameraRoleMapping)
+
+        summaryView.text = state.summary
+
+        val roleAdapter = android.widget.ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            state.roles.map { it.label }
         )
-        val currentSelection = if (isManual && currentId >= 0) currentId + 1 else 0
-        radioGroup.check(radioIds[currentSelection])
-        
+        roleSpinner.adapter = roleAdapter
+
+        var currentRoleIndex = 0
+        var currentCandidateIndex = 0
+        val previewHandler = android.os.Handler(android.os.Looper.getMainLooper())
+        var dialogClosed = false
+        var activePreviewCandidateId: String? = null
+
+        fun mappedCandidateIndexForRole(roleKey: String): Int {
+            val mappedId = state.currentMappings[roleKey] ?: return 0
+            return state.candidates.indexOfFirst { it.id == mappedId }.let { if (it >= 0) it else 0 }
+        }
+
+        fun updateCurrentMappingText() {
+            val role = state.roles.getOrNull(currentRoleIndex)
+            val mappedId = role?.let { state.currentMappings[it.key] }
+            val mappedLabel = state.candidates.firstOrNull { it.id == mappedId }?.label
+            currentMappingView.text = if (mappedLabel.isNullOrEmpty()) {
+                getString(R.string.camera_mapping_current_none)
+            } else {
+                getString(R.string.camera_mapping_current_format, mappedLabel)
+            }
+        }
+
+        fun refreshPreview(scheduleNext: Boolean) {
+            if (dialogClosed || state.candidates.isEmpty()) return
+            val candidate = state.candidates[currentCandidateIndex]
+            activePreviewCandidateId = candidate.id
+            candidateLabelView.text = candidate.label
+            previewPlaceholderView.visibility = View.VISIBLE
+            previewPlaceholderView.text = getString(R.string.camera_preview_unavailable)
+            Thread {
+                val imageBytes = try {
+                    val conn = com.overdrive.app.util.DaemonHttpClient.open(
+                        buildCameraPreviewPath(candidate),
+                        "GET",
+                        2500,
+                        4000
+                    )
+                    val bytes = if (conn.responseCode == 200) conn.inputStream.use { it.readBytes() } else null
+                    conn.disconnect()
+                    bytes
+                } catch (_: Exception) {
+                    null
+                }
+
+                runOnUiThread {
+                    if (dialogClosed || activePreviewCandidateId != candidate.id) return@runOnUiThread
+                    if (imageBytes != null && imageBytes.isNotEmpty()) {
+                        val bitmap = android.graphics.BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
+                        if (bitmap != null) {
+                            previewImageView.setImageBitmap(bitmap)
+                            previewPlaceholderView.visibility = View.GONE
+                        } else {
+                            previewImageView.setImageDrawable(null)
+                            previewPlaceholderView.visibility = View.VISIBLE
+                        }
+                    } else {
+                        previewImageView.setImageDrawable(null)
+                        previewPlaceholderView.visibility = View.VISIBLE
+                    }
+                }
+            }.start()
+
+            if (scheduleNext) {
+                previewHandler.removeCallbacksAndMessages(null)
+                previewHandler.postDelayed({ refreshPreview(true) }, 2000)
+            }
+        }
+
+        fun updateCandidateSelection(schedulePreview: Boolean) {
+            if (state.candidates.isEmpty()) {
+                candidateLabelView.text = getString(R.string.camera_preview_unavailable)
+                previewImageView.setImageDrawable(null)
+                previewPlaceholderView.visibility = View.VISIBLE
+                return
+            }
+            if (currentCandidateIndex < 0) currentCandidateIndex = 0
+            if (currentCandidateIndex >= state.candidates.size) currentCandidateIndex = state.candidates.lastIndex
+            candidateLabelView.text = state.candidates[currentCandidateIndex].label
+            if (schedulePreview) refreshPreview(true)
+        }
+
+        roleSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: android.widget.AdapterView<*>?, view: View?, position: Int, id: Long) {
+                currentRoleIndex = position
+                currentCandidateIndex = mappedCandidateIndexForRole(state.roles[position].key)
+                updateCurrentMappingText()
+                updateCandidateSelection(true)
+            }
+
+            override fun onNothingSelected(parent: android.widget.AdapterView<*>?) = Unit
+        }
+
+        prevButton.setOnClickListener {
+            if (state.candidates.isEmpty()) return@setOnClickListener
+            currentCandidateIndex = if (currentCandidateIndex <= 0) state.candidates.lastIndex else currentCandidateIndex - 1
+            updateCandidateSelection(true)
+        }
+
+        nextButton.setOnClickListener {
+            if (state.candidates.isEmpty()) return@setOnClickListener
+            currentCandidateIndex = if (currentCandidateIndex >= state.candidates.lastIndex) 0 else currentCandidateIndex + 1
+            updateCandidateSelection(true)
+        }
+
         val dialog = com.google.android.material.dialog.MaterialAlertDialogBuilder(this, R.style.Theme_Overdrive_M3_Dialog)
             .setView(dialogView)
             .setNegativeButton(getString(R.string.dialog_close), null)
             .create()
-        
-        // Save immediately on radio button selection — no Apply button needed
-        radioGroup.setOnCheckedChangeListener { _, checkedId ->
-            val selectedIndex = radioIds.indexOf(checkedId)
-            if (selectedIndex < 0) return@setOnCheckedChangeListener
-            
-            // Don't re-save if user tapped the already-selected option
-            if (selectedIndex == currentSelection) return@setOnCheckedChangeListener
-            
-            if (selectedIndex == 0) {
-                // Auto mode
-                Thread {
-                    try {
-                        val conn = com.overdrive.app.util.DaemonHttpClient.open(
-                            "/api/surveillance/config", "POST", 3000, 3000)
-                        conn.setRequestProperty("Content-Type", "application/json")
-                        conn.doOutput = true
-                        val body = """{"clearManualCameraId":true}"""
-                        conn.outputStream.use { it.write(body.toByteArray()) }
-                        val responseCode = conn.responseCode
-                        conn.disconnect()
 
-                        runOnUiThread {
-                            if (responseCode == 200) {
-                                Toast.makeText(this, getString(R.string.toast_camera_set_to_auto), Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(this, getString(R.string.toast_failed_to_save_short), Toast.LENGTH_SHORT).show()
-                            }
-                            updateCameraProbeMenuItem()
-                        }
-                    } catch (e: Exception) {
-                        runOnUiThread { Toast.makeText(this, getString(R.string.toast_failed_with_message, e.message ?: ""), Toast.LENGTH_SHORT).show() }
-                    }
-                }.start()
-            } else {
-                // Manual camera ID
-                val selectedCamId = selectedIndex - 1
-                Thread {
-                    try {
-                        val conn = com.overdrive.app.util.DaemonHttpClient.open(
-                            "/api/surveillance/config", "POST", 3000, 3000)
-                        conn.setRequestProperty("Content-Type", "application/json")
-                        conn.doOutput = true
-                        val body = """{"manualCameraId":$selectedCamId}"""
-                        conn.outputStream.use { it.write(body.toByteArray()) }
-                        val responseCode = conn.responseCode
-                        conn.disconnect()
+        dialog.setOnDismissListener {
+            dialogClosed = true
+            previewHandler.removeCallbacksAndMessages(null)
+        }
 
-                        runOnUiThread {
-                            if (responseCode == 200) {
-                                Toast.makeText(this, getString(R.string.toast_camera_id_set, selectedCamId), Toast.LENGTH_SHORT).show()
-                            } else {
-                                Toast.makeText(this, getString(R.string.toast_failed_to_save_short), Toast.LENGTH_SHORT).show()
-                            }
-                            updateCameraProbeMenuItem()
-                        }
-                    } catch (e: Exception) {
-                        runOnUiThread { Toast.makeText(this, getString(R.string.toast_failed_with_message, e.message ?: ""), Toast.LENGTH_SHORT).show() }
-                    }
-                }.start()
+        saveMappingButton.setOnClickListener {
+            val role = state.roles.getOrNull(currentRoleIndex) ?: return@setOnClickListener
+            val candidate = state.candidates.getOrNull(currentCandidateIndex) ?: return@setOnClickListener
+            val payload = org.json.JSONObject().apply {
+                put("cameraRoleMapping", org.json.JSONObject().apply {
+                    put("role", role.key)
+                    put("source", candidate.toJson())
+                })
+            }.toString()
+            postSurveillanceConfig(payload) { success, message ->
+                if (success) {
+                    restartCameraDaemonForCameraSettings()
+                    dialog.dismiss()
+                } else {
+                    Toast.makeText(this, message ?: getString(R.string.toast_failed_to_save_short), Toast.LENGTH_SHORT).show()
+                }
             }
         }
-        
+
+        clearMappingButton.setOnClickListener {
+            val role = state.roles.getOrNull(currentRoleIndex) ?: return@setOnClickListener
+            val payload = org.json.JSONObject().apply {
+                put("cameraRoleMapping", org.json.JSONObject().apply {
+                    put("role", role.key)
+                    put("clear", true)
+                })
+            }.toString()
+            postSurveillanceConfig(payload) { success, message ->
+                if (success) {
+                    restartCameraDaemonForCameraSettings()
+                    dialog.dismiss()
+                } else {
+                    Toast.makeText(this, message ?: getString(R.string.toast_failed_to_save_short), Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+        updateCurrentMappingText()
+        updateCandidateSelection(true)
         dialog.show()
+    }
+
+    private fun postSurveillanceConfig(body: String, onComplete: (Boolean, String?) -> Unit) {
+        Thread {
+            try {
+                val conn = com.overdrive.app.util.DaemonHttpClient.open(
+                    "/api/surveillance/config", "POST", 3000, 4000)
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.doOutput = true
+                conn.outputStream.use { it.write(body.toByteArray()) }
+                val success = conn.responseCode == 200
+                val message = if (success) null else conn.errorStream?.bufferedReader()?.use { it.readText() }
+                conn.disconnect()
+                runOnUiThread { onComplete(success, message) }
+            } catch (e: Exception) {
+                runOnUiThread { onComplete(false, e.message) }
+            }
+        }.start()
+    }
+
+    private fun restartCameraDaemonForCameraSettings() {
+        Toast.makeText(this, getString(R.string.toast_camera_settings_saved_restarting), Toast.LENGTH_LONG).show()
+        logsViewModel.info("Camera", "Camera settings changed — restarting daemon to apply them immediately")
+
+        val adb = com.overdrive.app.launcher.AdbDaemonLauncher(this)
+        adb.killDaemon(object : com.overdrive.app.launcher.AdbDaemonLauncher.LaunchCallback {
+            override fun onLog(message: String) {
+                logsViewModel.debug("Camera", message)
+            }
+
+            override fun onLaunched() {
+                runOnUiThread {
+                    logsViewModel.info("Camera", "Camera daemon stopped — relaunching with updated camera settings")
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        daemonStartupManager.initializeOnAppLaunch()
+                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                            daemonStartupManager.checkAllDaemonStatuses()
+                        }, 5000)
+                    }, 3000)
+                }
+            }
+
+            override fun onError(error: String) {
+                runOnUiThread {
+                    logsViewModel.error("Camera", "Failed to restart daemon after camera settings save: $error")
+                    Toast.makeText(
+                        this@MainActivity,
+                        getString(R.string.toast_camera_settings_restart_failed),
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        })
+    }
+
+    private fun buildCameraPreviewPath(candidate: CameraPreviewCandidate): String {
+        return if (candidate.kind.equals("direct", ignoreCase = true) && candidate.cameraId != null) {
+            "/api/surveillance/camera-preview?kind=direct&cameraId=${candidate.cameraId}&width=${candidate.width}&height=${candidate.height}"
+        } else if (candidate.kind.equals("panoramicSlice", ignoreCase = true) && !candidate.slice.isNullOrEmpty()) {
+            "/api/surveillance/camera-preview?kind=panoramicSlice&slice=${candidate.slice}&width=${candidate.width}&height=${candidate.height}"
+        } else {
+            "/api/surveillance/camera-preview?kind=panoramic&view=${candidate.view ?: "front"}"
+        }
     }
     
     /**

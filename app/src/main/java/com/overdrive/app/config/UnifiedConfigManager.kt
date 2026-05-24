@@ -76,6 +76,7 @@ object UnifiedConfigManager {
         unified.put("recording", JSONObject())
         unified.put("streaming", JSONObject())
         unified.put("telegram", JSONObject())
+        unified.put("camera", JSONObject())
         unified.put("proximityGuard", JSONObject())
         unified.put("telemetryOverlay", JSONObject())
         unified.put("tripAnalytics", JSONObject())
@@ -178,6 +179,9 @@ object UnifiedConfigManager {
         val surveillance = config.getJSONObject("surveillance")
         val recording = config.getJSONObject("recording")
         val streaming = config.getJSONObject("streaming")
+        val camera = config.optJSONObject("camera") ?: JSONObject().also {
+            config.put("camera", it)
+        }
         val proximityGuard = config.optJSONObject("proximityGuard") ?: JSONObject().also { 
             config.put("proximityGuard", it) 
         }
@@ -209,6 +213,15 @@ object UnifiedConfigManager {
         
         // Streaming defaults
         if (!streaming.has("quality")) streaming.put("quality", "MEDIUM")
+
+        // Camera defaults. `cameraProfile=auto` lets the runtime resolver infer
+        // Tang vs legacy panoramic defaults from the vehicle model, while still
+        // preserving old installs that only know about `probedCameraId`.
+        if (!camera.has("cameraProfile")) camera.put("cameraProfile", com.overdrive.app.camera.CameraProfiles.PROFILE_AUTO)
+        if (!camera.has("targetFps")) camera.put("targetFps", 15)
+        if (!camera.has("probedCameraId")) camera.put("probedCameraId", -1)
+        if (!camera.has("probedSurfaceMode")) camera.put("probedSurfaceMode", -1)
+        if (!camera.has("roleMappings")) camera.put("roleMappings", JSONObject())
         
         // Proximity Guard defaults
         if (!proximityGuard.has("enabled")) proximityGuard.put("enabled", false)
@@ -709,6 +722,7 @@ object UnifiedConfigManager {
         config.put("recording", JSONObject())
         config.put("streaming", JSONObject())
         config.put("telegram", JSONObject())
+        config.put("camera", JSONObject())
         config.put("proximityGuard", JSONObject())
         config.put("telemetryOverlay", JSONObject())
         config.put("tripAnalytics", JSONObject())

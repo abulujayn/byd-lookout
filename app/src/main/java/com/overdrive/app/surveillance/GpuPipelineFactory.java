@@ -13,12 +13,14 @@ import java.io.File;
 public class GpuPipelineFactory {
     private static final String TAG = "GpuPipelineFactory";
     private static final DaemonLogger logger = DaemonLogger.getInstance(TAG);
+    private static final com.overdrive.app.camera.CameraProfile LEGACY_PROFILE =
+        com.overdrive.app.camera.CameraProfiles.getLegacyDefault();
     
     /**
      * Creates a complete GPU surveillance pipeline with default settings.
      * 
      * Configuration:
-     * - Camera: 5120x960 @ 30 FPS
+    * - Camera: legacy-profile panoramic resolution @ 30 FPS
      * - Encoder: 2560x1920 @ 15 FPS, 6 Mbps
      * - AI: 320x240 @ 2 FPS (idle), 5 FPS (active)
      * - Thermal protection enabled
@@ -28,7 +30,10 @@ public class GpuPipelineFactory {
      * @return Configured GpuSurveillancePipeline
      */
     public static GpuSurveillancePipeline createDefault(File eventOutputDir) {
-        return new GpuSurveillancePipeline(5120, 960, eventOutputDir);
+        return new GpuSurveillancePipeline(
+            LEGACY_PROFILE.getPanoWidth(),
+            LEGACY_PROFILE.getPanoHeight(),
+            eventOutputDir);
     }
     
     /**
@@ -78,8 +83,8 @@ public class GpuPipelineFactory {
      * Builder for custom GPU pipeline configuration.
      */
     public static class PipelineBuilder {
-        private int cameraWidth = 5120;
-        private int cameraHeight = 960;
+        private int cameraWidth = LEGACY_PROFILE.getPanoWidth();
+        private int cameraHeight = LEGACY_PROFILE.getPanoHeight();
         private int encoderWidth = 2560;
         private int encoderHeight = 1920;
         private int fps = 15;

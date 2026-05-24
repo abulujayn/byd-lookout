@@ -68,6 +68,10 @@ public class SurveillanceApiHandler {
             sendFilterLog(out);
             return true;
         }
+        if (cleanPath.equals("/api/surveillance/camera-preview")) {
+            sendCameraPreview(path, out);
+            return true;
+        }
         return false;
     }
     
@@ -318,6 +322,20 @@ public class SurveillanceApiHandler {
             config.put("telegramSendStartPing", false);
             config.put("shadowFilter", 2);
         }
+
+        try {
+            com.overdrive.app.camera.ResolvedCameraConfig resolvedCamera =
+                com.overdrive.app.camera.CameraConfigResolver.resolve();
+            JSONObject resolvedJson = com.overdrive.app.camera.CameraConfigResolver
+                .resolvedSummaryJson(resolvedCamera);
+            java.util.Iterator<String> keys = resolvedJson.keys();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                config.put(key, resolvedJson.get(key));
+            }
+        } catch (Exception e) {
+            CameraDaemon.log("Failed to resolve camera profile summary: " + e.getMessage());
+        }
         
         response.put("config", config);
         HttpResponse.sendJson(out, response.toString());
@@ -338,6 +356,44 @@ public class SurveillanceApiHandler {
         
         try {
             JSONObject configJson = new JSONObject(body);
+            boolean cameraConfigChanged = false;
+
+            if (configJson.has("cameraProfile") || configJson.optBoolean("clearCameraProfile", false)) {
+                String requestedProfile = configJson.optBoolean("clearCameraProfile", false)
+                    ? com.overdrive.app.camera.CameraProfiles.PROFILE_AUTO
+                    : configJson.optString("cameraProfile", com.overdrive.app.camera.CameraProfiles.PROFILE_AUTO);
+                if (com.overdrive.app.camera.CameraConfigResolver.saveCameraProfile(requestedProfile)) {
+                    cameraConfigChanged = true;
+                    CameraDaemon.log("Camera profile saved: " + requestedProfile);
+                }
+            }
+
+            if (configJson.has("cameraRoleMapping")) {
+                JSONObject mappingJson = configJson.optJSONObject("cameraRoleMapping");
+                if (mappingJson != null) {
+                    com.overdrive.app.camera.CameraRole role = com.overdrive.app.camera.CameraRole
+                        .fromKey(mappingJson.optString("role", null));
+                    if (role != null) {
+                        if (mappingJson.optBoolean("clear", false)) {
+                            if (com.overdrive.app.camera.CameraConfigResolver.clearRoleMapping(role)) {
+                                cameraConfigChanged = true;
+                            }
+                        } else {
+                            com.overdrive.app.camera.CameraSourceRef source = com.overdrive.app.camera.CameraSourceRef
+                                .fromJson(mappingJson.optJSONObject("source"));
+                            if (source != null && com.overdrive.app.camera.CameraConfigResolver.saveRoleMapping(role, source)) {
+                                cameraConfigChanged = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if (configJson.optBoolean("clearCameraRoleMappings", false)) {
+                for (com.overdrive.app.camera.CameraRole role : com.overdrive.app.camera.CameraRole.values()) {
+                    com.overdrive.app.camera.CameraConfigResolver.clearRoleMapping(role);
+                }
+                cameraConfigChanged = true;
+            }
             
             SurveillanceEngineGpu sentry = null;
             if (gpuPipeline != null) {
@@ -826,9 +882,13 @@ public class SurveillanceApiHandler {
                 int camId = configJson.optInt("manualCameraId", -1);
                 if (camId >= 0 && camId <= 5) {
                     try {
+                        com.overdrive.app.camera.ResolvedCameraConfig resolvedCamera =
+                            com.overdrive.app.camera.CameraConfigResolver.resolve();
                         org.json.JSONObject camCfg = new org.json.JSONObject();
                         camCfg.put("probedCameraId", camId);
-                        camCfg.put("probedSurfaceMode", 0);
+                        camCfg.put("probedSurfaceMode", resolvedCamera.getPanoSurfaceMode());
+                        camCfg.put("probedWidth", resolvedCamera.getPanoWidth());
+                        camCfg.put("probedHeight", resolvedCamera.getPanoHeight());
                         camCfg.put("probedAndValidated", true);
                         camCfg.put("manualOverride", true);
                         com.overdrive.app.config.UnifiedConfigManager.updateSection("camera", camCfg);
@@ -836,14 +896,18 @@ public class SurveillanceApiHandler {
                     } catch (Exception e) {
                         CameraDaemon.log("Failed to save manual camera ID: " + e.getMessage());
                     }
-                    configChanged = true;
+                    cameraConfigChanged = true;
                 }
             }
             if (configJson.has("clearManualCameraId") && configJson.optBoolean("clearManualCameraId", false)) {
                 try {
+                    com.overdrive.app.camera.ResolvedCameraConfig resolvedCamera =
+                        com.overdrive.app.camera.CameraConfigResolver.resolve();
                     org.json.JSONObject camCfg = new org.json.JSONObject();
                     camCfg.put("probedCameraId", -1);
                     camCfg.put("probedSurfaceMode", -1);
+                    camCfg.put("probedWidth", resolvedCamera.getPanoWidth());
+                    camCfg.put("probedHeight", resolvedCamera.getPanoHeight());
                     camCfg.put("probedAndValidated", false);
                     camCfg.put("manualOverride", false);
                     com.overdrive.app.config.UnifiedConfigManager.updateSection("camera", camCfg);
@@ -851,7 +915,7 @@ public class SurveillanceApiHandler {
                 } catch (Exception e) {
                     CameraDaemon.log("Failed to clear manual camera ID: " + e.getMessage());
                 }
-                configChanged = true;
+                cameraConfigChanged = true;
             }
             
             if (configChanged) {
@@ -933,6 +997,99 @@ public class SurveillanceApiHandler {
         } catch (Exception e) {
             CameraDaemon.log("Error applying surveillance config: " + e.getMessage());
             HttpResponse.sendJsonError(out, e.getMessage());
+        }
+    }
+
+    private static void sendCameraPreview(String path, OutputStream out) throws Exception {
+        com.overdrive.app.camera.ResolvedCameraConfig resolvedCamera =
+            com.overdrive.app.camera.CameraConfigResolver.resolve();
+        String kind = getQueryParam(path, "kind");
+        byte[] jpegBytes = null;
+
+        if ("direct".equalsIgnoreCase(kind)) {
+            int cameraId = safeParseInt(getQueryParam(path, "cameraId"), -1);
+            if (cameraId < 0 || cameraId > 5) {
+                HttpResponse.sendJsonError(out, "Invalid direct camera ID");
+                return;
+            }
+            int width = safeParseInt(getQueryParam(path, "width"), resolvedCamera.getProfile().getDirectPreviewWidth());
+            int height = safeParseInt(getQueryParam(path, "height"), resolvedCamera.getProfile().getDirectPreviewHeight());
+            jpegBytes = com.overdrive.app.camera.CameraPreviewHelper
+                .captureDirectPreviewJpeg(cameraId, width, height);
+        } else if ("panoramicSlice".equalsIgnoreCase(kind)) {
+            com.overdrive.app.camera.PanoramicSlice slice = com.overdrive.app.camera.PanoramicSlice
+                .fromId(getQueryParam(path, "slice"));
+            if (slice == null) {
+                HttpResponse.sendJsonError(out, "Invalid panoramic slice");
+                return;
+            }
+            jpegBytes = com.overdrive.app.camera.CameraPreviewHelper.capturePanoramicSliceJpeg(
+                resolvedCamera.getPanoCameraId(),
+                resolvedCamera.getPanoWidth(),
+                resolvedCamera.getPanoHeight(),
+                slice
+            );
+        } else {
+            com.overdrive.app.camera.CameraVirtualView view = com.overdrive.app.camera.CameraVirtualView
+                .fromId(getQueryParam(path, "view"));
+            if (view == null) {
+                HttpResponse.sendJsonError(out, "Invalid panoramic view");
+                return;
+            }
+            GpuSurveillancePipeline gpuPipeline = CameraDaemon.getGpuPipeline();
+            if (gpuPipeline == null) {
+                HttpResponse.sendJsonError(out, "GPU pipeline unavailable");
+                return;
+            }
+            try {
+                if (!gpuPipeline.isRunning()) {
+                    gpuPipeline.start(false);
+                    Thread.sleep(1200);
+                }
+            } catch (Exception e) {
+                CameraDaemon.log("Camera preview auto-start failed: " + e.getMessage());
+            }
+            if (gpuPipeline.getCamera() != null) {
+                jpegBytes = gpuPipeline.getCamera().getLatestJpegFrame(view.getStreamViewMode());
+            }
+        }
+
+        if (jpegBytes == null || jpegBytes.length == 0) {
+            HttpResponse.sendJsonError(out, "Preview unavailable");
+            return;
+        }
+
+        String header = "HTTP/1.1 200 OK\r\n" +
+                "Content-Type: image/jpeg\r\n" +
+                "Content-Length: " + jpegBytes.length + "\r\n" +
+                "Cache-Control: no-cache\r\n" +
+                "Access-Control-Allow-Origin: *\r\n" +
+                "\r\n";
+        out.write(header.getBytes());
+        out.write(jpegBytes);
+        out.flush();
+    }
+
+    private static String getQueryParam(String path, String key) {
+        if (path == null) return null;
+        int queryStart = path.indexOf('?');
+        if (queryStart < 0 || queryStart >= path.length() - 1) return null;
+        String[] pairs = path.substring(queryStart + 1).split("&");
+        for (String pair : pairs) {
+            String[] kv = pair.split("=", 2);
+            if (kv.length == 2 && key.equalsIgnoreCase(kv[0])) {
+                return java.net.URLDecoder.decode(kv[1], java.nio.charset.StandardCharsets.UTF_8);
+            }
+        }
+        return null;
+    }
+
+    private static int safeParseInt(String value, int defaultValue) {
+        if (value == null) return defaultValue;
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException e) {
+            return defaultValue;
         }
     }
     

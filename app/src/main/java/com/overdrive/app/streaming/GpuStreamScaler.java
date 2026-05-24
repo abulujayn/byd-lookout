@@ -10,6 +10,7 @@ import android.opengl.EGLSurface;
 import android.view.Surface;
 
 import java.nio.FloatBuffer;
+import java.util.Locale;
 
 /**
  * GpuStreamScaler - GPU-based downscaler for H.264 streaming.
@@ -51,6 +52,12 @@ public class GpuStreamScaler {
     // Configuration
     private final int outputWidth;
     private final int outputHeight;
+    private final float[] quadrantStripOffsetX;
+    private final String fragmentShader;
+
+    private static final float[] DEFAULT_QUADRANT_STRIP_OFFSET_X = {
+        0.75f, 0.50f, 0.00f, 0.25f
+    };
     
     // Fullscreen quad vertices
     private static final float[] VERTEX_COORDS = {
@@ -131,6 +138,15 @@ public class GpuStreamScaler {
     public GpuStreamScaler(int outputWidth, int outputHeight) {
         this.outputWidth = outputWidth;
         this.outputHeight = outputHeight;
+        this.quadrantStripOffsetX = DEFAULT_QUADRANT_STRIP_OFFSET_X.clone();
+        this.fragmentShader = buildFragmentShader(this.quadrantStripOffsetX);
+    }
+
+    public GpuStreamScaler(int outputWidth, int outputHeight, float[] quadrantStripOffsetX) {
+        this.outputWidth = outputWidth;
+        this.outputHeight = outputHeight;
+        this.quadrantStripOffsetX = normalizeOffsets(quadrantStripOffsetX);
+        this.fragmentShader = buildFragmentShader(this.quadrantStripOffsetX);
     }
     
     public int getWidth() { return outputWidth; }
@@ -155,7 +171,7 @@ public class GpuStreamScaler {
         encoderSurface = eglCore.createWindowSurface(encoderInputSurface);
         
         // Compile shaders
-        programId = GlUtil.createProgram(VERTEX_SHADER, FRAGMENT_SHADER);
+        programId = GlUtil.createProgram(VERTEX_SHADER, fragmentShader);
         if (programId == 0) {
             throw new RuntimeException("Failed to create shader program");
         }
@@ -269,5 +285,67 @@ public class GpuStreamScaler {
         }
         
         logger.info("GpuStreamScaler released");
+    }
+
+    private static float[] normalizeOffsets(float[] quadrantStripOffsetX) {
+        if (quadrantStripOffsetX == null || quadrantStripOffsetX.length != 4) {
+            return DEFAULT_QUADRANT_STRIP_OFFSET_X.clone();
+        }
+        return quadrantStripOffsetX.clone();
+    }
+
+    private static String buildFragmentShader(float[] offsets) {
+        return String.format(Locale.US,
+            "#extension GL_OES_EGL_image_external : require\n" +
+            "precision mediump float;\n" +
+            "uniform samplerExternalOES uCameraTex;\n" +
+            "uniform int uViewMode;\n" +
+            "uniform float uApaMode;\n" +
+            "varying vec2 vTexCoord;\n" +
+            "void main() {\n" +
+            "    vec2 samplePos;\n" +
+            "    float frontOffset = %.5ff;\n" +
+            "    float rightOffset = %.5ff;\n" +
+            "    float rearOffset = %.5ff;\n" +
+            "    float leftOffset = %.5ff;\n" +
+            "    if (uViewMode == 5) {\n" +
+            "        samplePos = vTexCoord;\n" +
+            "    } else if (uApaMode > 1.5) {\n" +
+            "        if (uViewMode == 1) { samplePos = vec2(0.75 + vTexCoord.x * 0.25, vTexCoord.y); }\n" +
+            "        else if (uViewMode == 3) { samplePos = vec2(vTexCoord.x * 0.25, vTexCoord.y); }\n" +
+            "        else if (uViewMode == 2 || uViewMode == 4) { samplePos = vec2(0.25 + vTexCoord.x * 0.5, vTexCoord.y); }\n" +
+            "        else {\n" +
+            "            if (vTexCoord.x < 0.5) {\n" +
+            "                float lx = vTexCoord.x * 0.5;\n" +
+            "                float ly = mod(vTexCoord.y, 0.5) * 2.0;\n" +
+            "                if (vTexCoord.y < 0.5) { samplePos = vec2(lx + 0.75, ly); }\n" +
+            "                else { samplePos = vec2(lx, ly); }\n" +
+            "            } else {\n" +
+            "                samplePos = vec2(0.25 + (vTexCoord.x - 0.5) * 1.0 * 0.5, vTexCoord.y);\n" +
+            "            }\n" +
+            "        }\n" +
+            "    } else if (uApaMode > 0.5) {\n" +
+            "        samplePos = vTexCoord;\n" +
+            "    } else if (uViewMode == 0) {\n" +
+            "        vec2 gridPos = step(0.5, vTexCoord);\n" +
+            "        float stripOffsetX;\n" +
+            "        if (gridPos.x < 0.5) {\n" +
+            "            stripOffsetX = gridPos.y < 0.5 ? frontOffset : rearOffset;\n" +
+            "        } else {\n" +
+            "            stripOffsetX = gridPos.y < 0.5 ? rightOffset : leftOffset;\n" +
+            "        }\n" +
+            "        float localX = mod(vTexCoord.x, 0.5) * 0.5;\n" +
+            "        float localY = mod(vTexCoord.y, 0.5) * 2.0;\n" +
+            "        samplePos = vec2(localX + stripOffsetX, localY);\n" +
+            "    } else {\n" +
+            "        float startX = frontOffset;\n" +
+            "        if (uViewMode == 2) startX = rightOffset;\n" +
+            "        else if (uViewMode == 3) startX = rearOffset;\n" +
+            "        else if (uViewMode == 4) startX = leftOffset;\n" +
+            "        samplePos = vec2(startX + (vTexCoord.x * 0.25), vTexCoord.y);\n" +
+            "    }\n" +
+            "    gl_FragColor = texture2D(uCameraTex, samplePos);\n" +
+            "}\n",
+            offsets[0], offsets[1], offsets[2], offsets[3]);
     }
 }

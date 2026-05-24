@@ -55,11 +55,15 @@ public class CameraDaemon {
     public static String STREAM_DIR() { return PATH_CAMERA_STREAM_DIR(); }
     public static final String APP_STREAM_DIR = "/storage/emulated/0/Android/data/com.overdrive.app/files/stream";
     
-    // Recording config (full quality)
-    public static final int PANO_WIDTH = 5120;
-    public static final int PANO_HEIGHT = 960;
-    public static final int VIEW_WIDTH = 1280;
-    public static final int VIEW_HEIGHT = 960;
+    // Recording config defaults. Runtime panoramic geometry comes from
+    // CameraConfigResolver; these stay as legacy-profile fallbacks for code
+    // paths that still read the daemon constants directly.
+    public static final int PANO_WIDTH = com.overdrive.app.camera.CameraProfiles
+        .getLegacyDefault().getPanoWidth();
+    public static final int PANO_HEIGHT = com.overdrive.app.camera.CameraProfiles
+        .getLegacyDefault().getPanoHeight();
+    public static final int VIEW_WIDTH = PANO_WIDTH / 4;
+    public static final int VIEW_HEIGHT = PANO_HEIGHT;
     public static final int FRAME_RATE = 25;
     public static final int BITRATE = 4_000_000;
     public static final int KEYFRAME_INTERVAL = 2;
@@ -1211,6 +1215,8 @@ public class CameraDaemon {
     private static void initSurveillance() {
         try {
             log("Initializing GPU Surveillance Pipeline...");
+            com.overdrive.app.camera.ResolvedCameraConfig resolvedCamera =
+                com.overdrive.app.camera.CameraConfigResolver.resolve();
             
             // SOTA: Use StorageManager for surveillance output directory
             com.overdrive.app.storage.StorageManager storageManager =
@@ -1219,7 +1225,7 @@ public class CameraDaemon {
             
             // Create GPU pipeline
             gpuPipeline = new com.overdrive.app.surveillance.GpuSurveillancePipeline(
-                PANO_WIDTH, PANO_HEIGHT, eventDir);
+                resolvedCamera.getPanoWidth(), resolvedCamera.getPanoHeight(), eventDir);
             
             // Get AssetManager from the app's APK
             // Since we're running as app_process, load model from filesystem
@@ -1307,8 +1313,10 @@ public class CameraDaemon {
             
             gpuPipeline.init(assetManager, com.overdrive.app.daemon.DaemonBootstrap.getContext());
             
-            log("GPU Surveillance initialized: " + PANO_WIDTH + "x" + PANO_HEIGHT + 
-                " -> 2560x1920 (mosaic)");
+            log("GPU Surveillance initialized: profile=" + resolvedCamera.getProfile().getDisplayName()
+                + ", panoCam=" + resolvedCamera.getPanoCameraId()
+                + ", size=" + resolvedCamera.getPanoWidth() + "x" + resolvedCamera.getPanoHeight()
+                + " -> 2560x1920 (mosaic)");
             
             // Clean up orphaned .tmp files from previous crashed recordings
             try {

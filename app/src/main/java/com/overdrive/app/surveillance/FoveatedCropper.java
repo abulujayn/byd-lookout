@@ -64,12 +64,10 @@ public class FoveatedCropper {
     // Output crop size — matches YOLO input
     public static final int CROP_SIZE = 640;
 
-    // Source strip dimensions
-    private static final int STRIP_WIDTH = 5120;
-    private static final int STRIP_HEIGHT = 960;
-
-    // Each camera occupies 1/4 of the strip = 1280×960
-    private static final int CAM_WIDTH = 1280;
+    // Source strip dimensions (runtime-resolved per camera profile).
+    private final int stripWidth;
+    private final int stripHeight;
+    private final float[] quadrantStripOffsetX;
 
     // GL resources
     private int fbo = -1;
@@ -145,12 +143,28 @@ public class FoveatedCropper {
      *
      * QUADRANT_NAMES = ["front", "right", "rear", "left"]
      */
-    private static final float[] QUADRANT_STRIP_OFFSET_X = {
+    private static final float[] DEFAULT_QUADRANT_STRIP_OFFSET_X = {
         0.75f,  // Q0 (TL → Front)
         0.50f,  // Q1 (TR → Right)
         0.00f,  // Q2 (BL → Rear)
         0.25f   // Q3 (BR → Left)
     };
+
+    public FoveatedCropper() {
+        this(5120, 960, DEFAULT_QUADRANT_STRIP_OFFSET_X);
+    }
+
+    public FoveatedCropper(int stripWidth, int stripHeight) {
+        this(stripWidth, stripHeight, DEFAULT_QUADRANT_STRIP_OFFSET_X);
+    }
+
+    public FoveatedCropper(int stripWidth, int stripHeight, float[] quadrantStripOffsetX) {
+        this.stripWidth = Math.max(1, stripWidth);
+        this.stripHeight = Math.max(1, stripHeight);
+        this.quadrantStripOffsetX = quadrantStripOffsetX != null && quadrantStripOffsetX.length == 4
+            ? quadrantStripOffsetX.clone()
+            : DEFAULT_QUADRANT_STRIP_OFFSET_X.clone();
+    }
 
     /**
      * Initialize the FBO and shader. Must be called on the GL thread.
@@ -236,12 +250,11 @@ public class FoveatedCropper {
 
         // Step 3: Compute the crop window in the full 5120×960 strip.
         // Each camera occupies 0.25 of the strip width.
-        float stripOffsetX = QUADRANT_STRIP_OFFSET_X[quadrant];
+        float stripOffsetX = quadrantStripOffsetX[quadrant];
 
-        // The crop window is 640×640 pixels from the 5120×960 strip.
-        // In normalized strip coords: width = 640/5120 = 0.125, height = 640/960 = 0.667
-        float cropWidthNorm = (float) CROP_SIZE / STRIP_WIDTH;   // 0.125
-        float cropHeightNorm = (float) CROP_SIZE / STRIP_HEIGHT; // 0.6667
+        // The crop window is 640×640 pixels from the full panoramic strip.
+        float cropWidthNorm = (float) CROP_SIZE / stripWidth;
+        float cropHeightNorm = (float) CROP_SIZE / stripHeight;
 
         // Center the crop on the centroid within this camera's strip region.
         // Camera region in strip: [stripOffsetX, stripOffsetX + 0.25] × [0, 1]

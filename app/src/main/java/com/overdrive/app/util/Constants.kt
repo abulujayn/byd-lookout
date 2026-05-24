@@ -1,5 +1,7 @@
 package com.overdrive.app.util
 
+import com.overdrive.app.camera.CameraProfiles
+
 /**
  * Shared constants for the BYD Champ application.
  */
@@ -16,10 +18,10 @@ object Constants {
     const val LOG_DIR = "/data/local/tmp"
     
     // Camera Configuration
-    const val PANO_WIDTH = 5120
-    const val PANO_HEIGHT = 960
-    const val VIEW_WIDTH = 1280
-    const val VIEW_HEIGHT = 960
+    val PANO_WIDTH = CameraProfiles.getLegacyDefault().panoWidth
+    val PANO_HEIGHT = CameraProfiles.getLegacyDefault().panoHeight
+    val VIEW_WIDTH = PANO_WIDTH / 4
+    val VIEW_HEIGHT = PANO_HEIGHT
     const val FRAME_RATE = 25
     const val BITRATE = 4_000_000
     const val KEYFRAME_INTERVAL = 2

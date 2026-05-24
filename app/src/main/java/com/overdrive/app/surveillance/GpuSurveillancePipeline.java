@@ -637,8 +637,12 @@ public class GpuSurveillancePipeline {
 
         encoder.init();
 
+        com.overdrive.app.camera.ResolvedCameraConfig resolvedCamera =
+            com.overdrive.app.camera.CameraConfigResolver.resolve(getVehicleModel());
+        float[] quadrantStripOffsetX = resolvedCamera.getQuadrantStripOffsetX();
+
         // 2. Create GPU mosaic recorder (shared)
-        recorder = new GpuMosaicRecorder();
+        recorder = new GpuMosaicRecorder(quadrantStripOffsetX);
         // Note: recorder.init() will be called after EGL context is created by camera
 
         // Wire up telemetry collector to new recorder if available
@@ -649,7 +653,7 @@ public class GpuSurveillancePipeline {
         recorder.setOverlayEnabled(overlayEnabledConfig);
 
         // 3. Create GPU downscaler
-        downscaler = new GpuDownscaler();
+        downscaler = new GpuDownscaler(quadrantStripOffsetX);
         // Note: downscaler.init() will be called after EGL context is created by camera
 
         // 4. Create surveillance engine (uses shared recorder)
@@ -673,92 +677,60 @@ public class GpuSurveillancePipeline {
         } catch (Exception e) {
             logger.warn("Failed to load saved config, using defaults: " + e.getMessage());
         }
+
+        if (cameraWidth != resolvedCamera.getPanoWidth() || cameraHeight != resolvedCamera.getPanoHeight()) {
+            logger.warn("Pipeline geometry " + cameraWidth + "x" + cameraHeight
+                + " differs from resolved camera profile "
+                + resolvedCamera.getPanoWidth() + "x" + resolvedCamera.getPanoHeight()
+                + " — restart the daemon to apply the new profile dimensions");
+        }
         
         // 5. Create camera (this creates EGL context)
-        camera = new PanoramicCameraGpu(cameraWidth, cameraHeight);
+        camera = new PanoramicCameraGpu(cameraWidth, cameraHeight, quadrantStripOffsetX);
         camera.setConsumers(recorder, downscaler, sentry);
         
         // Camera FPS config — must match the encoder FPS used above (loadTargetFps())
         // so that camera frame delivery rate matches the encoder's KEY_FRAME_RATE.
         camera.setTargetFps(fps);
         logger.info("Camera targetFps=" + fps + " (from config)");
-        
-        // Camera config strategy:
-        // 1. Saved config from previous VALIDATED probe → use directly (highest trust)
-        // 2. BmmCameraInfo discovery → asks the system for the correct panoramic camera ID
-        // 3. Default camera ID 1 (correct for Seal, most common model)
-        // 4. Full auto-probe only when all above fail
-        String model = getVehicleModel();
-        logger.info("Vehicle model: " + model);
+        logger.info("Resolved camera profile: " + resolvedCamera.getProfile().getDisplayName()
+            + " (panoCam=" + resolvedCamera.getPanoCameraId()
+            + ", size=" + resolvedCamera.getPanoWidth() + "x" + resolvedCamera.getPanoHeight()
+            + ", surfaceMode=" + resolvedCamera.getPanoSurfaceMode() + ")");
 
-        boolean configured = false;
-        
-        // Step 1: Validated saved config (probedAndValidated=true OR manualOverride=true)
-        if (!configured) {
-            try {
-                org.json.JSONObject cameraConfig = com.overdrive.app.config.UnifiedConfigManager
-                    .loadConfig().optJSONObject("camera");
-                int savedId = cameraConfig != null ? cameraConfig.optInt("probedCameraId", -1) : -1;
-                int savedMode = cameraConfig != null ? cameraConfig.optInt("probedSurfaceMode", -1) : -1;
-                boolean validated = cameraConfig != null && cameraConfig.optBoolean("probedAndValidated", false);
-                boolean manual = cameraConfig != null && cameraConfig.optBoolean("manualOverride", false);
-                boolean fallback = cameraConfig != null && cameraConfig.optBoolean("fallbackFromProbe", false);
-                
-                if (savedId >= 0 && savedMode >= 0 && (validated || manual)) {
-                    logger.info("Using " + (manual ? "MANUAL" : fallback ? "fallback" : "validated") + 
-                        " camera config: id=" + savedId + ", surfaceMode=" + savedMode);
-                    camera.setCameraId(savedId);
-                    camera.setCameraSurfaceMode(savedMode);
-                    camera.setAutoProbeCameras(false);
-                    // Skip frame validation for ALL saved configs. The strip check uses
-                    // an 8x8 luma heuristic that produces false negatives when all 4 cameras
-                    // see similar scenes (parked in garage, night, uniform lighting).
-                    // A saved config was already validated — no need to re-check every startup.
-                    camera.setSkipFrameValidation(true);
-                    configured = true;
-                }
-            } catch (Exception e) {
-                logger.warn("Failed to load saved camera config: " + e.getMessage());
-            }
-        }
-        
-        // Step 2: BmmCameraInfo discovery — asks the system which camera ID is panoramic.
-        // This is how DiPlus resolves camera IDs across different vehicle models.
-        if (!configured) {
+        if (resolvedCamera.isValidated() || resolvedCamera.isManualPanoOverride()) {
+            logger.info("Using saved panoramic config: id=" + resolvedCamera.getPanoCameraId()
+                + ", surfaceMode=" + resolvedCamera.getPanoSurfaceMode()
+                + (resolvedCamera.isManualPanoOverride() ? " (manual)" : " (validated)"));
+            camera.setCameraId(resolvedCamera.getPanoCameraId());
+            camera.setCameraSurfaceMode(resolvedCamera.getPanoSurfaceMode());
+            camera.setAutoProbeCameras(false);
+            camera.setSkipFrameValidation(true);
+        } else {
             int discoveredId = com.overdrive.app.camera.AvmCameraHelper.discoverPanoCameraId();
             if (discoveredId >= 0) {
-                logger.info("Using BmmCameraInfo discovered camera ID: " + discoveredId);
+                logger.info("Using BmmCameraInfo panoramic hint: camera ID " + discoveredId);
                 camera.setCameraId(discoveredId);
-                camera.setCameraSurfaceMode(0);
-                camera.setAutoProbeCameras(false);
-                configured = true;
+            } else {
+                logger.info("Using profile default panoramic camera ID " + resolvedCamera.getPanoCameraId());
+                camera.setCameraId(resolvedCamera.getPanoCameraId());
             }
-        }
-        
-        // Step 3: Default camera ID 1 (correct for Seal, most common model).
-        // If wrong for other models, frame-50 recheck will detect and re-probe.
-        if (!configured) {
-            logger.info("Using default camera ID 1");
-            camera.setCameraId(1);
-            camera.setCameraSurfaceMode(0);
+            camera.setCameraSurfaceMode(resolvedCamera.getPanoSurfaceMode());
             camera.setAutoProbeCameras(false);
-            configured = true;
-        }
-        
-        // Step 4: Full auto-probe as last resort (shouldn't reach here)
-        if (!configured) {
-            logger.warn("All camera config strategies failed — enabling auto-probe");
-            camera.setAutoProbeCameras(true);
+            camera.setSkipFrameValidation(false);
         }
         
         // Register probe callback — only used when manual probe is triggered via API
         camera.setCameraProbeCallback((cameraId, surfaceMode) -> {
             logger.info("Probe found working camera: id=" + cameraId + ", surfaceMode=" + surfaceMode);
             try {
-                org.json.JSONObject camCfg = new org.json.JSONObject();
-                camCfg.put("probedCameraId", cameraId);
-                camCfg.put("probedSurfaceMode", surfaceMode);
-                com.overdrive.app.config.UnifiedConfigManager.updateSection("camera", camCfg);
+                com.overdrive.app.camera.CameraConfigResolver.persistPanoramicProbe(
+                    cameraId,
+                    surfaceMode,
+                    cameraWidth,
+                    cameraHeight,
+                    true,
+                    false);
                 logger.info("Saved camera config for next launch");
             } catch (Exception ex) {
                 logger.warn("Failed to save camera config: " + ex.getMessage());
@@ -818,32 +790,17 @@ public class GpuSurveillancePipeline {
             // Re-read camera config before starting — user may have changed camera ID
             // via the app UI menu since the pipeline was initialized.
             try {
-                org.json.JSONObject cameraConfig = com.overdrive.app.config.UnifiedConfigManager
-                    .loadConfig().optJSONObject("camera");
-                if (cameraConfig != null) {
-                    int savedId = cameraConfig.optInt("probedCameraId", -1);
-                    int savedMode = cameraConfig.optInt("probedSurfaceMode", -1);
-                    boolean validated = cameraConfig.optBoolean("probedAndValidated", false);
-                    boolean manual = cameraConfig.optBoolean("manualOverride", false);
-                    
-                    if (savedId >= 0 && savedMode >= 0 && (validated || manual)) {
-                        int currentId = camera.getCameraId();
-                        if (currentId != savedId) {
-                            logger.info("Camera config changed since init: " + currentId + " → " + savedId +
-                                " (" + (manual ? "manual" : "validated") + ")");
-                            camera.setCameraId(savedId);
-                            camera.setCameraSurfaceMode(savedMode);
-                            camera.setAutoProbeCameras(false);
-                            camera.setSkipFrameValidation(true);
-                        }
-                    } else if (savedId < 0 && camera.getCameraId() != 1) {
-                        // User cleared manual override → revert to default
-                        logger.info("Camera config cleared — reverting to default ID 1");
-                        camera.setCameraId(1);
-                        camera.setCameraSurfaceMode(0);
-                        camera.setAutoProbeCameras(false);
-                        camera.setSkipFrameValidation(false);
-                    }
+                com.overdrive.app.camera.ResolvedCameraConfig refreshedCamera =
+                    com.overdrive.app.camera.CameraConfigResolver.resolve(getVehicleModel());
+                int targetCameraId = refreshedCamera.getPanoCameraId();
+                int targetSurfaceMode = refreshedCamera.getPanoSurfaceMode();
+                int currentId = camera.getCameraId();
+                if (currentId != targetCameraId) {
+                    logger.info("Camera config changed since init: " + currentId + " → " + targetCameraId);
+                    camera.setCameraId(targetCameraId);
+                    camera.setCameraSurfaceMode(targetSurfaceMode);
+                    camera.setAutoProbeCameras(false);
+                    camera.setSkipFrameValidation(refreshedCamera.isValidated() || refreshedCamera.isManualPanoOverride());
                 }
             } catch (Exception e) {
                 logger.debug("Camera config re-read failed: " + e.getMessage());
@@ -1319,7 +1276,14 @@ public class GpuSurveillancePipeline {
         
         // Create stream scaler
         logger.info("Creating stream scaler...");
-        streamScaler = new com.overdrive.app.streaming.GpuStreamScaler(streamWidth, streamHeight);
+        float[] quadrantStripOffsetX = com.overdrive.app.camera.CameraConfigResolver
+            .resolve(getVehicleModel())
+            .getQuadrantStripOffsetX();
+        streamScaler = new com.overdrive.app.streaming.GpuStreamScaler(
+            streamWidth,
+            streamHeight,
+            quadrantStripOffsetX
+        );
         
         // Always 4-camera mosaic for streaming
         streamScaler.setCameraLayout(0);
