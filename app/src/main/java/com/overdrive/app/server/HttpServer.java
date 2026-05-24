@@ -422,6 +422,10 @@ public class HttpServer {
                 if (!serveStaticFile(out, "local/index.html")) {
                     HttpResponse.sendError(out, 404, "index.html not found");
                 }
+            } else if (path.equals("/live-view.html") || path.equals("/live-view")) {
+                if (!serveStaticFile(out, "local/live-view.html")) {
+                    HttpResponse.sendError(out, 404, "live-view.html not found");
+                }
             } else if (path.startsWith("/manifest.json")) {
                 if (!serveStaticFile(out, "local/manifest.json")) {
                     HttpResponse.sendError(out, 404, "manifest.json not found");

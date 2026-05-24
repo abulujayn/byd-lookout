@@ -145,7 +145,7 @@ class WebViewFragment : Fragment() {
         '[data-app-shell="1"] .mode-name { font-size: 13px !important; }',
         '[data-app-shell="1"] .mode-desc { font-size: 11px !important; }',
 
-        // === Live View (index.html) tweaks ===
+        // === Live View (live-view.html) tweaks ===
         // The mini-preview is the only Map ↔ Cameras toggle on this page,
         // so we MUST keep it visible. Match the web-tunnel placement
         // (top-left) — earlier injection moved it bottom-right because the

@@ -43,7 +43,7 @@
 }
 
 /* === BRAND CLUSTER — clickable home affordance ====================
- * The header brand reads as "go home" (Live View). Hover lifts it onto a
+ * The header brand reads as "go home" (Dashboard). Hover lifts it onto a
  * tonal-primary surface; press scales it down — same interaction language
  * as the active sidebar nav link.
  */
@@ -105,9 +105,9 @@
     .sidebar .brand-online-pulse { animation: none; }
 }
 
-/* When the user is already on Live View, dim the brand-link's hover bg
+/* When the user is already on Dashboard, dim the brand-link's hover bg
    so the active page doesn't re-trigger the affordance every time. */
-body.live-view-page .sidebar .brand-link:hover {
+body.dashboard-page .sidebar .brand-link:hover {
     background: transparent;
 }
 

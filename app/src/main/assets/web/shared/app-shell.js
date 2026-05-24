@@ -27,7 +27,7 @@
 
     /*
      * Sidebar nav layout MIRRORS rail_menu.xml exactly:
-     *   Live → Recordings → Vehicle → Trips → Integrations cluster →
+     *   Dashboard → Live → Recordings → Vehicle → Trips → Integrations cluster →
      *   Diagnostics → Settings cluster → About.
      *
      * Recordings on the native rail opens the events list (the WebView's
@@ -41,7 +41,8 @@
     var NAV_ITEMS = [
         // ===== Overview ===== — the "what's happening now" cluster.
         { divider: true, label: 'Overview', i18n: 'nav.overview_group' },
-        { href: 'index.html',           i18n: 'nav.live_view',       label: 'Live View',       svg: '<path d="M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/><path d="M2 12a9 9 0 0 0 8 8"/><circle cx="2" cy="12" r="2"/>' },
+        { href: 'index.html',           i18n: null,                  label: 'Dashboard',       svg: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>' },
+        { href: 'live-view.html',       i18n: 'nav.live_view',       label: 'Live View',       svg: '<path d="M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/><path d="M2 12a9 9 0 0 0 8 8"/><circle cx="2" cy="12" r="2"/>' },
         { href: 'events.html',          i18n: 'nav.recordings',      label: 'Recordings',      svg: '<path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2"/>' },
 
         // ===== Vehicle ===== — control + trip history.
@@ -116,7 +117,7 @@
                 +   '<svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" ' + extra + '>'
                 +     item.svg
                 +   '</svg>'
-                +   '<span data-i18n="' + item.i18n + '">' + item.label + '</span>'
+                +   '<span' + (item.i18n ? ' data-i18n="' + item.i18n + '"' : '') + '>' + item.label + '</span>'
                 +  '</a>';
         }
         return html;
@@ -124,10 +125,10 @@
 
     function buildShellMarkup() {
         // Sidebar header — brand becomes a clickable anchor (routes to the
-        // live view, the canonical "home"). The close-X stays for mobile.
+        // dashboard, the canonical "home"). The close-X stays for mobile.
         var header = ''
             + '<div class="sidebar-header">'
-            +   '<a href="index.html" class="brand brand-link" aria-label="OverDrive — open Live View" data-i18n-attr="aria-label:nav.brand_home">'
+            +   '<a href="index.html" class="brand brand-link" aria-label="OverDrive — open Dashboard">'
             +     '<div class="brand-logo">'
             +       '<img src="../shared/app-icon-glyph-dark.webp" alt="OverDrive">'
             +       '<span class="brand-online-pulse" aria-hidden="true"></span>'
