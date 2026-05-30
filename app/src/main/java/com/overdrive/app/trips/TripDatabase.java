@@ -194,7 +194,15 @@ public class TripDatabase {
                 "efficiency_score INTEGER," +
                 "consistency_score INTEGER," +
                 "micro_moments_json CLOB," +
-                "telemetry_file_path VARCHAR(512)" +
+                "telemetry_file_path VARCHAR(512)," +
+                "is_phev BOOLEAN DEFAULT FALSE," +
+                "fuel_pct_start REAL DEFAULT -1," +
+                "fuel_pct_end REAL DEFAULT -1," +
+                "litres_used REAL DEFAULT 0," +
+                "fuel_price_per_l REAL DEFAULT 0," +
+                "fuel_cost REAL DEFAULT 0," +
+                "electric_cost REAL DEFAULT 0," +
+                "ice_seconds INTEGER DEFAULT 0" +
                 ")"
             );
 
@@ -218,6 +226,22 @@ public class TripDatabase {
             } catch (Exception e) {
                 // Columns already exist or H2 version doesn't support IF NOT EXISTS
                 logger.debug("trips kWh column migration: " + e.getMessage());
+            }
+
+            // Migration: PHEV / fuel-cost columns. Pre-PHEV trips read these
+            // as defaults (is_phev=false, fuel_pct=-1, costs=0) which the
+            // BEV path already treats as "no fuel data" — no regression.
+            try {
+                stmt.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS is_phev BOOLEAN DEFAULT FALSE");
+                stmt.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS fuel_pct_start REAL DEFAULT -1");
+                stmt.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS fuel_pct_end REAL DEFAULT -1");
+                stmt.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS litres_used REAL DEFAULT 0");
+                stmt.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS fuel_price_per_l REAL DEFAULT 0");
+                stmt.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS fuel_cost REAL DEFAULT 0");
+                stmt.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS electric_cost REAL DEFAULT 0");
+                stmt.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS ice_seconds INTEGER DEFAULT 0");
+            } catch (Exception e) {
+                logger.debug("trips fuel column migration: " + e.getMessage());
             }
 
             // Routes table for O(1) similar-trip lookups
@@ -312,6 +336,20 @@ public class TripDatabase {
                 "sum_squared_kwh_per_km REAL DEFAULT 0" +
                 ")"
             );
+
+            // PHEV fuel-consumption buckets — same shape as the EV table but
+            // stores litres-per-km. Populated only by trips classified as
+            // FUEL-mode (ICE share ≥ 50%) with a non-zero litresUsed snapshot.
+            // Table is empty on BEV vehicles; harmless. Idempotent CREATE so
+            // re-runs after migration are no-ops.
+            stmt.execute(
+                "CREATE TABLE IF NOT EXISTS fuel_consumption_buckets (" +
+                "bucket_key VARCHAR(64) PRIMARY KEY," +
+                "sample_count INTEGER DEFAULT 0," +
+                "sum_litres_per_km REAL DEFAULT 0," +
+                "sum_squared_litres_per_km REAL DEFAULT 0" +
+                ")"
+            );
         }
     }
 
@@ -330,12 +368,15 @@ public class TripDatabase {
                 "efficiency_soc_per_km, " +
                 "start_lat, start_lon, end_lat, end_lon, ext_temp_c, " +
                 "anticipation_score, smoothness_score, speed_discipline_score, " +
-                "efficiency_score, consistency_score, micro_moments_json, telemetry_file_path, route_id) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                "efficiency_score, consistency_score, micro_moments_json, telemetry_file_path, route_id, " +
+                "is_phev, fuel_pct_start, fuel_pct_end, litres_used, fuel_price_per_l, fuel_cost, " +
+                "electric_cost, ice_seconds) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         try (PreparedStatement pstmt = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
             setTripParams(pstmt, trip);
             pstmt.setObject(33, trip.routeId > 0 ? trip.routeId : null);
+            setTripFuelParams(pstmt, trip, 34);
             pstmt.executeUpdate();
 
             try (ResultSet keys = pstmt.getGeneratedKeys()) {
@@ -367,13 +408,16 @@ public class TripDatabase {
                 "start_lat=?, start_lon=?, end_lat=?, end_lon=?, ext_temp_c=?, " +
                 "anticipation_score=?, smoothness_score=?, speed_discipline_score=?, " +
                 "efficiency_score=?, consistency_score=?, micro_moments_json=?, telemetry_file_path=?, " +
-                "route_id=? " +
+                "route_id=?, " +
+                "is_phev=?, fuel_pct_start=?, fuel_pct_end=?, litres_used=?, fuel_price_per_l=?, " +
+                "fuel_cost=?, electric_cost=?, ice_seconds=? " +
                 "WHERE id=?";
 
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
             setTripParams(pstmt, trip);
             pstmt.setObject(33, trip.routeId > 0 ? trip.routeId : null);
-            pstmt.setLong(34, trip.id);
+            setTripFuelParams(pstmt, trip, 34);
+            pstmt.setLong(42, trip.id);
             pstmt.executeUpdate();
             logger.debug("Updated trip id=" + trip.id);
         } catch (Exception e) {
@@ -948,8 +992,8 @@ public class TripDatabase {
         // Order matters only weakly here (no FK constraints in the schema),
         // but child-like tables before parent feels right and matches the
         // create-order idiom used elsewhere in this file.
-        String[] tables = {"consumption_buckets", "monthly_rollups",
-                           "weekly_rollups", "routes", "trips"};
+        String[] tables = {"consumption_buckets", "fuel_consumption_buckets",
+                           "monthly_rollups", "weekly_rollups", "routes", "trips"};
         try (Statement stmt = connection.createStatement()) {
             for (String t : tables) {
                 int n = stmt.executeUpdate("DELETE FROM " + t);
@@ -1010,6 +1054,112 @@ public class TripDatabase {
         return null;
     }
 
+    // ==================== FUEL CONSUMPTION BUCKETS (PHEV) ====================
+
+    /**
+     * Update a fuel consumption bucket — same MERGE-style semantics as the
+     * EV bucket, but tracks litres-per-km instead of kWh-per-km. The
+     * underlying {@link ConsumptionBucket} record is reused; the read path
+     * fills {@code sumKwhPerKm} with the litres-per-km value so existing
+     * bucket-resolution code can stay generic.
+     */
+    public void updateFuelConsumptionBucket(String bucketKey, double litresPerKm) {
+        if (!ensureConnection()) return;
+
+        try {
+            ConsumptionBucket existing = getFuelBucket(bucketKey);
+
+            if (existing == null) {
+                String sql = "INSERT INTO fuel_consumption_buckets "
+                        + "(bucket_key, sample_count, sum_litres_per_km, sum_squared_litres_per_km) "
+                        + "VALUES (?, 1, ?, ?)";
+                try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                    pstmt.setString(1, bucketKey);
+                    pstmt.setDouble(2, litresPerKm);
+                    pstmt.setDouble(3, litresPerKm * litresPerKm);
+                    pstmt.executeUpdate();
+                }
+            } else {
+                String sql = "UPDATE fuel_consumption_buckets SET sample_count = sample_count + 1, "
+                        + "sum_litres_per_km = sum_litres_per_km + ?, "
+                        + "sum_squared_litres_per_km = sum_squared_litres_per_km + ? "
+                        + "WHERE bucket_key = ?";
+                try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+                    pstmt.setDouble(1, litresPerKm);
+                    pstmt.setDouble(2, litresPerKm * litresPerKm);
+                    pstmt.setString(3, bucketKey);
+                    pstmt.executeUpdate();
+                }
+            }
+            logger.debug("Updated fuel bucket: " + bucketKey);
+        } catch (Exception e) {
+            logger.error("Failed to update fuel bucket: " + bucketKey, e);
+            reconnect();
+        }
+    }
+
+    /**
+     * Get a fuel consumption bucket by key, or null if not found.
+     * Returns the same {@link ConsumptionBucket} type with its sumKwhPerKm
+     * field populated from the underlying litres-per-km column for
+     * call-site uniformity with the EV path.
+     */
+    public ConsumptionBucket getFuelBucket(String bucketKey) {
+        if (!ensureConnection()) return null;
+
+        String sql = "SELECT bucket_key, sample_count, sum_litres_per_km, sum_squared_litres_per_km "
+                + "FROM fuel_consumption_buckets WHERE bucket_key = ?";
+        try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
+            pstmt.setString(1, bucketKey);
+            try (ResultSet rs = pstmt.executeQuery()) {
+                if (rs.next()) {
+                    ConsumptionBucket b = new ConsumptionBucket();
+                    b.bucketKey = rs.getString("bucket_key");
+                    b.sampleCount = rs.getInt("sample_count");
+                    b.sumKwhPerKm = rs.getDouble("sum_litres_per_km");
+                    b.sumSquaredKwhPerKm = rs.getDouble("sum_squared_litres_per_km");
+                    return b;
+                }
+            }
+        } catch (Exception e) {
+            logger.error("Failed to get fuel bucket: " + bucketKey, e);
+            reconnect();
+        }
+        return null;
+    }
+
+    /**
+     * Overall average across all fuel buckets, mirroring
+     * {@link #getOverallAverage()} for the EV side.
+     */
+    public ConsumptionBucket getOverallFuelAverage() {
+        if (!ensureConnection()) return null;
+
+        String sql = "SELECT SUM(sample_count) as total_count, "
+                + "SUM(sum_litres_per_km) as total_sum, "
+                + "SUM(sum_squared_litres_per_km) as total_sum_sq "
+                + "FROM fuel_consumption_buckets";
+
+        try (PreparedStatement pstmt = connection.prepareStatement(sql);
+             ResultSet rs = pstmt.executeQuery()) {
+            if (rs.next()) {
+                int totalCount = rs.getInt("total_count");
+                if (totalCount == 0) return null;
+
+                ConsumptionBucket overall = new ConsumptionBucket();
+                overall.bucketKey = "overall";
+                overall.sampleCount = totalCount;
+                overall.sumKwhPerKm = rs.getDouble("total_sum");
+                overall.sumSquaredKwhPerKm = rs.getDouble("total_sum_sq");
+                return overall;
+            }
+        } catch (Exception e) {
+            logger.error("Failed to get overall fuel average", e);
+            reconnect();
+        }
+        return null;
+    }
+
     // ==================== HELPERS ====================
 
     /**
@@ -1051,11 +1201,23 @@ public class TripDatabase {
         trip.microMomentsJson = rs.getString("micro_moments_json");
         trip.telemetryFilePath = rs.getString("telemetry_file_path");
         try { trip.routeId = rs.getLong("route_id"); } catch (Exception e) { trip.routeId = -1; }
+        // PHEV columns — wrapped individually so a partial migration (one
+        // column added, another not) doesn't void the whole row read.
+        try { trip.isPhev         = rs.getBoolean("is_phev"); }       catch (Exception e) { trip.isPhev = false; }
+        try { trip.fuelPctStart   = rs.getDouble("fuel_pct_start"); }  catch (Exception e) { trip.fuelPctStart = -1; }
+        try { trip.fuelPctEnd     = rs.getDouble("fuel_pct_end"); }    catch (Exception e) { trip.fuelPctEnd = -1; }
+        try { trip.litresUsed     = rs.getDouble("litres_used"); }     catch (Exception e) { trip.litresUsed = 0; }
+        try { trip.fuelPricePerL  = rs.getDouble("fuel_price_per_l"); }catch (Exception e) { trip.fuelPricePerL = 0; }
+        try { trip.fuelCost       = rs.getDouble("fuel_cost"); }       catch (Exception e) { trip.fuelCost = 0; }
+        try { trip.electricCost   = rs.getDouble("electric_cost"); }   catch (Exception e) { trip.electricCost = 0; }
+        try { trip.iceSecondsAtomic.set(rs.getInt("ice_seconds")); } catch (Exception e) { trip.iceSecondsAtomic.set(0); }
         return trip;
     }
 
     /**
-     * Set PreparedStatement parameters for a TripRecord (positions 1-28).
+     * Set PreparedStatement parameters for a TripRecord (positions 1-32).
+     * Position 33 (route_id) is set by the caller; PHEV fuel columns at
+     * positions 34-41 are bound by {@link #setTripFuelParams}.
      */
     private void setTripParams(PreparedStatement pstmt, TripRecord trip) throws Exception {
         pstmt.setLong(1, trip.startTime);
@@ -1090,6 +1252,24 @@ public class TripDatabase {
         pstmt.setInt(30, trip.consistencyScore);
         pstmt.setString(31, trip.microMomentsJson);
         pstmt.setString(32, trip.telemetryFilePath);
+    }
+
+    /**
+     * Bind PHEV / fuel-cost params starting at {@code firstIdx}. Pulled into
+     * its own helper so insert/update share one source of truth for the
+     * fuel column ordering. Position is intentional (matches column list in
+     * the calling SQL): is_phev, fuel_pct_start, fuel_pct_end, litres_used,
+     * fuel_price_per_l, fuel_cost, electric_cost, ice_seconds.
+     */
+    private void setTripFuelParams(PreparedStatement pstmt, TripRecord trip, int firstIdx) throws Exception {
+        pstmt.setBoolean(firstIdx,     trip.isPhev);
+        pstmt.setDouble (firstIdx + 1, trip.fuelPctStart);
+        pstmt.setDouble (firstIdx + 2, trip.fuelPctEnd);
+        pstmt.setDouble (firstIdx + 3, trip.litresUsed);
+        pstmt.setDouble (firstIdx + 4, trip.fuelPricePerL);
+        pstmt.setDouble (firstIdx + 5, trip.fuelCost);
+        pstmt.setDouble (firstIdx + 6, trip.electricCost);
+        pstmt.setInt    (firstIdx + 7, trip.iceSeconds());
     }
 
     /**

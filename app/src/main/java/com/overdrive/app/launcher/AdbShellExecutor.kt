@@ -38,6 +38,15 @@ class AdbShellExecutor(private val context: Context) {
         
         // Dedicated polling executor (separate from command executor)
         private val pollingExecutor = Executors.newSingleThreadExecutor()
+
+        // Process-wide tiebreaker for executeScript path/delimiter nonces.
+        // Per-instance was insufficient: two AdbShellExecutor instances calling
+        // executeScript at the same nanoTime with seq=1 each would produce
+        // identical tmp paths and heredoc delimiters → the second's heredoc
+        // write truncates the first's still-running script and the first's
+        // trap-EXIT rm deletes the second's body. Companion-static eliminates
+        // cross-instance collisions.
+        private val scriptSeq = java.util.concurrent.atomic.AtomicLong(0)
         
         fun setAuthCallback(callback: AdbAuthCallback?) {
             authCallback = callback
@@ -94,6 +103,83 @@ class AdbShellExecutor(private val context: Context) {
         val result = dadb.shell(command)
         return ShellResult(result.exitCode, result.allOutput)
     }
+
+    /**
+     * Run a script via a temp file rather than `sh -c "<script>"`. The
+     * direct `sh -c` form puts the entire script in the calling shell's
+     * argv[2]; toybox `pkill -f 'pattern'` then matches the calling shell
+     * itself if the pattern appears literally in the script (which it
+     * always does — "pkill -f 'cam_daemon'" contains "cam_daemon"), and
+     * SIGKILL's the shell, dropping every command after the first pkill.
+     *
+     * Writing the script to a file first means the running shell's argv
+     * is just `sh /data/local/tmp/<id>.sh` — no daemon pattern in argv —
+     * so pkill cannot self-match. The script content is read from disk
+     * by `sh`, not from argv.
+     *
+     * Use this for any multi-command shell payload that contains a
+     * `pkill -f` whose pattern also appears as a literal in earlier
+     * commands of the same payload. The temp file is cleaned up on
+     * completion (best-effort).
+     */
+    fun executeScript(scriptBody: String, callback: ShellCallback) {
+        executor.execute {
+            // Per-call nonce = nanoTime + atomic counter. nanoTime alone
+            // is non-decreasing (not strictly increasing) so two same-nano
+            // calls can collide on emulators / older hardware. The counter
+            // breaks ties. The nonce is used as both the path suffix AND
+            // the heredoc delimiter — fixed delimiters would be a landmine
+            // (any future script body containing the literal delimiter on
+            // its own line would terminate the heredoc early).
+            val nonce = "${System.nanoTime()}_${scriptSeq.incrementAndGet()}"
+            val scriptPath = "/data/local/tmp/.adb_script_${nonce}.sh"
+            val eofMarker = "__ADB_SCRIPT_EOF_${nonce}__"
+            try {
+                logger.debug(TAG, "Executing script via $scriptPath (${scriptBody.length} bytes)")
+                val dadb = getOrCreateConnection()
+
+                // Write via a heredoc — the heredoc body comes from stdin
+                // not argv, so a `pkill -f cam_daemon` pattern inside the
+                // body never appears in any shell's argv and self-match
+                // is impossible. No chmod needed: `sh <path>` reads the
+                // script regardless of x-bit, so the previous `chmod 755`
+                // was dead code.
+                val writeCmd = "cat > $scriptPath <<'$eofMarker'\n" +
+                        scriptBody +
+                        "\n$eofMarker"
+                val writeResult = dadb.shell(writeCmd)
+                if (writeResult.exitCode != 0) {
+                    // Best-effort cleanup of any partial write
+                    try { dadb.shell("rm -f $scriptPath 2>/dev/null") } catch (ignored: Exception) {}
+                    callback.onError("script-write failed: ${writeResult.allOutput}")
+                    return@execute
+                }
+
+                // Run with `trap 'rm -f path' EXIT` so the tmpfile is
+                // removed on ANY shell exit — normal, signal, or abnormal.
+                // The previous `sh path; RC=$?; rm -f path; exit $RC`
+                // form leaked the tmpfile if the inner shell was killed
+                // mid-run (rm never reached). trap-EXIT runs even on
+                // SIGTERM/SIGHUP from dadb transport teardown.
+                val runResult = dadb.shell(
+                    "trap 'rm -f $scriptPath' EXIT; sh $scriptPath"
+                )
+
+                if (runResult.exitCode == 0) {
+                    callback.onSuccess(runResult.allOutput)
+                } else {
+                    callback.onError("Exit code ${runResult.exitCode}: ${runResult.allOutput}")
+                }
+            } catch (e: Exception) {
+                logger.error(TAG, "Script execution failed", e)
+                callback.onError("Execution failed: ${e.message}")
+                // Best-effort cleanup if the connection is still alive.
+                // `getOrCreateConnection()` may itself throw if the
+                // failure was a connection drop — swallow.
+                try { getOrCreateConnection().shell("rm -f $scriptPath 2>/dev/null") } catch (ignored: Exception) {}
+            }
+        }
+    }
     
     fun checkProcessRunning(processName: String): Int? {
         return try {
@@ -114,7 +200,18 @@ class AdbShellExecutor(private val context: Context) {
     fun killProcess(processName: String): Boolean {
         return try {
             val dadb = getOrCreateConnection()
-            val result = dadb.shell("pkill -9 -f '$processName'")
+            // ps+awk+kill instead of pkill -f. dadb.shell runs `shell:cmd`
+            // over ADB which is equivalent to `sh -c "<cmd>"`. With
+            // pkill -f, the wrapper sh's argv contains the literal
+            // processName, so toybox pkill -f matches it and SIGKILLs
+            // the calling shell — exit code 137 (returned as
+            // result.exitCode), so killProcess returns false even
+            // when the target was actually killed.
+            val cmd = "MY_PID=\$\$; ps -A -o PID,ARGS | grep -F '$processName' | grep -v grep " +
+                "| awk '{print \$1}' | while read pid; do " +
+                "if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done; " +
+                "echo done"
+            val result = dadb.shell(cmd)
             result.exitCode == 0
         } catch (e: Exception) {
             logger.error(TAG, "Failed to kill process: $processName", e)
@@ -189,12 +286,37 @@ class AdbShellExecutor(private val context: Context) {
     
     /**
      * Try to connect with a timeout. Returns null if times out (auth pending).
+     *
+     * NOTE: java.net.Socket I/O is NOT interruptible — `Thread.interrupt()`
+     * does not unblock a thread blocked inside connect/read. The
+     * connectThread therefore keeps running until the OS times out the
+     * TCP handshake / SSL handshake (typically <75s on Android), or
+     * until the dadb internal socket aborts. We can't shorten that
+     * without rewriting the Dadb internals.
+     *
+     * Mitigation: mark the orphan thread as daemon + named so it
+     *   (a) doesn't hold the JVM alive (Android process death is
+     *       unaffected, but JVM-shutdown semantics still matter for
+     *       Robolectric / instrumentation tests),
+     *   (b) shows up in /proc/self/status and `dumpsys meminfo` with a
+     *       distinct name, so leaks are visible if they ever happen,
+     *   (c) is bounded — the thread terminates naturally when its
+     *       blocked I/O times out.
+     *
+     * Each timed-out call leaks ONE thread for ≤~75s. Under normal
+     * operation (good ADB transport) this path is rarely hit.
      */
     private fun tryConnectWithTimeout(keyPair: AdbKeyPair, timeoutMs: Long): Dadb? {
+        // Plain locals — Thread.join() itself provides the happens-before
+        // edge required for the caller to safely read writes made on the
+        // connect thread (per JMM: a successful join "happens-after" all
+        // actions of the joined thread). Previously these were marked
+        // `@Volatile` but Kotlin allows that annotation on locals with no
+        // effect; the actual synchronization is from join.
         var result: Dadb? = null
         var error: Exception? = null
-        
-        val connectThread = Thread {
+
+        val connectThread = Thread({
             try {
                 val dadb = Dadb.create("127.0.0.1", ADB_PORT, keyPair)
                 val testResult = dadb.shell("echo ok")
@@ -206,18 +328,24 @@ class AdbShellExecutor(private val context: Context) {
             } catch (e: Exception) {
                 error = e
             }
+        }, "adb-connect-probe").apply {
+            // Daemon so it doesn't block JVM shutdown on Robolectric/JUnit
+            isDaemon = true
         }
-        
+
         connectThread.start()
         connectThread.join(timeoutMs)
-        
+
         if (connectThread.isAlive) {
-            // Timed out - auth is pending
-            logger.debug(TAG, "Connection timed out - auth likely pending")
+            // Timed out — auth is pending. We attempt to interrupt as a
+            // best-effort, but Socket I/O won't actually unblock; the
+            // thread will terminate naturally when its TCP/handshake
+            // times out (usually within ~75s on Android).
+            logger.debug(TAG, "Connection timed out - auth likely pending; orphan probe thread will exit on socket timeout")
             connectThread.interrupt()
             return null
         }
-        
+
         error?.let { throw it }
         return result
     }
@@ -290,6 +418,20 @@ class AdbShellExecutor(private val context: Context) {
                 logger.error(TAG, "Error closing ADB connection", e)
             }
             sharedDadb = null
+        }
+    }
+
+    /**
+     * Shut down the per-instance executor. Call when the owning launcher
+     * is being torn down — without this, every dropped AdbShellExecutor
+     * leaves its single-thread executor parked for the life of the JVM
+     * because the underlying Thread is non-daemon by default.
+     */
+    fun shutdown() {
+        try {
+            executor.shutdownNow()
+        } catch (e: Exception) {
+            logger.warn(TAG, "executor shutdown failed: ${e.message}")
         }
     }
     

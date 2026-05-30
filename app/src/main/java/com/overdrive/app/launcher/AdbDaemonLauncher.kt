@@ -18,11 +18,19 @@ class AdbDaemonLauncher(private val context: Context) {
     
     companion object {
         private const val TAG = "AdbDaemonLauncher"
-        
+
         // Tunnel configuration (kept for backward compatibility)
         var tunnelType: String = "cloudflared"
-        
+
         // Track last notified tunnel URL to avoid duplicate notifications
+        // within a single process. Cloudflared free quick-tunnels rotate
+        // the *.trycloudflare.com hostname on every restart, so this URL-
+        // equality check is only useful for the "tunnel already running,
+        // reusing existing URL" fast path. Restart-loop dedup happens in
+        // TelegramBotDaemon.processIpcCommand "notifyTunnel" — that path
+        // runs in the daemon UID (2000 / shell) which CAN write to
+        // /data/local/tmp, while this companion runs in the app UID
+        // (10xxx) which CANNOT (sticky-bit dir owned by shell:shell).
         @Volatile
         private var lastNotifiedTunnelUrl: String? = null
     }
@@ -30,11 +38,28 @@ class AdbDaemonLauncher(private val context: Context) {
     // Shared LogManager instance
     private val logManager = LogManager.getInstance()
     
-    // Specialized launchers
-    private val adbShellExecutor = AdbShellExecutor(context)
+    // Specialized launchers. adbShellExecutor is exposed (not private) so
+    // DaemonStartupManager and other callers can pass the SAME executor
+    // to ad-hoc launcher classes (TailscaleLauncher, ServiceLauncher) on
+    // boot/init paths instead of allocating fresh executors that never get
+    // shutdown — historically those were thread-leak hotspots.
+    //
+    // CONTRACT: external callers may call `.execute()` / `.executeScript()`
+    // on this field. They MUST NOT call `.shutdown()` or `.closeConnection()`
+    // — both are owned by this AdbDaemonLauncher and routed via
+    // closePersistentConnection / releasePerInstanceResources. Calling
+    // shutdown() externally torpedoes the parent launcher invisibly:
+    // every subsequent execute() throws RejectedExecutionException.
+    val adbShellExecutor = AdbShellExecutor(context)
     private val daemonLauncher = DaemonLauncher(context, adbShellExecutor, logManager)
     private val tunnelLauncher = TunnelLauncher(context, adbShellExecutor, logManager)
     private val serviceLauncher = ServiceLauncher(context, adbShellExecutor, logManager)
+    // Cached SingboxLauncher — was allocated fresh on every isSingboxRunning
+    // and startSingbox call, which on the 30s health-check tick adds up to
+    // ~2880 instances per 24h park. SingboxLauncher itself doesn't hold
+    // exotic state, but each instance went through Object init + closed
+    // over Context, which on long parks accumulated in heap.
+    private val singboxLauncher = SingboxLauncher(context, adbShellExecutor, logManager)
     
     // ==================== CALLBACK INTERFACES ====================
     
@@ -53,11 +78,40 @@ class AdbDaemonLauncher(private val context: Context) {
     // ==================== CONNECTION MANAGEMENT ====================
     
     /**
-     * Close the persistent ADB connection.
+     * Close the persistent ADB connection AND shut down the executor thread.
      * Call this when the service is destroyed.
+     *
+     * IMPORTANT: closeConnection() closes the **process-wide shared Dadb**
+     * (it lives in `AdbShellExecutor`'s companion). Calling this from a
+     * transient AdbDaemonLauncher (e.g. UpdateLifecycle.hardResetDaemons)
+     * will close the connection that the long-lived
+     * `daemonStartupManager.adbLauncher` is concurrently using, surfacing
+     * spurious onError on its in-flight tasks. For transient launchers
+     * use {@link #releasePerInstanceResources()} instead.
      */
     fun closePersistentConnection() {
+        // Shut down the TunnelLauncher's poll scheduler too — it owns a
+        // dedicated single-thread scheduled executor that lives as long
+        // as this AdbDaemonLauncher does.
+        try { tunnelLauncher.shutdown() } catch (e: Exception) {
+            logManager.warn(TAG, "tunnelLauncher.shutdown failed: ${e.message}")
+        }
+        adbShellExecutor.shutdown()
         adbShellExecutor.closeConnection()
+    }
+
+    /**
+     * Release resources owned by THIS launcher only — its single-thread
+     * AdbShellExecutor + nested tunnelLauncher.pollScheduler — without
+     * touching the process-wide shared Dadb connection. Use this on
+     * short-lived launchers (e.g. UpdateLifecycle.hardResetDaemons)
+     * whose work is one-shot and that don't own the Dadb.
+     */
+    fun releasePerInstanceResources() {
+        try { tunnelLauncher.shutdown() } catch (e: Exception) {
+            logManager.warn(TAG, "tunnelLauncher.shutdown failed: ${e.message}")
+        }
+        adbShellExecutor.shutdown()
     }
     
     /**
@@ -192,8 +246,11 @@ class AdbDaemonLauncher(private val context: Context) {
             override fun onLog(message: String) = callback.onLog(message)
             
             override fun onTunnelUrl(url: String) {
-                // Notify Telegram daemon via IPC when tunnel URL is established
-                // Only notify if URL is new/different to avoid duplicate messages
+                // In-process URL-equality dedup only — collapses the
+                // "tunnel already running, reusing existing URL" fast
+                // path. Restart-loop dedup is enforced by
+                // TelegramBotDaemon.processIpcCommand on the daemon side
+                // (where /data/local/tmp/ is writable).
                 if (url.isNotEmpty() && url != lastNotifiedTunnelUrl) {
                     lastNotifiedTunnelUrl = url
                     com.overdrive.app.telegram.TelegramNotifier.notifyTunnelUrl(url, true)
@@ -211,7 +268,7 @@ class AdbDaemonLauncher(private val context: Context) {
     fun stopTunnel(callback: LaunchCallback) {
         // Clear tracked URL so next tunnel start will notify
         lastNotifiedTunnelUrl = null
-        
+
         tunnelLauncher.stopTunnel(object : TunnelLauncher.TunnelCallback {
             override fun onLog(message: String) = callback.onLog(message)
             override fun onTunnelUrl(url: String) = callback.onLaunched()
@@ -427,22 +484,21 @@ class AdbDaemonLauncher(private val context: Context) {
     // ==================== SINGBOX ====================
     
     /**
-     * Launch sing-box proxy.
+     * Launch sing-box proxy. Uses the cached SingboxLauncher; previously
+     * allocated a fresh instance per call.
      */
     fun startSingbox(callback: LaunchCallback) {
-        val singboxLauncher = SingboxLauncher(context, adbShellExecutor, logManager)
         singboxLauncher.launchSingbox(object : SingboxLauncher.SingboxCallback {
             override fun onLog(message: String) = callback.onLog(message)
             override fun onStarted() = callback.onLaunched()
             override fun onError(error: String) = callback.onError(error)
         })
     }
-    
+
     /**
-     * Check if sing-box is running.
+     * Check if sing-box is running. Uses the cached SingboxLauncher.
      */
     fun isSingboxRunning(callback: (Boolean) -> Unit) {
-        val singboxLauncher = SingboxLauncher(context, adbShellExecutor, logManager)
         singboxLauncher.isRunning(callback)
     }
     
@@ -459,7 +515,32 @@ class AdbDaemonLauncher(private val context: Context) {
                     callback.onLog(output)
                     callback.onLaunched()
                 }
-                
+
+                override fun onError(error: String) {
+                    callback.onError(error)
+                }
+            }
+        )
+    }
+
+    /**
+     * Execute a multi-command shell payload via a temp script file. Use this
+     * for any payload containing `pkill -f '<pattern>'` whose pattern also
+     * appears as a literal substring elsewhere in the same payload —
+     * `sh -c "<payload>"` puts the whole payload in argv[2], and toybox
+     * `pkill -f` matches the calling shell itself, SIGKILLing it before
+     * later commands run. The script-file form puts only the path in argv,
+     * so pkill cannot self-match. See AdbShellExecutor.executeScript.
+     */
+    fun executeShellScript(scriptBody: String, callback: LaunchCallback) {
+        adbShellExecutor.executeScript(
+            scriptBody = scriptBody,
+            callback = object : AdbShellExecutor.ShellCallback {
+                override fun onSuccess(output: String) {
+                    callback.onLog(output)
+                    callback.onLaunched()
+                }
+
                 override fun onError(error: String) {
                     callback.onError(error)
                 }

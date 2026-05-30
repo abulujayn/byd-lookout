@@ -40,9 +40,14 @@ public class WebSocketStreamServer extends WebSocketServer
     // Track external clients (e.g., from HttpServer /ws path)
     private volatile int externalClientCount = 0;
     
-    // SOTA FIX: Reusable frame buffer to eliminate GC pressure
-    // H.264 frames are typically 50-200KB, allocate 512KB to handle spikes
-    private byte[] reusableFrameBuffer = new byte[512 * 1024];
+    // Reusable frame buffer. Lazy-allocated on the first H.264 packet so a
+    // server instance that never receives a client (idle dashcam, surveillance
+    // off) holds nothing. shutdown() drops it back to null.
+    // Capped at MAX_REUSABLE_FRAME_BYTES — a runaway IDR (corrupt encoder
+    // output) won't pin a multi-MB buffer for the daemon's lifetime.
+    private static final int INITIAL_REUSABLE_FRAME_BYTES = 256 * 1024;
+    private static final int MAX_REUSABLE_FRAME_BYTES = 4 * 1024 * 1024;
+    private byte[] reusableFrameBuffer = null;
 
     public WebSocketStreamServer() {
         super(new InetSocketAddress(PORT));
@@ -201,21 +206,42 @@ public class WebSocketStreamServer extends WebSocketServer
     @Override
     public void onH264Packet(ByteBuffer data, MediaCodec.BufferInfo info) {
         if (clients.isEmpty()) return;
-        
-        // SOTA FIX: Reuse buffer instead of allocating new byte[] per frame
-        // This eliminates ~1.5MB/sec of GC pressure at 15 FPS
+
+        // Lazy-init the reusable buffer on the first packet that actually
+        // reaches a connected client. With surveillance on but no streaming
+        // viewer the encoder still drains, but onH264Packet exits at the
+        // empty-clients check above and we never spend the 256 KB.
         int frameSize = info.size;
-        if (frameSize > reusableFrameBuffer.length) {
-            // Rare case: frame larger than buffer, resize once
-            reusableFrameBuffer = new byte[frameSize * 2];
-            logger.warn("Resized frame buffer to " + reusableFrameBuffer.length + " bytes");
+        // Hard cap before any allocation: a corrupt encoder output larger
+        // than MAX_REUSABLE_FRAME_BYTES is dropped. Putting this BEFORE the
+        // lazy-init branch closes a window where buf=null + frameSize>MAX
+        // would clamp seed to MAX and then `data.get(buf, 0, frameSize)`
+        // would throw IndexOutOfBoundsException because frameSize > buf.length.
+        if (frameSize > MAX_REUSABLE_FRAME_BYTES) {
+            logger.warn("Dropping oversize H.264 packet: " + frameSize
+                    + " bytes (cap=" + MAX_REUSABLE_FRAME_BYTES + ")");
+            return;
         }
-        
+        byte[] buf = reusableFrameBuffer;
+        if (buf == null) {
+            int seed = Math.max(INITIAL_REUSABLE_FRAME_BYTES, frameSize);
+            seed = Math.min(seed, MAX_REUSABLE_FRAME_BYTES);
+            buf = new byte[seed];
+            reusableFrameBuffer = buf;
+        } else if (frameSize > buf.length) {
+            // Frame larger than current buffer. Grow up to MAX (already
+            // bounded above, so target == frameSize is achievable here).
+            int target = Math.min(MAX_REUSABLE_FRAME_BYTES, Math.max(frameSize, buf.length * 2));
+            buf = new byte[target];
+            reusableFrameBuffer = buf;
+            logger.warn("Resized frame buffer to " + buf.length + " bytes");
+        }
+
         data.position(info.offset);
-        data.get(reusableFrameBuffer, 0, frameSize);
-        
+        data.get(buf, 0, frameSize);
+
         // Send to all clients (they copy internally)
-        sendToAll(reusableFrameBuffer, frameSize);
+        sendToAll(buf, frameSize);
         
         frameCount++;
         long now = System.currentTimeMillis();
@@ -230,11 +256,17 @@ public class WebSocketStreamServer extends WebSocketServer
     }
     
     private void sendToAll(byte[] data, int length) {
+        // Single ByteBuffer.wrap reused across clients. java-WebSocket reads
+        // via position()/remaining() and copies internally before queueing,
+        // so resetting position before each conn.send is safe and gets us
+        // back the per-frame allocations the loop used to make (one wrapper
+        // per client × N clients × 30 fps).
+        ByteBuffer wrapped = ByteBuffer.wrap(data, 0, length);
         for (WebSocket conn : clients) {
             try {
                 if (conn.isOpen()) {
-                    // WebSocket library copies data internally, safe to reuse buffer
-                    conn.send(ByteBuffer.wrap(data, 0, length));
+                    wrapped.position(0);
+                    conn.send(wrapped);
                 }
                 else clients.remove(conn);
             } catch (Exception e) {
@@ -254,6 +286,7 @@ public class WebSocketStreamServer extends WebSocketServer
             }
             clients.clear();
             cachedSpsPps = null;
+            reusableFrameBuffer = null;
             frameCount = 0;
             stop(1000);
             logger.info("WebSocket Stream Server stopped");

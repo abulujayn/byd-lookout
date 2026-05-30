@@ -56,19 +56,30 @@
                   EV-card. yawOffset = π/2 reuses the side rig and rotates the
                   GLB to face the camera (no new view in ev-card-3d.js).
                 -->
-                <section class="dash-vehicle-card">
-                    <div class="dash-vehicle-canvas-wrap">
-                        <canvas id="dashHero3d" class="dash-vehicle-canvas" aria-hidden="true"></canvas>
-                    </div>
-                </section>
-
-                <section class="dash-grid">
-                    <article class="dash-card dash-location-card">
+                <!-- Reorderable card grid. All four cards (vehicle 3D,
+                     location, commands, info) share the same drag-reorder
+                     parent. Each card carries data-card-id for layout
+                     persistence. The vehicle card spans all columns
+                     (.dash-card-full) so when it's first in the order it
+                     looks like the original full-width hero. -->
+                <section class="dash-grid" id="dashCards">
+                    <section class="dash-vehicle-card dash-card-full" data-card-id="vehicle">
+                        <button class="dash-card-grip" type="button" aria-label="Drag to reorder" tabindex="-1">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+                        </button>
+                        <div class="dash-vehicle-canvas-wrap">
+                            <canvas id="dashHero3d" class="dash-vehicle-canvas" aria-hidden="true"></canvas>
+                        </div>
+                    </section>
+                    <article class="dash-card dash-location-card" data-card-id="location">
                         <div class="dash-card-head">
                             <div>
                                 <span class="dash-card-kicker" data-i18n="dashboard.kicker_position">Position</span>
                                 <h2 data-i18n="dashboard.card_location">Vehicle location</h2>
                             </div>
+                            <button class="dash-card-grip" type="button" aria-label="Drag to reorder" tabindex="-1">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+                            </button>
                             <a class="dash-icon-btn" href="live-view.html"
                                data-i18n-attr="aria-label:dashboard.open_live_view"
                                aria-label="Open Live View">
@@ -84,12 +95,15 @@
                         </div>
                     </article>
 
-                    <article class="dash-card dash-actions-card">
+                    <article class="dash-card dash-actions-card" data-card-id="commands">
                         <div class="dash-card-head">
                             <div>
                                 <span class="dash-card-kicker" data-i18n="dashboard.kicker_commands">Commands</span>
                                 <h2 data-i18n="dashboard.card_commands">Quick controls</h2>
                             </div>
+                            <button class="dash-card-grip" type="button" aria-label="Drag to reorder" tabindex="-1">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+                            </button>
                         </div>
                         <div class="dash-command-grid">
                             <button class="dash-command" type="button" onclick="BYD.dashboard.command(this, '/api/vehicle/lock')">
@@ -133,12 +147,15 @@
                         </div>
                     </article>
 
-                    <article class="dash-card dash-info-card">
+                    <article class="dash-card dash-info-card" data-card-id="info">
                         <div class="dash-card-head">
                             <div>
                                 <span class="dash-card-kicker" data-i18n="dashboard.kicker_vehicle">Vehicle</span>
                                 <h2 data-i18n="dashboard.card_info">Main info</h2>
                             </div>
+                            <button class="dash-card-grip" type="button" aria-label="Drag to reorder" tabindex="-1">
+                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="6" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="9" cy="18" r="1"/><circle cx="15" cy="6" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="15" cy="18" r="1"/></svg>
+                            </button>
                         </div>
                         <div class="dash-metric-grid">
                             <div class="dash-metric"><span data-i18n="dashboard.metric_battery">Battery</span><strong id="dashSoc">--</strong></div>
@@ -184,11 +201,21 @@
             display: flex;
             align-items: flex-end;
             justify-content: space-between;
+            flex-wrap: wrap;          /* allow status row to drop below copy on narrow widths */
             gap: 20px;
             padding: 24px;
             background: var(--bg-surface);
             border: 1px solid var(--border-subtle);
             border-radius: 8px;
+        }
+        .dash-hero-copy {
+            /* min-width:0 releases the flex-min-content lock so a very
+               long headline doesn't push the chip row off the card.
+               flex: 1 grows the copy to consume free space; the chip
+               column gets `flex-shrink: 0` from being a static block
+               of fixed-content chips. */
+            flex: 1 1 320px;
+            min-width: 0;
         }
 
         .dash-overline {
@@ -235,6 +262,13 @@
             font-size: 12px;
             font-weight: 700;
             white-space: nowrap;
+            /* Cap chip width so a verbose locale (long device-id, long
+               GPS-cached label, etc.) can't push the chip row past the
+               hero card boundary. Ellipsis kicks in only past the cap;
+               normal-length chips render unchanged. */
+            max-width: 180px;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .dash-chip.good { color: var(--brand-primary); border-color: rgba(0, 212, 170, 0.35); }
@@ -302,6 +336,87 @@
         }
 
         .dash-info-card { grid-column: 1 / -1; }
+        /* Full-width card span — used by the vehicle 3D card so it
+           still fills the row when reordered to the top. Pinning
+           grid-column on the class (not the position) means any card
+           tagged dash-card-full keeps the full-row look at any order. */
+        .dash-card-full { grid-column: 1 / -1; }
+        /* Vehicle card retains its existing visuals (gradient bg from
+           .dash-vehicle-card) but needs position:relative now so the
+           grip handle can pin to the top-right corner. */
+        .dash-vehicle-card { position: relative; }
+
+        /* ── Drag-reorder handle ─────────────────────────────────────
+           Six-dot grip sitting in the card head (or top-right corner
+           for cards without a head, like the 3D vehicle card). Wide
+           hit target for thumb drag; visual is a small icon so it
+           doesn't dominate. cursor:grab when idle, grabbing when
+           dragging. Only shown when JS has attached the reorder
+           controller (.dash-cards-ready on the parent). */
+        .dash-card-grip {
+            display: none;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            padding: 0;
+            border: 0;
+            background: transparent;
+            color: var(--text-muted);
+            cursor: grab;
+            border-radius: 8px;
+            touch-action: none;
+            -webkit-user-select: none;
+            user-select: none;
+            transition: background 0.15s ease, color 0.15s ease;
+            flex: 0 0 auto;
+        }
+        .dash-cards-ready .dash-card-grip { display: inline-flex; }
+        .dash-card-grip:hover {
+            background: var(--bg-elevated);
+            color: var(--text-primary);
+        }
+        .dash-card-grip:active { cursor: grabbing; }
+        .dash-card-grip svg { width: 18px; height: 18px; }
+        /* Vehicle card has no head — pin the grip top-right with a
+           subtle glassy chip so it's visible against the gradient bg. */
+        .dash-vehicle-card > .dash-card-grip {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(20, 22, 30, 0.55);
+            color: var(--text-primary);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            z-index: 5;
+        }
+
+        /* While a card is being dragged: lift it visually with a
+           shadow + slight scale, and dim the rest. The .dash-card-ghost
+           class marks the placeholder slot so siblings know where the
+           dragged card will land — uses dashed outline + tinted bg. */
+        .dash-card.dash-card-dragging,
+        .dash-vehicle-card.dash-card-dragging {
+            cursor: grabbing;
+            opacity: 0.96;
+            box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45),
+                        0 0 0 1px var(--brand-primary);
+            transform: scale(1.01);
+            z-index: 10;
+            transition: box-shadow 0.18s ease, transform 0.18s ease;
+        }
+        .dash-card-ghost {
+            outline: 2px dashed rgba(0, 212, 170, 0.5);
+            outline-offset: -4px;
+            background: rgba(0, 212, 170, 0.06);
+            /* Hide ghost children — only the placeholder shape matters. */
+        }
+        .dash-card-ghost > * { visibility: hidden; }
+        /* Smooth slide animation when other cards reflow around the
+           dragged one. Skipped during active drag to avoid laggy feel. */
+        .dash-cards-ready:not(.dash-cards-dragging) > * {
+            transition: transform 0.22s cubic-bezier(0.2, 0, 0, 1);
+        }
 
         .dash-card-head {
             display: flex;
@@ -465,8 +580,21 @@
                 align-items: flex-start;
                 padding: 18px;
             }
+            /* In column mode the 320px flex-basis on .dash-hero-copy would
+               translate to a 320px height — way more than needed. Reset
+               flex so the copy hugs its intrinsic height. */
+            .dash-hero-copy { flex: 0 0 auto; }
             .dash-hero h1 { font-size: 27px; }
-            .dash-vehicle-canvas-wrap { height: 200px; }
+            /* The GLB renders side-on (wider than tall); a fixed
+               200px wastes vertical space on portrait phones. Scale
+               with viewport width so the card stays proportional
+               from a 320px small phone up to a 768px tablet, with
+               hard floor + ceiling for legibility. PWA-only page
+               (the head-unit's in-app WebView never loads this), so
+               clamp() (Chrome 79+) is fair game. */
+            .dash-vehicle-canvas-wrap {
+                height: clamp(140px, 38vw, 200px);
+            }
             .dash-grid,
             .dash-command-grid,
             .dash-metric-grid {
@@ -675,6 +803,214 @@
             } else {
                 setTimeout(mountHero, 0);
             }
+        })();
+
+        // ── Dashboard card reorder ──────────────────────────────────
+        // PWA-only feature (the head-unit's in-app WebView never loads
+        // this page). Long-press / pointer-down on a card's grip
+        // handle starts a drag; sibling cards reflow with a slide
+        // animation; on drop, the new sibling order is persisted to
+        // localStorage and restored on next load.
+        //
+        // Why this design:
+        //   - Native HTML5 drag-and-drop has too many WebKit/iOS
+        //     quirks (drag images that won't follow the pointer,
+        //     event ordering differences) so we use Pointer Events
+        //     directly and move the dragged card with absolute
+        //     position + transform.
+        //   - Drag is initiated only from the .dash-card-grip handle,
+        //     not from anywhere on the card. That keeps inner buttons,
+        //     selects, and the map fully interactive.
+        //   - We don't change CSS grid lines per-card; we only
+        //     reorder the DOM. The grid-column property stays on the
+        //     class (e.g. .dash-card-full spans all columns), so a
+        //     full-width card looks full-width regardless of order.
+        (function () {
+            var STORAGE_KEY = 'overdrive.dashboard.cardOrder';
+            var grid = document.getElementById('dashCards');
+            if (!grid) return;
+
+            // Restore saved order before the controller goes interactive
+            // so first paint matches the user's last layout.
+            try {
+                var saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+                if (saved && Array.isArray(saved)) {
+                    var byId = {};
+                    Array.prototype.forEach.call(grid.children, function (el) {
+                        var id = el.getAttribute('data-card-id');
+                        if (id) byId[id] = el;
+                    });
+                    saved.forEach(function (id) {
+                        if (byId[id]) grid.appendChild(byId[id]);
+                    });
+                    // Anything not in the saved list (newly added cards
+                    // in a future build) sticks to the natural-order
+                    // position — they'll already be after the moved
+                    // siblings since appendChild moves to end.
+                }
+            } catch (e) { /* corrupted entry — ignore, keep default order */ }
+
+            grid.classList.add('dash-cards-ready');
+
+            var dragging = null;       // the card element being dragged
+            var pointerId = null;
+            var startX = 0, startY = 0;
+            var grabOffsetX = 0, grabOffsetY = 0;
+            var ghost = null;          // placeholder element shown in flow
+            var savedStyle = null;     // restore on drop
+
+            function siblingCards() {
+                return Array.prototype.filter.call(grid.children, function (c) {
+                    return c !== ghost && c !== dragging
+                        && c.getAttribute('data-card-id') !== null;
+                });
+            }
+
+            // Find the sibling whose center the pointer is closest to,
+            // and whether to insert before or after it. We use centroid
+            // distance (not bounding-box hit-test) so the user can drag
+            // over the gap between two cards and the closer one wins.
+            function pickInsertion(pointerX, pointerY) {
+                var cards = siblingCards();
+                var bestEl = null;
+                var bestBefore = false;
+                var bestDist = Infinity;
+                for (var i = 0; i < cards.length; i++) {
+                    var r = cards[i].getBoundingClientRect();
+                    var cx = r.left + r.width / 2;
+                    var cy = r.top + r.height / 2;
+                    var dx = pointerX - cx, dy = pointerY - cy;
+                    var d = dx * dx + dy * dy;
+                    if (d < bestDist) {
+                        bestDist = d;
+                        bestEl = cards[i];
+                        // Insert BEFORE this card if pointer is above-left
+                        // of its center, AFTER otherwise. For a CSS grid
+                        // that wraps to multiple rows, "before" means
+                        // pointer.y < center.y (or same row & pointer.x <
+                        // center.x).
+                        bestBefore = pointerY < cy
+                            || (Math.abs(pointerY - cy) < r.height / 2
+                                && pointerX < cx);
+                    }
+                }
+                return { el: bestEl, before: bestBefore };
+            }
+
+            function updateGhostPosition(pointerX, pointerY) {
+                var pick = pickInsertion(pointerX, pointerY);
+                if (!pick.el || !ghost) return;
+                if (pick.before) {
+                    grid.insertBefore(ghost, pick.el);
+                } else {
+                    var nxt = pick.el.nextSibling;
+                    while (nxt && nxt.nodeType !== 1) nxt = nxt.nextSibling;
+                    grid.insertBefore(ghost, nxt);
+                }
+            }
+
+            function startDrag(card, ev) {
+                if (dragging) return;
+                dragging = card;
+                pointerId = ev.pointerId;
+                var r = card.getBoundingClientRect();
+                grabOffsetX = ev.clientX - r.left;
+                grabOffsetY = ev.clientY - r.top;
+                startX = ev.clientX;
+                startY = ev.clientY;
+
+                // Build the placeholder ghost: same dimensions as the
+                // card so the grid layout doesn't shift when we lift
+                // the original out of flow.
+                ghost = document.createElement(card.tagName);
+                ghost.className = card.className + ' dash-card-ghost';
+                ghost.style.height = r.height + 'px';
+                ghost.setAttribute('data-card-ghost', '1');
+                grid.insertBefore(ghost, card);
+
+                // Lift the dragged card out of the grid flow.
+                savedStyle = {
+                    position: card.style.position,
+                    top: card.style.top,
+                    left: card.style.left,
+                    width: card.style.width,
+                    height: card.style.height,
+                    margin: card.style.margin,
+                    pointerEvents: card.style.pointerEvents,
+                };
+                card.style.position = 'fixed';
+                card.style.top = r.top + 'px';
+                card.style.left = r.left + 'px';
+                card.style.width = r.width + 'px';
+                card.style.height = r.height + 'px';
+                card.style.margin = '0';
+                card.style.pointerEvents = 'none';
+                card.classList.add('dash-card-dragging');
+                grid.classList.add('dash-cards-dragging');
+                document.body.style.userSelect = 'none';
+                document.body.style.webkitUserSelect = 'none';
+            }
+
+            function moveDrag(ev) {
+                if (!dragging || ev.pointerId !== pointerId) return;
+                if (ev.cancelable) ev.preventDefault();
+                dragging.style.left = (ev.clientX - grabOffsetX) + 'px';
+                dragging.style.top = (ev.clientY - grabOffsetY) + 'px';
+                updateGhostPosition(ev.clientX, ev.clientY);
+            }
+
+            function endDrag(ev) {
+                if (!dragging || ev.pointerId !== pointerId) return;
+                // Place the dragged card where the ghost is.
+                if (ghost && ghost.parentNode === grid) {
+                    grid.insertBefore(dragging, ghost);
+                    grid.removeChild(ghost);
+                }
+                ghost = null;
+                // Restore inline styles.
+                if (savedStyle) {
+                    dragging.style.position = savedStyle.position;
+                    dragging.style.top = savedStyle.top;
+                    dragging.style.left = savedStyle.left;
+                    dragging.style.width = savedStyle.width;
+                    dragging.style.height = savedStyle.height;
+                    dragging.style.margin = savedStyle.margin;
+                    dragging.style.pointerEvents = savedStyle.pointerEvents;
+                }
+                dragging.classList.remove('dash-card-dragging');
+                grid.classList.remove('dash-cards-dragging');
+                document.body.style.userSelect = '';
+                document.body.style.webkitUserSelect = '';
+                dragging = null;
+                pointerId = null;
+                savedStyle = null;
+                // Persist new order.
+                var order = Array.prototype.map.call(grid.children, function (c) {
+                    return c.getAttribute('data-card-id');
+                }).filter(function (id) { return id; });
+                try { localStorage.setItem(STORAGE_KEY, JSON.stringify(order)); }
+                catch (e) { /* localStorage may be disabled — silently ignore */ }
+            }
+
+            // Delegate pointer events on the grid so we don't bind
+            // per-card. Drag origin must be a .dash-card-grip; clicks
+            // / drags anywhere else inside a card pass through to the
+            // inner controls (buttons, links, the map).
+            grid.addEventListener('pointerdown', function (ev) {
+                if (ev.button !== undefined && ev.button !== 0) return;
+                var grip = ev.target.closest && ev.target.closest('.dash-card-grip');
+                if (!grip) return;
+                var card = grip.closest('[data-card-id]');
+                if (!card) return;
+                ev.preventDefault();
+                try { grip.setPointerCapture(ev.pointerId); } catch (e) {}
+                startDrag(card, ev);
+            });
+            // pointermove / up are bound to the document so the drag
+            // survives the pointer leaving the grid bounds.
+            document.addEventListener('pointermove', moveDrag);
+            document.addEventListener('pointerup', endDrag);
+            document.addEventListener('pointercancel', endDrag);
         })();
     </script>
 </body>

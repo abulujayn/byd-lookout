@@ -35,13 +35,25 @@ class AccSentryDaemonController(
     
     override fun stop(callback: DaemonCallback) {
         callback.onStatusChanged(DaemonStatus.STOPPING, "Stopping...")
-        
-        // Use pkill -9 -f 'acc_sentry' to kill BOTH daemon AND watchdog script
-        adbLauncher.executeShellCommand(
-            "pkill -9 -f 'acc_sentry'; " +
-            "rm -f /data/local/tmp/acc_sentry_daemon.lock 2>/dev/null; " +
-            "rm -f /data/local/tmp/start_acc_sentry.sh 2>/dev/null; " +
-            "echo done",
+
+        // Plant the disable sentinel BEFORE the kill so the watchdog (if it
+        // survives the pkill via an orphan race) sees it on its next loop
+        // iteration and exits cleanly. Single broad pkill on 'acc_sentry'
+        // takes out start_acc_sentry.sh (watchdog), acc_sentry_daemon
+        // (daemon), and any orphans together. Mirrors CameraDaemonController
+        // and ZrokController.
+        // Use executeShellScript (tmpfile) so toybox `pkill -f 'acc_sentry'`
+        // can't self-match the calling shell's argv. Order: sentinel +
+        // chmod first, watchdog-script rm, pkill, then settle + lock-rm.
+        // Lock rm AFTER pkill prevents the lockfile-resurrection race.
+        adbLauncher.executeShellScript(
+            "echo \"disabled by ui at \$(date)\" > /data/local/tmp/acc_sentry_daemon.disabled\n" +
+            "chmod 666 /data/local/tmp/acc_sentry_daemon.disabled 2>/dev/null\n" +
+            "rm -f /data/local/tmp/start_acc_sentry.sh 2>/dev/null\n" +
+            com.overdrive.app.launcher.DaemonLauncher.psAwkKillLine("acc_sentry") +
+            "sleep 1\n" +
+            "rm -f /data/local/tmp/acc_sentry_daemon.lock 2>/dev/null\n" +
+            "echo done\n",
             object : AdbDaemonLauncher.LaunchCallback {
                 override fun onLog(message: String) {}
                 override fun onLaunched() {
@@ -71,12 +83,13 @@ class AccSentryDaemonController(
     }
     
     override fun cleanup() {
-        // Use pkill -9 -f 'acc_sentry' to kill BOTH daemon AND watchdog script
-        adbLauncher.executeShellCommand(
-            "pkill -9 -f 'acc_sentry'; " +
-            "rm -f /data/local/tmp/acc_sentry_daemon.lock 2>/dev/null; " +
-            "rm -f /data/local/tmp/start_acc_sentry.sh 2>/dev/null; " +
-            "echo done",
+        // Use executeShellScript (tmpfile) for self-match defense.
+        adbLauncher.executeShellScript(
+            "rm -f /data/local/tmp/start_acc_sentry.sh 2>/dev/null\n" +
+            com.overdrive.app.launcher.DaemonLauncher.psAwkKillLine("acc_sentry") +
+            "sleep 1\n" +
+            "rm -f /data/local/tmp/acc_sentry_daemon.lock 2>/dev/null\n" +
+            "echo done\n",
             object : AdbDaemonLauncher.LaunchCallback {
                 override fun onLog(message: String) {}
                 override fun onLaunched() {}

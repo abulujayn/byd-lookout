@@ -686,6 +686,21 @@
             if (el) el.style.display = 'none';
         }
 
+        // TypeError is what fetch() throws on DNS failure / connection
+        // refused / ERR_NAME_NOT_RESOLVED. Distinguish that from HTTP-level
+        // failures so we can surface "tunnel unreachable" once instead of
+        // letting every caller spam its own generic "could not load" toast
+        // when the zrok host stops resolving.
+        function isNetworkError(e) {
+            return e && (e.name === 'TypeError' || /Failed to fetch|NetworkError|ERR_NAME_NOT_RESOLVED/i.test(e.message || ''));
+        }
+        var _tunnelBannerShown = false;
+        function showTunnelUnreachable() {
+            if (_tunnelBannerShown) return;
+            _tunnelBannerShown = true;
+            showStatus('error', BYD.i18n.t('notif.tunnel_unreachable'));
+        }
+
         // ES5-safe property walks. Optional chaining (`?.`) is ES2020 and
         // throws SyntaxError on the BYD head-unit's Chrome 58 WebView; a
         // single `?.` anywhere in this <script> block aborts the ENTIRE
@@ -845,7 +860,11 @@
                 renderCategories();
             } catch (e) {
                 if (container) container.innerHTML = '<div class="notif-card"><div class="empty-state">' + escapeHtml(BYD.i18n.t('notif.categories_load_failed')) + '</div></div>';
-                showStatus('error', BYD.i18n.t('notif.categories_load_error', {error: (e && e.message ? e.message : e)}));
+                if (isNetworkError(e)) {
+                    showTunnelUnreachable();
+                } else {
+                    showStatus('error', BYD.i18n.t('notif.categories_load_error', {error: (e && e.message ? e.message : e)}));
+                }
             }
         }
 
@@ -980,7 +999,10 @@
                         mutedCategories: muted
                     })
                 });
-            } catch (e) { showStatus('error', BYD.i18n.t('notif.save_pref_failed')); }
+            } catch (e) {
+                if (isNetworkError(e)) showTunnelUnreachable();
+                else showStatus('error', BYD.i18n.t('notif.save_pref_failed'));
+            }
         }
 
         // SHA-256 first 12 bytes of endpoint, base64url no-padding — matches
@@ -1017,7 +1039,14 @@
                     state.muted = new Set(found.mutedCategories || []);
                     renderCategories();
                 }
-            } catch (e) { /* swallow — page still works without it */ }
+            } catch (e) {
+                // Network-level failure (zrok host stopped resolving while
+                // the page is still open). Surface ONE banner instead of
+                // letting the caller's silent catch eat it — the page is
+                // otherwise functionless until the tunnel is back.
+                if (isNetworkError(e)) showTunnelUnreachable();
+                /* otherwise swallow — page still works without subs list */
+            }
         }
 
         function renderDevices(subs) {
@@ -1060,7 +1089,10 @@
                     body: JSON.stringify({ id: id })
                 });
                 await loadSubscriptions();
-            } catch (e) { showStatus('error', BYD.i18n.t('notif.remove_device_failed')); }
+            } catch (e) {
+                if (isNetworkError(e)) showTunnelUnreachable();
+                else showStatus('error', BYD.i18n.t('notif.remove_device_failed'));
+            }
         }
 
         var enableBtnEl = document.getElementById('enableBtn');
@@ -1074,7 +1106,19 @@
             try {
                 var result = await window.OverdrivePush.requestAndSubscribe();
                 if (!result.ok) {
-                    showStatus('error', BYD.i18n.t('notif.enable_could_not', {reason: result.reason}));
+                    // subscribe-failed is the only reason that carries a
+                    // browser-level DOMException — Samsung Internet without
+                    // GMS, Brave with shields, Edge when WNS is offline. The
+                    // user can't fix any of those from our UI, but they CAN
+                    // see why and try a different browser. For other reasons
+                    // (permission-denied, no-vapid-key, backend-unreachable,
+                    // register-failed) the static toast text is enough.
+                    if (result.reason === 'subscribe-failed' && result.error) {
+                        showStatus('error', BYD.i18n.t('notif.subscribe_browser_error', {error: result.error}));
+                    } else {
+                        var reasonText = result.error ? (result.reason + ' (' + result.error + ')') : result.reason;
+                        showStatus('error', BYD.i18n.t('notif.enable_could_not', {reason: reasonText}));
+                    }
                     return;
                 }
                 state.currentSubscriptionId = result.id;
@@ -1119,7 +1163,8 @@
                 }
                 showStatus('ok', 'Test sent. Check your notification center.');
             } catch (e) {
-                showStatus('error', 'Test failed: ' + (e && e.message ? e.message : e));
+                if (isNetworkError(e)) showTunnelUnreachable();
+                else showStatus('error', 'Test failed: ' + (e && e.message ? e.message : e));
             }
         });
 

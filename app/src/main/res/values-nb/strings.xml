@@ -22,6 +22,7 @@
     <string name="cd_expand_collapse">Utvidelse/kollaps</string>
     <string name="cd_recording_status">Registreringsstatus</string>
     <string name="cd_trip_tracking_status">Status for sporing av reise</string>
+    <string name="cd_mic_status">Mikrofonopptakstatus</string>
     <string name="cd_video_thumbnail">Video miniatur</string>
     <string name="cd_play">Spill av</string>
     <string name="cd_back">Tilbake</string>
@@ -30,6 +31,7 @@
     <string name="cd_player_next">Opptak</string>
     <string name="cd_player_maximize">Maksimalisere spilleren</string>
     <string name="cd_player_minimize">Utgang fullskjerm</string>
+    <string name="cd_player_mute">Slå ut lyd</string>
     <string name="cd_delete">Slett</string>
     <string name="cd_expand">Utvide</string>
     <string name="cd_configure">Konfigurering</string>
@@ -40,6 +42,7 @@
     <string name="cd_permission_granted">Tillatelse gitt</string>
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">TRIP</string>
+    <string name="overlay_mic_inactive_label">MIC</string>
     <string name="log_entry_default_timestamp">12:34:56</string>
     <string name="log_entry_default_tag">- Det er ikke noe problem.</string>
     <string name="log_entry_default_message">Logg melding her</string>
@@ -333,6 +336,7 @@
     <string name="toast_fetching_log">Jeg henter %1$s logg...</string>
     <string name="toast_log_empty_or_missing">Loggfil er tom eller ikke funnet</string>
     <string name="toast_log_empty">Loggfil er tomt</string>
+    <string name="toast_daemon_manager_unavailable">Daemon manager ikke klar, prøv igjen om et øyeblikk</string>
     <string name="toast_log_save_failed">Ikke lagre logg: %1$s</string>
     <string name="toast_log_not_found">Loggfil ikke funnet eller ulesbart</string>
     <string name="log_share_title">%1$s Log - %2$s</string>
@@ -350,6 +354,12 @@
     <string name="play_with_chooser">Spill med</string>
     <string name="setup_version_banner">Oppdatert til v%1$s  bekreft automatisk start, BYD sletter det på hver installasjon</string>
     <string name="setup_overlay_already_granted">Already Granted</string>
+    <string name="setup_tips_header">Tips &amp; feilsøking</string>
+    <string name="setup_traffic_title">Inaktivere BYD Trafikkovervåker</string>
+    <string name="setup_traffic_body">BYD Traffic Monitor blokkerer tredjepartsapper fra å nå Internett. Hvis du deaktiverer det, kan OverDrive og alle andre apper du installerer faktisk bruke nettverket.</string>
+    <string name="setup_traffic_button">Åpen trafikkmonitor</string>
+    <string name="setup_camera_fix_title">Kameraet gir svart eller feil?</string>
+    <string name="setup_camera_fix_body">Åpne diagnostikk → Kamera-sonde, sette kamera-ID til 0, trykk på Lagre, og deretter starte kamera-demonen på nytt. Hvis innspillene fortsatt er feil, gjenta med kamera-ID 1.</string>
     <string name="camera_current_manual">Aktuell: Kamera %1$d (manuell)</string>
     <string name="camera_current_auto_label">Strøm: Auto</string>
     <string name="soh_estimation_active">Aktiv estimering</string>

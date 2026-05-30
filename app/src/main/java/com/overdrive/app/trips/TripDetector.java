@@ -49,6 +49,11 @@ public class TripDetector {
     // Debounce timer
     private final ScheduledExecutorService scheduler;
     private volatile ScheduledFuture<?> parkDebounceTask;
+    // PHEV-only: integrates seconds where engineSpeedRpm > 600 across the
+    // active trip. Used by the cost-breakdown UI to label the trip's HEV
+    // mode share. Idle on BEVs (sampler is started only when isPhev=true).
+    private volatile ScheduledFuture<?> iceSamplerTask;
+    private static final int ICE_RPM_THRESHOLD = 600;
 
     public TripDetector() {
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -194,6 +199,25 @@ public class TripDetector {
             logger.error("Failed to read start kWh: " + e.getMessage());
         }
 
+        // PHEV-only: snapshot drivetrain + tank level. computeIsPhev caches
+        // its verdict for 60s so this is one reflection call worst-case.
+        // BEVs leave fuelPctStart at -1 (sentinel for "no fuel data") and
+        // isPhev=false — downstream cost math treats this as electric-only,
+        // identical to the pre-PHEV behaviour.
+        try {
+            VehicleDataMonitor vdm = VehicleDataMonitor.getInstance();
+            if (vdm.isPhev()) {
+                activeTrip.isPhev = true;
+                com.overdrive.app.monitor.DrivingRangeData dr = vdm.getDrivingRange();
+                if (dr != null && dr.hasFuelPercent()) {
+                    activeTrip.fuelPctStart = dr.fuelPercent;
+                }
+                startIceSampler();
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to read PHEV start state: " + e.getMessage());
+        }
+
         // Read start GPS
         try {
             GpsMonitor gps = GpsMonitor.getInstance();
@@ -260,6 +284,7 @@ public class TripDetector {
         }
 
         cancelParkDebounceTimer();
+        stopIceSampler();
 
         long now = System.currentTimeMillis();
         // Use the time when gear first went to P as the actual trip end time
@@ -285,6 +310,31 @@ public class TripDetector {
             }
         } catch (Exception e) {
             logger.error("Failed to read end kWh: " + e.getMessage());
+        }
+
+        // PHEV end-of-trip fuel snapshot. We re-check isPhev here so that a
+        // vehicle reclassified mid-trip (e.g. computeIsPhev cache TTL flipped
+        // the verdict) still records a consistent end value.
+        //
+        // Sticky once: we DO NOT flip isPhev back to false at end. Reason —
+        // if the sampler ran during the trip and accumulated iceSeconds, or
+        // if fuelPctStart was captured at start, those readings are real
+        // PHEV-side data and the trip should remain classified as PHEV. The
+        // cost-math path is gated on fuelPctStart/End >= 0, so a missing
+        // end reading correctly suppresses the fuel leg without mis-labeling
+        // the trip.
+        try {
+            VehicleDataMonitor vdm = VehicleDataMonitor.getInstance();
+            boolean isPhevNow = vdm.isPhev();
+            if (isPhevNow || activeTrip.isPhev) {
+                activeTrip.isPhev = true;
+                com.overdrive.app.monitor.DrivingRangeData dr = vdm.getDrivingRange();
+                if (dr != null && dr.hasFuelPercent()) {
+                    activeTrip.fuelPctEnd = dr.fuelPercent;
+                }
+            }
+        } catch (Exception e) {
+            logger.warn("Failed to read PHEV end state: " + e.getMessage());
         }
 
         // Read end GPS
@@ -443,6 +493,39 @@ public class TripDetector {
         if (parkDebounceTask != null && !parkDebounceTask.isDone()) {
             parkDebounceTask.cancel(false);
             parkDebounceTask = null;
+        }
+    }
+
+    /**
+     * 1 Hz sampler that integrates seconds where the ICE is running. Cheap:
+     * one BydVehicleData snapshot read per tick, no reflection (the snapshot
+     * is already maintained by BydDataCollector). Started only on PHEV
+     * trips so BEV vehicles incur zero overhead.
+     */
+    private void startIceSampler() {
+        stopIceSampler();
+        iceSamplerTask = scheduler.scheduleAtFixedRate(() -> {
+            try {
+                TripRecord t = activeTrip;
+                if (t == null || state != State.ACTIVE) return;
+                com.overdrive.app.byd.BydVehicleData vd =
+                        VehicleDataMonitor.getInstance().getVd();
+                if (vd == null) return;
+                if (vd.engineSpeedRpm != com.overdrive.app.byd.BydVehicleData.UNAVAILABLE
+                        && vd.engineSpeedRpm > ICE_RPM_THRESHOLD) {
+                    t.iceSecondsAtomic.incrementAndGet();
+                }
+            } catch (Throwable th) {
+                // Don't let a transient failure kill the scheduler.
+                logger.debug("ICE sampler tick failed: " + th.getMessage());
+            }
+        }, 1, 1, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    private void stopIceSampler() {
+        if (iceSamplerTask != null && !iceSamplerTask.isDone()) {
+            iceSamplerTask.cancel(false);
+            iceSamplerTask = null;
         }
     }
 

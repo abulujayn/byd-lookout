@@ -395,6 +395,24 @@ class DaemonsViewModel(app: Application) : AndroidViewModel(app) {
     
     override fun onCleared() {
         super.onCleared()
-        adbLauncher.closePersistentConnection()
+        // Release per-controller threads (e.g. ZrokController's dedicated
+        // reconcileScheduler + AdbShellExecutor) WITHOUT killing the
+        // daemons themselves. Daemons run in their own UID 2000 processes
+        // and are intentionally persistent across app teardown — only
+        // user-initiated stop() should kill them.
+        controllers.values.forEach {
+            try { it.releaseResources() } catch (e: Exception) {
+                // best-effort; one failure must not skip the rest
+            }
+        }
+        // releasePerInstanceResources — NOT closePersistentConnection.
+        // closePersistentConnection nulls the process-wide shared Dadb in
+        // AdbShellExecutor's companion. Other AdbDaemonLauncher instances
+        // (DaemonStartupManager.adbLauncher's static if still alive,
+        // AdbConsoleFragment, AppUpdater) share the same Dadb and would
+        // see closed-transport errors on every in-flight task. We only
+        // own this ViewModel's per-instance executor + tunnel-poll
+        // scheduler; release just those.
+        adbLauncher.releasePerInstanceResources()
     }
 }

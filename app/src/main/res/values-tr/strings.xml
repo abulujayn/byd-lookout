@@ -22,6 +22,7 @@
     <string name="cd_expand_collapse">Genişleme / çökme</string>
     <string name="cd_recording_status">Kayıt durumu</string>
     <string name="cd_trip_tracking_status">Seyahat izleme durumu</string>
+    <string name="cd_mic_status">Mikrofon yakalama durumu</string>
     <string name="cd_video_thumbnail">Video miniatürü</string>
     <string name="cd_play">Oynat</string>
     <string name="cd_back">Geri</string>
@@ -30,6 +31,7 @@
     <string name="cd_player_next">Sonraki kayıt</string>
     <string name="cd_player_maximize">Oyuncunu en üst seviyeye çıkar</string>
     <string name="cd_player_minimize">Dışarı çıkış tam ekran</string>
+    <string name="cd_player_mute">Ses değiştir</string>
     <string name="cd_delete">Sil</string>
     <string name="cd_expand">Genişle</string>
     <string name="cd_configure">Yapılandırma</string>
@@ -40,6 +42,7 @@
     <string name="cd_permission_granted">Verilmiş izin</string>
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">TRIP</string>
+    <string name="overlay_mic_inactive_label">MIC</string>
     <string name="log_entry_default_timestamp">12:34:56\'da.</string>
     <string name="log_entry_default_tag">- Hayır, hayır.</string>
     <string name="log_entry_default_message">Kayıt mesajı buraya</string>
@@ -333,6 +336,7 @@
     <string name="toast_fetching_log">%1$s logunu getirmek...</string>
     <string name="toast_log_empty_or_missing">Günlük dosyası boş veya bulunamadı</string>
     <string name="toast_log_empty">Günlük dosyası boş</string>
+    <string name="toast_daemon_manager_unavailable">Daemon yöneticisi hazır değil, bir an sonra tekrar dene.</string>
     <string name="toast_log_save_failed">Kayıt kaydedilemedi: %1$s</string>
     <string name="toast_log_not_found">Günlük dosyası bulunamadı veya okunamıyor</string>
     <string name="log_share_title">%1$s Log - %2$s</string>
@@ -350,6 +354,12 @@
     <string name="play_with_chooser">Oynayın .</string>
     <string name="setup_version_banner">V%1$s\'ye güncellenmiş  Otomatik başlatmayı yeniden onaylayın, BYD onu her kurulumda siler</string>
     <string name="setup_overlay_already_granted">Zaten verildi</string>
+    <string name="setup_tips_header">İpuç ve sorun çözme</string>
+    <string name="setup_traffic_title">BYD Trafik Monitörü Etkinleştir</string>
+    <string name="setup_traffic_body">BYD Traffic Monitor üçüncü taraf uygulamaların internet\'e ulaşmasını engeller. Bu uygulamayı devre dışı bırakmak, OverDrive ve yüklediğiniz diğer uygulamaların ağı kullanmasına izin verir.</string>
+    <string name="setup_traffic_button">Açık Trafik İzleyici</string>
+    <string name="setup_camera_fix_title">Kamera siyah mı yanlış mı?</string>
+    <string name="setup_camera_fix_body">Açık Diagnostics → Kamera sondası, Camera ID\'yi 0 olarak ayarlayın, Save\'e dokunun ve sonra kamera demonu yeniden başlatın.</string>
     <string name="camera_current_manual">Şimdiki: Kamera %1$d (Manual)</string>
     <string name="camera_current_auto_label">Akım: Otomatik</string>
     <string name="soh_estimation_active">Değerlendirme etkinliği</string>

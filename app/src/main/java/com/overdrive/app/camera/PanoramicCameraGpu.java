@@ -216,10 +216,7 @@ public class PanoramicCameraGpu {
     private long stageWorstTotalNs = 0;
     private long stageWorstAcquireNs = 0;
     private long stageWorstMosaicNs = 0;
-    private long stageWorstAiReadbackNs = 0;
-    private long stageWorstAiSubmitNs = 0;
     private int stageWindowFrames = 0;
-    private int stageWindowAiReadbackSkips = 0;
 
     // AI readback throttle — frame-counter modulo, NOT wall-clock.
     // Wall-clock throttling is fragile when readback duration approaches the
@@ -1280,8 +1277,6 @@ public class PanoramicCameraGpu {
                 }
             }
 
-            long loopStartNs = System.nanoTime();
-
             // SOTA: Gate all consumer passes until probe finds a working camera.
             // Without this, the encoder records BLACK frames, the stream shows garbage,
             // and the AI lane processes empty images during the probe sweep.
@@ -1400,9 +1395,8 @@ public class PanoramicCameraGpu {
             // gate, costing ~30-40% extra encoder-thread CPU during
             // ACC-ON CONTINUOUS recording. Restoring the gate here puts
             // ACC-ON load back at v17/v18 levels.
-            long stageBeforeAiReadbackNs = System.nanoTime();
-            long stageAfterAiReadbackNs = stageBeforeAiReadbackNs;
-            long stageAfterAiSubmitNs = stageBeforeAiReadbackNs;
+            // AI lane notify (publish-only; AI work runs on AiLaneGl's
+            // own thread).
             AiLaneGl localAiLane = aiLaneGl;
             SurveillanceEngineGpu localSentry = sentry;
             boolean aiLaneNeeded = localSentry != null && localSentry.isActive();
@@ -1411,48 +1405,35 @@ public class PanoramicCameraGpu {
                 localAiLane.notifyFrame(cameraFrameSeq.get());
             }
 
-            // Per-stage timing roll-up. We track only the worst frame per
-            // 2 s window to keep the log line bounded and the reasoning
-            // simple — the worst frame is what crosses the encoder
-            // backpressure threshold and triggers HAL throttling.
+            // Per-stage timing roll-up. Track only the worst frame per 30 s
+            // window so the log line stays bounded; the worst frame is what
+            // crosses the encoder backpressure threshold. AI readback/submit
+            // timers were removed: post-Tier-1 the AI work runs on a separate
+            // GL thread, so the deltas here would always be zero.
             long stageEndNs = System.nanoTime();
-            long stageTotalNs    = stageEndNs - stageT0;
-            long stageAcquireNs  = stageAfterAcquireNs - stageT0;
-            long stageMosaicNs   = stageBeforeAiReadbackNs - stageBeforeMosaicNs;
-            long stageReadbackNs = stageAfterAiReadbackNs  - stageBeforeAiReadbackNs;
-            long stageSubmitNs   = stageAfterAiSubmitNs    - stageAfterAiReadbackNs;
+            long stageTotalNs   = stageEndNs - stageT0;
+            long stageAcquireNs = stageAfterAcquireNs - stageT0;
+            long stageMosaicNs  = stageEndNs - stageBeforeMosaicNs;
             stageWindowFrames++;
             if (stageTotalNs > stageWorstTotalNs) {
-                stageWorstTotalNs       = stageTotalNs;
-                stageWorstAcquireNs     = stageAcquireNs;
-                stageWorstMosaicNs      = stageMosaicNs;
-                stageWorstAiReadbackNs  = stageReadbackNs;
-                stageWorstAiSubmitNs    = stageSubmitNs;
+                stageWorstTotalNs   = stageTotalNs;
+                stageWorstAcquireNs = stageAcquireNs;
+                stageWorstMosaicNs  = stageMosaicNs;
             }
             long nowMs = System.currentTimeMillis();
             if (stageTimingWindowStartMs == 0) {
                 stageTimingWindowStartMs = nowMs;
             } else if (nowMs - stageTimingWindowStartMs >= STAGE_TIMING_LOG_INTERVAL_MS) {
-                // After Tier 1, AI readback runs on AiLaneGl's thread —
-                // the aiReadback / aiSubmit slots here capture only the
-                // notify-publish overhead (typically <50 µs). The encoder
-                // thread's worst-frame total is now dominated by
-                // mosaic+swap, which is what we expected to expose.
                 logger.info(String.format(
-                        "Stage(worst/30s, encoder-thread): total=%dms acq=%dms mosaic+swap=%dms (notifyOverhead readback=%dms submit=%dms; frames=%d)",
+                        "Stage(worst/30s, encoder-thread): total=%dms acq=%dms mosaic+swap=%dms (frames=%d)",
                         stageWorstTotalNs / 1_000_000,
                         stageWorstAcquireNs / 1_000_000,
                         stageWorstMosaicNs / 1_000_000,
-                        stageWorstAiReadbackNs / 1_000_000,
-                        stageWorstAiSubmitNs / 1_000_000,
                         stageWindowFrames));
                 stageWorstTotalNs = 0;
                 stageWorstAcquireNs = 0;
                 stageWorstMosaicNs = 0;
-                stageWorstAiReadbackNs = 0;
-                stageWorstAiSubmitNs = 0;
                 stageWindowFrames = 0;
-                stageWindowAiReadbackSkips = 0;
                 stageTimingWindowStartMs = nowMs;
             }
 

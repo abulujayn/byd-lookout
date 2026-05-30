@@ -441,11 +441,16 @@ public class PerformanceMonitor {
                 }
             }
 
-            // kgsl "busy total" counters — cumulative ticks since boot on most
-            // msm_kgsl drivers. Filename varies across kernel forks
-            // (gpu_busy / gpubusy / gpu_busy_time). Compute usage as a delta
-            // between consecutive samples; raw ratio converges to a
-            // meaningless boot-average otherwise.
+            // kgsl "busy total" counters. Two semantics in the wild:
+            //  (a) cumulative-since-boot — values monotonically grow; usage is
+            //      delta(busy)/delta(total) between samples.
+            //  (b) reset-on-read — each read returns busy/total for the
+            //      interval since the previous read; usage is busy/total of
+            //      THIS sample directly.
+            // Adreno 610 on the BYD head-unit is (b); pinning to (a) silently
+            // failed the monotonicity check and bled through to the freq-ratio
+            // fallback, which inflates at idle (governor parks at ~257/650 MHz
+            // → ~40% baseline) and pegs near 100% on any burst.
             if (snapshot.gpuUsagePercent == 0) {
                 java.io.File gpuBusyFile = resolveGpuBusyFile();
                 if (gpuBusyFile != null) {
@@ -457,16 +462,29 @@ public class PerformanceMonitor {
                                 long busy = Long.parseLong(parts[0]);
                                 long total = Long.parseLong(parts[1]);
                                 if (total > 0) {
-                                    if (lastGpuBusy >= 0 && lastGpuTotal >= 0
-                                            && busy >= lastGpuBusy && total > lastGpuTotal) {
+                                    boolean haveLast = lastGpuBusy >= 0 && lastGpuTotal >= 0;
+                                    boolean cumulative = haveLast
+                                            && busy >= lastGpuBusy
+                                            && total >= lastGpuTotal
+                                            && total > lastGpuTotal;
+                                    double usage = -1;
+                                    if (cumulative) {
                                         long dBusy = busy - lastGpuBusy;
                                         long dTotal = total - lastGpuTotal;
                                         if (dTotal > 0) {
-                                            double usage = (dBusy * 100.0) / dTotal;
-                                            if (usage < 0) usage = 0;
-                                            if (usage > 100) usage = 100;
-                                            snapshot.gpuUsagePercent = usage;
+                                            usage = (dBusy * 100.0) / dTotal;
                                         }
+                                    } else {
+                                        // Reset-on-read driver, or first sample.
+                                        // Using the raw ratio is correct for (b)
+                                        // and for (a)'s very first sample is at
+                                        // worst a one-tick boot average — better
+                                        // than falling through to freq-ratio.
+                                        usage = (busy * 100.0) / total;
+                                    }
+                                    if (usage >= 0) {
+                                        if (usage > 100) usage = 100;
+                                        snapshot.gpuUsagePercent = usage;
                                     }
                                     lastGpuBusy = busy;
                                     lastGpuTotal = total;

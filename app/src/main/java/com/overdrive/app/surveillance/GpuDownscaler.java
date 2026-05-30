@@ -889,6 +889,16 @@ public class GpuDownscaler {
             try { GLES20.glDeleteProgram(directProgram); } catch (Throwable ignored) {}
             directProgram = -1;
         }
+        // Drop CPU-side scratch + readback buffers. Deleting the GL handles
+        // alone leaves ~5 MB of byte[] / direct ByteBuffers retained for the
+        // daemon's lifetime; lazy paths re-init these on next call.
+        directRgbBuffer = null;
+        directScratchRgba = null;
+        directFallbackReadBuffer = null;
+        syncReadBuffer = null;
+        syncRgbBuffer = null;
+        syncScratchRgba = null;
+        reusableRgbBuffer = null;
         directInitialized = false;
         syncInitialized = false;
     }

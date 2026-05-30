@@ -471,6 +471,11 @@ public class FoveatedCropper {
             GLES20.glDeleteProgram(program);
             program = -1;
         }
+        // Drop CPU-side scratch + readback. ~4.4 MB held otherwise across
+        // every surveillance pause; lazy paths re-init on next call.
+        scratchRgba = null;
+        rgbBuffer = null;
+        fallbackReadBuffer = null;
         ringHead = 0;
         ringTail = 0;
         initialized = false;

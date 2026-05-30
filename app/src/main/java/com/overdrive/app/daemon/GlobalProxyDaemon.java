@@ -297,7 +297,18 @@ public class GlobalProxyDaemon {
     }
 
     private static void stopSingbox() {
-        execShell(KILL_SINGBOX());
+        // ps+awk+kill instead of pkill -f. execShell wraps in `sh -c
+        // "<cmd>"`, and pkill -f matches the wrapper's argv on the
+        // literal "sing-box" substring → SIGKILLs the calling shell.
+        // The target still dies (pkill matches it before suiciding),
+        // but the wrapper exits 137, the JVM logs it as an error, and
+        // the pattern is inconsistent with every other kill site we've
+        // converted. ps+awk+kill filters by PID and excludes $$.
+        execShell(
+            "MY_PID=$$; ps -A -o PID,ARGS | grep -F " + SINGBOX_NAME() + " | grep -v grep "
+            + "| awk '{print $1}' | while read pid; do "
+            + "if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done"
+        );
         try { Thread.sleep(500); } catch (Exception ignored) {}
     }
 

@@ -99,7 +99,58 @@ public class HardwareEventRecorderGpu {
     private final Object muxerLock = new Object();
     private volatile MediaMuxer muxer;
     private volatile int trackIndex = -1;
+    private volatile int audioTrackIndex = -1;
     private volatile boolean muxerStarted = false;
+
+    // Audio muxing: enabled at recording-start time when (a) the user has
+    // turned audioEnabled on in UnifiedConfigManager, and (b) the app
+    // process has connected to AacIngestServer and uploaded its CSD-0.
+    // Once a recording is in flight the audio track is fixed for the
+    // lifetime of the muxer (MediaMuxer cannot addTrack post-start) — flips
+    // of the user toggle apply at the next segment rotation or next event.
+    //
+    // The four AAC parameters (csd0, sampleRate, channelCount, bitrate) are
+    // bundled into a single immutable {@link AudioConfig} reference, swapped
+    // atomically via the volatile {@link #audioConfig} field. This eliminates
+    // the torn-read race where a concurrent setAudioConfig between reading
+    // (e.g.) audioCsd0 and audioSampleRate could produce a malformed muxer
+    // format. Readers snapshot the volatile once, then use only the locals.
+    private static final class AudioConfig {
+        final byte[] csd0;          // never null, never empty
+        final int sampleRate;
+        final int channelCount;
+        final int bitrate;
+        AudioConfig(byte[] csd, int sr, int ch, int br) {
+            this.csd0 = csd;
+            this.sampleRate = sr;
+            this.channelCount = ch;
+            this.bitrate = br;
+        }
+    }
+    private volatile AudioConfig audioConfig;  // null = audio muxing disabled
+
+    // Confidence counter: number of audio packets received via
+    // pushAudioPacket since the current audioConfig was set. Used by
+    // maybeAddAudioTrack to decide whether to add an audio track to a
+    // new muxer. If we add a track but never write any samples to it,
+    // some Android versions reject muxer.stop() (sees an empty track)
+    // and the segment ends up quarantined as .broken — turning a benign
+    // "audio not flowing yet" into a lost video clip.
+    //
+    // Reset to 0 on every setAudioConfig() call (including disable) so
+    // the next "is audio actually live?" decision uses fresh evidence.
+    // The first segment after audio is enabled may open video-only if
+    // packets haven't arrived yet by the time the muxer starts; the
+    // next segment rotation picks up the audio track. Subsequent
+    // segments are guaranteed to have audio so long as the app keeps
+    // pushing packets.
+    private volatile long audioPacketCountSinceConfigSet = 0;
+    // Audio PTS rebasing. Audio packets share the muxer's monotonic timeline
+    // with video — both are rebased against the SAME ptsOriginUs so A/V
+    // remain time-aligned in the output mp4. Audio packets that arrive
+    // before the first video packet seed the origin themselves; the
+    // existing rebase guard (clamp negative → 0) keeps later video packets
+    // from injecting negative-rebased PTSs.
     // Set true by the disk writer when it gives up after repeated I/O failures
     // (typically SD card unmount). The current segment's mdat is broken at that
     // point — the close/rotate paths consult this flag and refuse to rename
@@ -119,8 +170,52 @@ public class HardwareEventRecorderGpu {
     // pre-record content). 64 MB allocation happens once at first init and
     // is never freed.
     private static H264ByteRingBuffer sharedPreRecordBuffer;
+    private static int sharedPreRecordBudgetBytes = 0;  // actual size of allocated ring, 0 if none
     private static final Object bufferLock = new Object();
-    private static final int PRE_RECORD_BUDGET_BYTES = 64 * 1024 * 1024;  // 64 MB
+
+    // Audio pre-record ring — small in-memory deque of recent AAC frames
+    // captured continuously while the user has audio enabled. At event-trigger
+    // time the ring is drained alongside the video pre-record flush so the
+    // first ~5 s of every event clip have audio instead of silence.
+    //
+    // Sized for 5 s × 64 kbps × 1.5 overhead ≈ 60 KB — negligible vs. the
+    // video ring's 64 MB. Static so it survives encoder reinit (codec/bitrate
+    // changes don't drop the audio capture window). The ring captures
+    // continuously regardless of whether the daemon is currently writing a
+    // file — that's the entire point of pre-record. Its content is gated by
+    // the volatile audioConfig holder inside pushAudioPacket: when audio is
+    // disabled (audioConfig == null) we skip the ring add to avoid wasted
+    // byte copies. The ring is cleared by setAudioConfig(null) /
+    // disableAudioMuxing() so a later re-enable doesn't inherit stale (and
+    // almost certainly out-of-window) packets from the prior session.
+    /** Pre-record window for the audio ring, in seconds. Mirrors the default
+     *  video pre-record window so audio coverage is symmetric — the actual
+     *  drain at trigger time is bounded by both this and the video flush. */
+    private static final int AUDIO_PRE_RECORD_SECONDS = 5;
+    /** Bitrate the audio ring is sized for. AppAudioCaptureController encodes
+     *  AAC-LC at 64 kbps; sizing the ring to match keeps the byte budget
+     *  realistic regardless of the per-segment audioBitrate the muxer ends
+     *  up announcing (those two values are not always equal — the muxer's
+     *  KEY_BIT_RATE is informational, the actual encoder bitrate lives in
+     *  the app process). */
+    private static final int AUDIO_PRE_RECORD_BITRATE_BPS = 64_000;
+    private static final AacCircularBuffer aacRing =
+        new AacCircularBuffer(AUDIO_PRE_RECORD_SECONDS, AUDIO_PRE_RECORD_BITRATE_BPS);
+    // Hard ceiling on the pre-record byte arena. The slot-pool predecessor
+    // hit OOM at ~64 MB on this hardware; the byte ring is denser but stays
+    // capped at the same value so the worst-case footprint is unchanged.
+    private static final int PRE_RECORD_BUDGET_CEILING_BYTES = 64 * 1024 * 1024;
+    // Floor on the byte arena. H264ByteRingBuffer rejects budgets < 1 MB
+    // outright; 8 MB covers a 5 s pre-roll at 10 Mbps with IDR overhead
+    // even on the slowest BYD codec, so anything below this is too small
+    // to be useful.
+    private static final int PRE_RECORD_BUDGET_FLOOR_BYTES = 8 * 1024 * 1024;
+    // IDR + B-frame overhead multiplier on top of the steady-state bitrate.
+    // Measured: a 5 Mbps stream produces 750 KB IDRs at GOP=fps; the
+    // running 1-second average peaks ~40% above mean. Sizing the budget
+    // at 1.4× of the bitrate-time product keeps the ring from evicting
+    // a needed pre-roll keyframe under burst.
+    private static final double PRE_RECORD_IDR_OVERHEAD = 1.4;
     private H264ByteRingBuffer preRecordBuffer;  // Reference to shared buffer
     // Volatile + accessed only under startStopLock for read-modify-write safety.
     // Concurrent triggerEventRecording calls (e.g., RecordingModeManager + the
@@ -184,6 +279,13 @@ public class HardwareEventRecorderGpu {
         ByteBuffer data;             // direct buffer, capacity == pool slot size
         final MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
         int payloadSize;             // valid byte count inside data
+        // Track this packet belongs to. -1 = video track (default for back-compat
+        // with the existing video-only callers). Audio packets pushed via
+        // pushAudioPacket() set this to AUDIO_TRACK_MARKER, which the disk-writer
+        // remaps to the live audioTrackIndex at write time. We can't resolve to
+        // the real index at enqueue time because the audio track isn't added
+        // until the muxer starts.
+        int trackKind = TRACK_KIND_VIDEO;
 
         boolean isKeyFrame() {
             return (info.flags & MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0;
@@ -193,6 +295,253 @@ public class HardwareEventRecorderGpu {
         void rewindForWrite() {
             data.position(0);
             data.limit(payloadSize);
+        }
+    }
+
+    // Track-kind markers stored in MuxerPacket.trackKind. The disk writer
+    // resolves them to the live trackIndex/audioTrackIndex at write time.
+    private static final int TRACK_KIND_VIDEO = 0;
+    private static final int TRACK_KIND_AUDIO = 1;
+
+    /**
+     * Rebase a packet's PTS to be relative to the muxer's origin (first
+     * packet's PTS) and write it. On the first call after a muxer start
+     * (ptsOriginUs == -1), capture the packet's PTS as origin and write
+     * with PTS=0; subsequent calls subtract origin.
+     *
+     * <p>Why: encoder PTSs are absolute (from process start). Pre-record
+     * packets have PTSs from seconds ago; live packets are current.
+     * MediaMuxer mostly handles non-zero origins, but the first muxer
+     * instance after `savedFormat` capture has been observed to write a
+     * mp4 whose declared duration disagrees with the actual bitstream
+     * span — playback freezes at the declared duration mark on the very
+     * first recording. Rebasing to 0 eliminates the ambiguity for ALL
+     * muxer instances.
+     *
+     * <p>Caller must hold {@code muxerLock}. Sets {@code firstFramePtsUs}
+     * + {@code lastFramePtsUs} to the REBASED values so the duration
+     * computation in the close path uses them directly without a second
+     * subtraction.
+     *
+     * @return true if write succeeded; false if MediaMuxer threw (caller
+     *         decides whether to abort the recording).
+     */
+    private boolean writeRebased(android.media.MediaMuxer mux, int trackIdx,
+                                 java.nio.ByteBuffer data,
+                                 android.media.MediaCodec.BufferInfo info) {
+        if (ptsOriginUs < 0) {
+            ptsOriginUs = info.presentationTimeUs;
+        }
+        long rebasedPts = info.presentationTimeUs - ptsOriginUs;
+        // Defensive: a packet with a PTS earlier than origin would produce
+        // a negative rebased PTS, which MediaMuxer rejects with
+        // IllegalArgumentException. Clamp to 0 — that packet's PTS gets
+        // collapsed to the origin frame, which is what the user sees as
+        // "the recording starts at frame 0". This can only happen if a
+        // pre-record cursor packet whose PTS is older than the first
+        // written packet arrives — the cursor flush enqueues in PTS order
+        // so it shouldn't, but the defense costs nothing.
+        if (rebasedPts < 0) rebasedPts = 0;
+        // Mutate the BufferInfo for the muxer call. After write, restore
+        // the absolute PTS so any caller that read info.presentationTimeUs
+        // for stats/PTS-tracking sees the original encoder timestamp.
+        long absolutePts = info.presentationTimeUs;
+        info.presentationTimeUs = rebasedPts;
+        try {
+            mux.writeSampleData(trackIdx, data, info);
+        } catch (Exception e) {
+            info.presentationTimeUs = absolutePts;
+            throw e instanceof RuntimeException
+                ? (RuntimeException) e : new RuntimeException(e);
+        }
+        info.presentationTimeUs = absolutePts;
+        // Track REBASED PTS for duration computation. The close path uses
+        // (lastFramePtsUs - firstFramePtsUs) which on a rebased timeline
+        // is just lastFramePtsUs (since firstFramePtsUs == 0).
+        if (firstFramePtsUs < 0) firstFramePtsUs = rebasedPts;
+        lastFramePtsUs = rebasedPts;
+        return true;
+    }
+
+    /**
+     * Audio counterpart of {@link #writeRebased}. Audio shares ptsOriginUs
+     * with video so the muxer's two tracks land on a single monotonic
+     * timeline. Audio packets do NOT contribute to firstFramePtsUs/lastFramePtsUs
+     * — those track recorded video duration only (used by the close path
+     * to compute clip duration). Audio is purely passenger on the segment.
+     *
+     * <p>Caller must hold {@code muxerLock}.
+     *
+     * <p>Audio NEVER seeds {@code ptsOriginUs}. If an audio packet arrives
+     * while origin is still -1, it is dropped — the next video frame
+     * (which writeRebased seeds origin from unconditionally) is what sets
+     * the segment's PTS=0 anchor. Letting audio seed origin would back-
+     * date the timeline by up to the pre-record window (~5 s) and produce
+     * a clip whose tkhd declares audio-led duration with silent video at
+     * the head; players freeze at the head for the offset duration.
+     *
+     * <p>Negative-rebased PTSs are NOT clamped to 0 here (unlike the video
+     * path). Multiple audio packets clamped to PTS=0 would collide on the
+     * muxer's audio track and produce out-of-order samples that some
+     * players reject. Instead, an offending audio packet is dropped
+     * silently and counted in {@link #audioWriteFailureCount} — a tiny
+     * audio gap is preferable to a corrupt audio track. Video rebase
+     * keeps its clamp because video's first-frame clamping is the
+     * documented "recording starts at frame 0" behaviour.
+     *
+     * @return true if write succeeded; false if MediaMuxer threw, the
+     *         packet had a negative rebased PTS, or the video origin
+     *         hasn't been seeded yet (the audio gap is logged but the
+     *         video recording continues).
+     */
+    private boolean writeRebasedAudio(android.media.MediaMuxer mux, int trackIdx,
+                                      java.nio.ByteBuffer data,
+                                      android.media.MediaCodec.BufferInfo info) {
+        if (ptsOriginUs < 0) {
+            // Wait for video to seed the origin. Pre-record audio drain
+            // often enqueues audio packets BEFORE the first live video
+            // frame; if we seeded ptsOriginUs from audio's (old) PTS
+            // here, subsequent video frames would rebase to a multi-
+            // second positive offset and the segment's tkhd would
+            // declare audio-led duration with silent video at the head
+            // — players freeze for ~5 s (the pre-record window) at the
+            // start of the clip.
+            //
+            // Drop this audio packet instead. Bounded: writeRebased
+            // (video) seeds ptsOriginUs unconditionally on its first
+            // call, so the window where audio is dropped is at most
+            // one pre-record cursor flush + the first video frame's
+            // latency — typically <100 ms of audio. The next live
+            // audio frame after the video seed will rebase positively
+            // and write normally.
+            long n = audioWriteFailureCount.incrementAndGet();
+            if (n % 200 == 1) {
+                logger.debug("Audio packet dropped (no video origin yet, #" + n + ")");
+            }
+            return false;
+        }
+        long rebasedPts = info.presentationTimeUs - ptsOriginUs;
+        if (rebasedPts < 0) {
+            // Drop instead of clamping. See javadoc.
+            long n = audioWriteFailureCount.incrementAndGet();
+            if (n % 100 == 1) {
+                logger.warn("Audio packet dropped (negative rebased PTS, #" + n + ")");
+            }
+            return false;
+        }
+        // Per-track monotonicity guard. MediaMuxer rejects writeSampleData
+        // when a packet's PTS is ≤ the previous packet's PTS on the SAME
+        // track. This bites us because pre-record audio is drained AFTER
+        // muxer start (so the first pre-record packet's PTS is small)
+        // while live capture packets arrive with current PTSs and may
+        // interleave with the pre-record drain in muxerWriteQueue. The
+        // disk writer serializes by enqueue order, not PTS order — so a
+        // live packet (T) can land before a pre-record packet (T-5s),
+        // causing every subsequent pre-record packet to fail.
+        //
+        // Drop any audio packet whose rebased PTS is not strictly greater
+        // than the last successfully-written audio PTS. The dropped
+        // packets show up as a silent gap, NOT as a corrupt audio track.
+        // Both video and audio are rebased against the same ptsOriginUs
+        // so the timeline stays aligned.
+        if (rebasedPts <= lastAudioPtsUs) {
+            long n = audioWriteFailureCount.incrementAndGet();
+            if (n % 200 == 1) {
+                logger.debug("Audio packet dropped (PTS not monotonic: " + rebasedPts
+                    + "us <= last " + lastAudioPtsUs + "us, #" + n + ")");
+            }
+            return false;
+        }
+        long absolutePts = info.presentationTimeUs;
+        info.presentationTimeUs = rebasedPts;
+        try {
+            mux.writeSampleData(trackIdx, data, info);
+            lastAudioPtsUs = rebasedPts;
+        } catch (Exception e) {
+            info.presentationTimeUs = absolutePts;
+            // Don't propagate — an audio write failure should never abort
+            // a recording. Log once per 100 to keep field debugging
+            // tractable without flooding.
+            long n = audioWriteFailureCount.incrementAndGet();
+            if (n % 100 == 1) {
+                logger.warn("Audio writeSampleData failed (#" + n + "): " + e.getMessage());
+            }
+            return false;
+        }
+        info.presentationTimeUs = absolutePts;
+        return true;
+    }
+
+    private final java.util.concurrent.atomic.AtomicLong audioWriteFailureCount =
+        new java.util.concurrent.atomic.AtomicLong(0);
+    // Last successfully-written audio PTS (rebased, microseconds). Used
+    // to enforce per-track monotonicity in writeRebasedAudio. Reset on
+    // every recording start and segment rotation so the new segment's
+    // first audio packet has nothing to compare against.
+    private long lastAudioPtsUs = -1L;
+
+    /**
+     * Build the AAC audio MediaFormat from the user-supplied CSD-0 and
+     * sample/channel parameters, and add it to the given muxer. Called
+     * from inside muxerLock at every muxer-start (initial event start,
+     * format-changed deferred start, and segment rotation).
+     *
+     * @return the new audio track index, or -1 if audio is not provisioned
+     *         for this segment (toggle off, or app process hasn't sent
+     *         a CSD-0 yet). A -1 return is silent — the muxer continues
+     *         video-only.
+     */
+    private int maybeAddAudioTrack(MediaMuxer mux) {
+        // Snapshot the volatile holder once. Any concurrent setAudioConfig /
+        // disableAudioMuxing only swaps the reference — our locals stay
+        // consistent for the duration of the addTrack call.
+        AudioConfig cfg = audioConfig;
+        if (cfg == null) return -1;
+        // Empty-track quarantine guard. If we add an audio track to the
+        // muxer but no packet ever reaches writeRebasedAudio in this
+        // segment (cold-start race: app's AAC encoder is up and CSD has
+        // landed, but the first frame hasn't been pushed by the time the
+        // muxer.start() call here lands), some Android versions throw
+        // from muxer.stop() because the audio track has zero samples.
+        // The whole segment then gets quarantined as .broken — a
+        // disproportionately bad outcome for "audio was a few ms late".
+        //
+        // Gate on packet count: only add the audio track if at least
+        // one packet has already flowed under the current audioConfig.
+        // The first segment after enabling audio may open video-only;
+        // every subsequent segment rotation re-evaluates and picks up
+        // audio once packets are confirmed live.
+        if (audioPacketCountSinceConfigSet < 1) {
+            logger.info("Audio config set but no packets yet — segment opens video-only "
+                + "(next rotation will pick up audio)");
+            return -1;
+        }
+        try {
+            MediaFormat audioFormat = MediaFormat.createAudioFormat(
+                MediaFormat.MIMETYPE_AUDIO_AAC,
+                cfg.sampleRate,
+                cfg.channelCount);
+            audioFormat.setInteger(MediaFormat.KEY_AAC_PROFILE,
+                MediaCodecInfo.CodecProfileLevel.AACObjectLC);
+            audioFormat.setInteger(MediaFormat.KEY_BIT_RATE, cfg.bitrate);
+            // Hand-crafted CSD-0 (AudioSpecificConfig). MediaMuxer requires
+            // this for AAC tracks; we sidestep waiting for the encoder's
+            // INFO_OUTPUT_FORMAT_CHANGED by supplying it from the app's
+            // upload. For 48kHz mono AAC-LC the canonical bytes are
+            // {0x11, 0x88}; we trust whatever the app sends so other
+            // sample rates / channels keep working without a daemon
+            // change.
+            audioFormat.setByteBuffer("csd-0", java.nio.ByteBuffer.wrap(cfg.csd0));
+            int idx = mux.addTrack(audioFormat);
+            logger.info(String.format(
+                "Audio track added (track=%d, %dHz %dch %dkbps, csd0=%d bytes)",
+                idx, cfg.sampleRate, cfg.channelCount,
+                cfg.bitrate / 1000, cfg.csd0.length));
+            return idx;
+        } catch (Exception e) {
+            logger.warn("Failed to add audio track: " + e.getMessage()
+                + " — recording continues video-only");
+            return -1;
         }
     }
 
@@ -214,35 +563,101 @@ public class HardwareEventRecorderGpu {
     // set target. On overflow we drop the released packet and let GC
     // reclaim the direct buffer.
     private static final int MUXER_PACKET_CEILING = 1024 * 1024;
-    private static final int MUXER_PACKET_POOL_CAP = MUXER_WRITE_QUEUE_CAPACITY + 16;
-    private final java.util.concurrent.ConcurrentLinkedDeque<MuxerPacket> muxerPacketPool =
+    // Three-tier pool. The original single-pool design had a single retain
+    // ceiling at 256 KB, which forced a fresh allocateDirect(~1 MB) on every
+    // IDR at MAX H.264 / MAX-PREMIUM H.265 (IDRs ~700KB-1MB, GOP=fps → once
+    // every ~2 s); the resulting 5-50 ms native-heap stall on the drainer
+    // thread is exactly what the pool was meant to prevent. Size segregation:
+    //   - micro (≤4 KB): AAC frames (~256 B at 64 kbps × 20 ms). Without
+    //     this tier audio reuses small-pool 5-30 KB P-frame slots and
+    //     chronically wastes ~1.2 MB. Audio runs at ~50 pps so the
+    //     working set is bigger than P-frames'; hence the 64-slot cap.
+    //   - small (≤256 KB): P-frames.
+    //   - large (≤1 MB): IDRs. Tighter cap because in-flight IDRs are rare.
+    // Acquire walks the matching tier first, then falls through to a
+    // larger tier only if the smaller request can borrow a bigger slot.
+    // A request never borrows from a tier whose slot is too small.
+    // Release routes by capacity.
+    private static final int MUXER_PACKET_MICRO_CEILING = 4 * 1024;
+    private static final int MUXER_PACKET_SMALL_CEILING = 256 * 1024;
+    // Audio at ~50 pps × 20 ms × queue capacity 600 ⇒ working set of
+    // ~30-60 packets in worst-case SD backpressure. 64 is a comfortable
+    // ceiling (256 KB total native footprint at 4 KB cap each).
+    private static final int MUXER_PACKET_MICRO_POOL_CAP = 64;
+    // Drainer's working set is ~10 packets steady-state; cap mirrors the
+    // queue capacity for the worst-case SD-backpressure burst. Small cap is
+    // unchanged from prior behavior.
+    private static final int MUXER_PACKET_SMALL_POOL_CAP = MUXER_WRITE_QUEUE_CAPACITY + 16;
+    // IDRs land roughly once per GOP (~2 s at 30 fps). The drainer keeps
+    // them moving; even under SD backpressure the in-flight count rarely
+    // exceeds 4-5. 16 is generous headroom — at 1 MB each that's a 16 MB
+    // ceiling on this pool's footprint, well within the daemon's envelope.
+    private static final int MUXER_PACKET_LARGE_POOL_CAP = 16;
+    private final java.util.concurrent.ConcurrentLinkedDeque<MuxerPacket> muxerPacketPoolMicro =
         new java.util.concurrent.ConcurrentLinkedDeque<>();
-    // Cheap size tracker — ConcurrentLinkedDeque.size() is O(n). We don't
-    // need exact accuracy under contention; an approximate counter is fine
-    // for the cap check.
-    private final java.util.concurrent.atomic.AtomicInteger muxerPacketPoolSize =
+    private final java.util.concurrent.ConcurrentLinkedDeque<MuxerPacket> muxerPacketPoolSmall =
+        new java.util.concurrent.ConcurrentLinkedDeque<>();
+    private final java.util.concurrent.ConcurrentLinkedDeque<MuxerPacket> muxerPacketPoolLarge =
+        new java.util.concurrent.ConcurrentLinkedDeque<>();
+    // ConcurrentLinkedDeque.size() is O(n); cheap atomic counters sized
+    // separately for each pool. Approximate accuracy under contention is
+    // fine — the cap check is defensive, not load-bearing.
+    private final java.util.concurrent.atomic.AtomicInteger muxerPacketPoolMicroSize =
+        new java.util.concurrent.atomic.AtomicInteger(0);
+    private final java.util.concurrent.atomic.AtomicInteger muxerPacketPoolSmallSize =
+        new java.util.concurrent.atomic.AtomicInteger(0);
+    private final java.util.concurrent.atomic.AtomicInteger muxerPacketPoolLargeSize =
         new java.util.concurrent.atomic.AtomicInteger(0);
 
     private MuxerPacket acquireMuxerPacket(int requiredSize) {
-        // Walk pool looking for a packet whose buffer is large enough.
-        // ConcurrentLinkedDeque iteration is weakly consistent which is fine
-        // here — worst case we miss a fitting slot and allocate.
-        java.util.Iterator<MuxerPacket> it = muxerPacketPool.iterator();
+        MuxerPacket p;
+        // Walk from the smallest tier that natively fits the request,
+        // falling through to larger tiers if the natural tier is empty.
+        // A request never borrows from a tier whose slot is too small.
+        if (requiredSize <= MUXER_PACKET_MICRO_CEILING) {
+            p = takeFromPool(muxerPacketPoolMicro, muxerPacketPoolMicroSize, requiredSize);
+            if (p != null) { p.trackKind = TRACK_KIND_VIDEO; return p; }
+            p = takeFromPool(muxerPacketPoolSmall, muxerPacketPoolSmallSize, requiredSize);
+            if (p != null) { p.trackKind = TRACK_KIND_VIDEO; return p; }
+            p = takeFromPool(muxerPacketPoolLarge, muxerPacketPoolLargeSize, requiredSize);
+            if (p != null) { p.trackKind = TRACK_KIND_VIDEO; return p; }
+        } else if (requiredSize <= MUXER_PACKET_SMALL_CEILING) {
+            p = takeFromPool(muxerPacketPoolSmall, muxerPacketPoolSmallSize, requiredSize);
+            if (p != null) { p.trackKind = TRACK_KIND_VIDEO; return p; }
+            p = takeFromPool(muxerPacketPoolLarge, muxerPacketPoolLargeSize, requiredSize);
+            if (p != null) { p.trackKind = TRACK_KIND_VIDEO; return p; }
+        } else {
+            p = takeFromPool(muxerPacketPoolLarge, muxerPacketPoolLargeSize, requiredSize);
+            if (p != null) { p.trackKind = TRACK_KIND_VIDEO; return p; }
+        }
+        // None fit — allocate a fresh packet. Size to a power-of-two-ish
+        // headroom but cap at MUXER_PACKET_CEILING (1 MB) so a corrupt
+        // bufferInfo can't push a multi-MB buffer into the pool.
+        // trackKind is reset on the pooled path above and on the fresh
+        // path here — defense in depth: a future caller that forgets to
+        // set trackKind before offer cannot accidentally route a video
+        // frame to audio.
+        MuxerPacket fresh = new MuxerPacket();
+        int cap = Math.max(requiredSize, Math.min(MUXER_PACKET_CEILING, requiredSize * 2));
+        fresh.data = ByteBuffer.allocateDirect(cap);
+        fresh.trackKind = TRACK_KIND_VIDEO;
+        return fresh;
+    }
+
+    private MuxerPacket takeFromPool(java.util.concurrent.ConcurrentLinkedDeque<MuxerPacket> pool,
+                                     java.util.concurrent.atomic.AtomicInteger size,
+                                     int requiredSize) {
+        java.util.Iterator<MuxerPacket> it = pool.iterator();
         while (it.hasNext()) {
             MuxerPacket p = it.next();
             if (p.data != null && p.data.capacity() >= requiredSize) {
-                if (muxerPacketPool.remove(p)) {
-                    muxerPacketPoolSize.decrementAndGet();
+                if (pool.remove(p)) {
+                    size.decrementAndGet();
                     return p;
                 }
             }
         }
-        // None fit — allocate a fresh packet. Sized to ceiling so future
-        // acquires can reuse it without re-allocating.
-        MuxerPacket fresh = new MuxerPacket();
-        int cap = Math.max(requiredSize, Math.min(MUXER_PACKET_CEILING, requiredSize * 2));
-        fresh.data = ByteBuffer.allocateDirect(cap);
-        return fresh;
+        return null;
     }
 
     private void releaseMuxerPacket(MuxerPacket p) {
@@ -250,15 +665,38 @@ public class HardwareEventRecorderGpu {
         p.data.clear();
         p.payloadSize = 0;
         p.info.set(0, 0, 0, 0);
-        // Cap the pool. If we're over, drop this packet — the JVM Cleaner
-        // will reclaim its direct buffer at the next GC. This is the line
-        // that prevents the pool from monotonically growing into the
-        // hundreds of megabytes under sustained SD backpressure.
-        if (muxerPacketPoolSize.get() >= MUXER_PACKET_POOL_CAP) {
+        // Reset trackKind so a recycled audio packet doesn't accidentally
+        // route to the audio track when reused for a video frame.
+        p.trackKind = TRACK_KIND_VIDEO;
+        int capBytes = p.data.capacity();
+        // Drop pathologically oversized buffers (>1 MB) — they're either
+        // a bug or a corrupt encoder packet. Let the Cleaner reclaim them.
+        if (capBytes > MUXER_PACKET_CEILING) {
             return;
         }
-        muxerPacketPool.offer(p);
-        muxerPacketPoolSize.incrementAndGet();
+        // Route by capacity. Tiered: micro (≤4KB, audio AAC frames),
+        // small (≤256KB, P-frames), large (≤1MB, IDRs). Each tier has
+        // its own cap so audio working-set churn cannot evict the
+        // P-frame pool, and IDR slots stay tightly bounded.
+        if (capBytes > MUXER_PACKET_SMALL_CEILING) {
+            if (muxerPacketPoolLargeSize.get() >= MUXER_PACKET_LARGE_POOL_CAP) {
+                return;
+            }
+            muxerPacketPoolLarge.offer(p);
+            muxerPacketPoolLargeSize.incrementAndGet();
+        } else if (capBytes > MUXER_PACKET_MICRO_CEILING) {
+            if (muxerPacketPoolSmallSize.get() >= MUXER_PACKET_SMALL_POOL_CAP) {
+                return;
+            }
+            muxerPacketPoolSmall.offer(p);
+            muxerPacketPoolSmallSize.incrementAndGet();
+        } else {
+            if (muxerPacketPoolMicroSize.get() >= MUXER_PACKET_MICRO_POOL_CAP) {
+                return;
+            }
+            muxerPacketPoolMicro.offer(p);
+            muxerPacketPoolMicroSize.incrementAndGet();
+        }
     }
 
     private void fillMuxerPacket(MuxerPacket dst, ByteBuffer src, MediaCodec.BufferInfo srcInfo) {
@@ -276,7 +714,14 @@ public class HardwareEventRecorderGpu {
     // immediately on push — no 4 ms poll-loop latency.
     private final java.util.concurrent.LinkedBlockingDeque<MuxerPacket> muxerWriteQueue =
         new java.util.concurrent.LinkedBlockingDeque<>(MUXER_WRITE_QUEUE_CAPACITY);
+    // Separate drop counters per track-kind. Video drops are visible
+    // playback hiccups (lost P-frames or skipped IDRs); audio drops are
+    // tiny gaps in a continuous stream. Logging them apart helps field
+    // diagnostics distinguish "SD card stalled" from "audio producer
+    // outpaced consumer".
     private final java.util.concurrent.atomic.AtomicLong muxerDropCount =
+        new java.util.concurrent.atomic.AtomicLong(0);
+    private final java.util.concurrent.atomic.AtomicLong audioDropCount =
         new java.util.concurrent.atomic.AtomicLong(0);
 
     /**
@@ -300,42 +745,78 @@ public class HardwareEventRecorderGpu {
      * everything in it is a keyframe (extreme stall), drop the new packet
      * unless it's also a keyframe (in which case drop the oldest keyframe).
      *
-     * Logged every 30 drops so a chronic SD-card stall is visible in the
-     * field instead of silently corrupting recordings.
+     * <p>Drop preference: among non-keyframes, prefer evicting VIDEO
+     * P-frames over audio frames. Both are non-keyframe but a P-frame
+     * loss is a single visual hiccup whereas under sustained SD stall
+     * audio (50 pps) dominates the queue versus video (30 pps), so a
+     * naive head-evict would drop audio first. Walk the queue once and
+     * track BOTH the oldest non-keyframe AND the oldest video
+     * non-keyframe; if any video non-keyframe exists, drop that first.
+     * Only fall through to audio drops if no video P-frame is in the
+     * queue.
+     *
+     * <p>Drop counts are split per track-kind ({@link #muxerDropCount}
+     * for video, {@link #audioDropCount} for audio) so chronic SD stall
+     * vs audio-producer-outpaces-consumer can be distinguished in logs.
+     * Logged every 30 drops per kind.
      */
     private void offerMuxerPacket(MuxerPacket packet) {
         if (muxerWriteQueue.offer(packet)) {
             return;
         }
-        // Queue full. Walk from the head looking for a non-keyframe to drop;
-        // dropped packets are returned to the pool so their direct buffer is
-        // reused immediately by the very packet trying to enter the queue.
+        // Queue full. Walk once from the head, tracking:
+        //   - oldestNonKeyframe (any track) — fallback eviction target
+        //   - oldestVideoNonKeyframe — preferred eviction target
+        // Dropped packets are returned to the pool so their direct
+        // buffer is reused immediately by the packet trying to enter
+        // the queue.
         java.util.Iterator<MuxerPacket> it = muxerWriteQueue.iterator();
-        MuxerPacket evicted = null;
+        MuxerPacket oldestNonKf = null;
+        MuxerPacket oldestVideoNonKf = null;
         while (it.hasNext()) {
             MuxerPacket head = it.next();
             if (!head.isKeyFrame()) {
-                it.remove();
-                evicted = head;
-                break;
+                if (oldestNonKf == null) oldestNonKf = head;
+                if (head.trackKind == TRACK_KIND_VIDEO && oldestVideoNonKf == null) {
+                    oldestVideoNonKf = head;
+                    // Found our preferred target — but keep going only
+                    // until we have both anchors. Once oldestVideoNonKf
+                    // is set we have everything we need; the oldestNonKf
+                    // anchor was already captured (it was set before or
+                    // is this same packet).
+                    break;
+                }
             }
         }
-        if (evicted == null) {
+        MuxerPacket evicted = (oldestVideoNonKf != null) ? oldestVideoNonKf : oldestNonKf;
+        if (evicted != null) {
+            muxerWriteQueue.remove(evicted);
+        } else {
             // All entries are keyframes — drop the oldest. This only happens
             // under multi-second SD stalls; the recording will have a gap
             // but the daemon stays alive.
             evicted = muxerWriteQueue.pollFirst();
         }
         if (evicted != null) {
+            // Increment the per-kind counter for the evicted packet. Log
+            // every 30 to keep field debugging tractable.
+            if (evicted.trackKind == TRACK_KIND_AUDIO) {
+                long n = audioDropCount.incrementAndGet();
+                if (n % 30 == 1) {
+                    logger.warn("Audio drop count " + n
+                        + " — audio producer outpacing muxer queue (video healthy).");
+                }
+            } else {
+                long n = muxerDropCount.incrementAndGet();
+                if (n % 30 == 1) {
+                    logger.warn("Video drop count " + n
+                        + " — muxer write queue saturated, SD card likely stalled.");
+                }
+            }
             releaseMuxerPacket(evicted);
         }
         // Now there's space.
         muxerWriteQueue.offer(packet);
-        long n = muxerDropCount.incrementAndGet();
-        if (n % 30 == 1) {
-            logger.warn("Muxer write queue saturated — dropped " + n
-                + " packets total. SD card likely stalled.");
-        }
     }
     private volatile boolean diskWriterRunning = false;
     private Thread diskWriterThread;
@@ -344,6 +825,13 @@ public class HardwareEventRecorderGpu {
     private volatile boolean drainerRunning = false;
     private Thread drainerThread;
     private static final int DRAIN_INTERVAL_MS = 16;  // ~60Hz cadence, matches frame arrival rate
+    // Set by release() before its final stopDrainerThread() so any nested
+    // close path (closeEventRecording → startDrainerThread) skips the
+    // restart. Without this, release() and closeEventRecording fight: close
+    // restarts the drainer to keep the GL thread responsive during rename,
+    // then release() stops it again — but in the window between, the drainer
+    // races encoder.release(), throwing transient IllegalStateExceptions.
+    private volatile boolean drainerRestartSuppressed = false;
     
     // SOTA: Flag to disable pre-record buffer for stream-only encoders
     private boolean usePreRecordBuffer = true;
@@ -375,16 +863,58 @@ public class HardwareEventRecorderGpu {
     private boolean streamHeadersSent = false;
     
     // Recording state
-    private boolean recording = false;
+    // volatile: read by isRecording() from RecordingModeManager,
+    // GpuSurveillancePipeline, and QualitySettingsApiHandler on threads
+    // distinct from the writer (start/stop and drainer paths). Without
+    // volatile, weak-memory-model devices may publish stale values to
+    // these readers across thread boundaries.
+    private volatile boolean recording = false;
     private String outputPath;
     private File tempFile;
     private int recordedFrames = 0;
     private long firstFramePtsUs = -1;   // PTS of first frame written to muxer
     private long lastFramePtsUs = -1;    // PTS of last frame written to muxer
+    // PTS rebase origin: subtracted from every packet's PTS before
+    // muxer.writeSampleData. Captured from the FIRST packet written to a
+    // given muxer instance — so the muxer always sees a timeline starting
+    // at 0, regardless of where the encoder's clock happened to be.
+    //
+    // Why this matters: the encoder's presentationTimeUs counts up from
+    // process start (or first input frame), so a recording triggered 60s
+    // into the daemon's life sees PTSs ~60_000_000us. The pre-record buffer
+    // packets carry absolute encoder PTSs ~53s; the first live packet is
+    // ~60s. MediaMuxer mostly handles non-zero origins, but the FIRST
+    // muxer instance after savedFormat is captured has a quirk where the
+    // duration field in the moov atom can be miscalculated, producing an
+    // mp4 whose declared duration is shorter than the bitstream span (e.g.
+    // declared 10s, actual 16s) — playback freezes at the declared
+    // duration mark, exactly the "video breaks at 6s" symptom on the very
+    // first recording. Subsequent recordings work because savedFormat is
+    // already stable by then. Rebase to 0 eliminates the ambiguity.
+    //
+    // Rotation: each new muxer instance re-captures origin from its own
+    // first packet (firstFramePtsUs reset on rotation), so segment N+1
+    // also starts at 0 in its own muxer.
+    private long ptsOriginUs = -1;
     
     // Segment rotation
     private long segmentStartTime = 0;
     private static final long SEGMENT_DURATION_MS = 2 * 60 * 1000;  // 2 minutes
+    // Debounce window for forceSegmentRotation: if the current segment was
+    // started less than this many ms ago, a force-rotation is treated as a
+    // no-op. Prevents the natural-rotation path (drainer thread, no
+    // startStopLock) from interleaving with a force-rotation (API thread,
+    // holds startStopLock) and producing a near-empty middle segment with
+    // bad PTS bookkeeping (firstFramePtsUs == -1 fallback).
+    private static final long ROTATE_DEBOUNCE_MS = 1000L;
+    // CAS gate shared by every rotateSegment() caller (natural drainer tick +
+    // forceSegmentRotation HTTP path). Whoever flips false→true does the
+    // rotation; concurrent callers observe true and bail. Reset in finally
+    // inside rotateSegment so a thrown exception doesn't permanently lock
+    // future rotations. Closes the window where a force fires within ~50ms
+    // of a natural tick and produces an empty middle segment.
+    private final java.util.concurrent.atomic.AtomicBoolean rotationInFlight =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
     private int segmentNumber = 0;
     private String segmentBasePath = null;  // Base path for segment rotation (without .mp4)
     
@@ -703,37 +1233,53 @@ public class HardwareEventRecorderGpu {
         if (usePreRecordBuffer) {
             synchronized (bufferLock) {
                 int desiredSec = Math.max(1, Math.min(30, preRecordDurationSeconds));
-                if (sharedPreRecordBuffer == null) {
+                int desiredBudget = computePreRecordBudgetBytes(desiredSec, bitrate);
+                if (sharedPreRecordBuffer == null
+                        || desiredBudget > sharedPreRecordBudgetBytes) {
+                    // First allocation, or the user has bumped pre-roll
+                    // duration / bitrate beyond what the existing ring can
+                    // hold. H264ByteRingBuffer's payload arena is fixed at
+                    // construction (no resize API), so we have to recreate.
+                    if (sharedPreRecordBuffer != null) {
+                        logger.info("Resizing pre-record byte ring: "
+                            + (sharedPreRecordBudgetBytes / 1024 / 1024) + "MB → "
+                            + (desiredBudget / 1024 / 1024) + "MB (duration="
+                            + desiredSec + "s, bitrate=" + (bitrate / 1_000_000) + "Mbps)");
+                        sharedPreRecordBuffer = null;
+                        sharedPreRecordBudgetBytes = 0;
+                    }
                     logger.info("Allocating pre-record byte ring: budget="
-                        + (PRE_RECORD_BUDGET_BYTES / 1024 / 1024) + "MB, duration="
-                        + desiredSec + "s (one-time allocation, survives encoder reinit)");
+                        + (desiredBudget / 1024 / 1024) + "MB, duration="
+                        + desiredSec + "s, bitrate=" + (bitrate / 1_000_000) + "Mbps");
                     try {
-                        sharedPreRecordBuffer = new H264ByteRingBuffer(PRE_RECORD_BUDGET_BYTES, desiredSec);
+                        sharedPreRecordBuffer = new H264ByteRingBuffer(desiredBudget, desiredSec);
+                        sharedPreRecordBudgetBytes = desiredBudget;
                     } catch (OutOfMemoryError | RuntimeException oom) {
                         // Graceful degradation: the daemon's heap couldn't
-                        // satisfy a 64 MB direct allocation. Drop pre-record
+                        // satisfy the direct allocation. Drop pre-record
                         // capability for this session — live recording still
-                        // works, but events have no pre-roll. The user-visible
-                        // effect is "the first ~5s before each motion trigger
-                        // are missing," which is preferable to a daemon that
-                        // refuses to come up at all.
+                        // works, but events have no pre-roll.
                         logger.error("Pre-record byte ring allocation failed (" + oom.getMessage()
                             + ") — running without pre-record. Live recording unaffected.");
                         sharedPreRecordBuffer = null;
+                        sharedPreRecordBudgetBytes = 0;
                         usePreRecordBuffer = false;
                         preRecordAllocFailed = true;
                     }
                 } else {
-                    // Buffer already exists — clear residual data from prior
-                    // encoder instance and update duration if it changed.
+                    // Buffer already exists and is big enough — reuse. Clear
+                    // residual data from prior encoder instance and update
+                    // duration window if it changed (cheap field write).
                     sharedPreRecordBuffer.clear();
                     long desiredUs = desiredSec * 1_000_000L;
                     if (sharedPreRecordBuffer.getMaxDurationUs() != desiredUs) {
                         sharedPreRecordBuffer.setMaxDurationUs(desiredUs);
-                        logger.info("Reusing pre-record byte ring with new duration: "
+                        logger.info("Reusing pre-record byte ring ("
+                            + (sharedPreRecordBudgetBytes / 1024 / 1024) + "MB) with new duration: "
                             + desiredSec + "s");
                     } else {
-                        logger.info("Reusing pre-record byte ring: " + desiredSec + "s");
+                        logger.info("Reusing pre-record byte ring ("
+                            + (sharedPreRecordBudgetBytes / 1024 / 1024) + "MB): " + desiredSec + "s");
                     }
                 }
                 preRecordBuffer = sharedPreRecordBuffer;
@@ -767,14 +1313,61 @@ public class HardwareEventRecorderGpu {
         synchronized (bufferLock) {
             if (sharedPreRecordBuffer != null) {
                 long desiredUs = clamped * 1_000_000L;
+                int desiredBudget = computePreRecordBudgetBytes(clamped, bitrate);
+                // Always update the duration window. Even when the byte arena
+                // is too small to hold the requested seconds at the current
+                // bitrate, widening the window lets the ring keep whatever
+                // pre-roll it CAN hold instead of stranding the user at the
+                // old (smaller) window until the next encoder reinit. The
+                // ring's eviction policy will trim packets that don't fit.
                 if (sharedPreRecordBuffer.getMaxDurationUs() != desiredUs) {
                     sharedPreRecordBuffer.setMaxDurationUs(desiredUs);
-                    logger.info("Pre-record duration updated to " + clamped + "s (window only — no reallocation)");
+                }
+                if (desiredBudget > sharedPreRecordBudgetBytes) {
+                    // Byte arena is undersized for the new duration × bitrate
+                    // product. Defer the reallocation to the next init() —
+                    // resizing inline would race the encoder GL thread's
+                    // payload writes.
+                    logger.info("Pre-record duration " + clamped + "s requires "
+                        + (desiredBudget / 1024 / 1024) + "MB; current ring is "
+                        + (sharedPreRecordBudgetBytes / 1024 / 1024)
+                        + "MB — window updated, byte arena will resize on next encoder init");
                 } else {
-                    logger.info("Pre-record duration already at " + clamped + "s — no-op");
+                    logger.info("Pre-record duration updated to " + clamped + "s (window only — no reallocation)");
                 }
             }
         }
+    }
+
+    /**
+     * Sizes the pre-record byte arena from the user's configured pre-roll
+     * window and the current encoder bitrate. Floor at 8 MB (anything less
+     * is too small to hold a 5 s pre-roll + IDR), ceiling at 64 MB
+     * (matches the legacy slot-pool's known-good envelope).
+     */
+    private static int computePreRecordBudgetBytes(int durationSeconds, int bitrateBps) {
+        // bytes = (bps × s ÷ 8) × overhead
+        long ideal = (long) ((bitrateBps / 8.0) * durationSeconds * PRE_RECORD_IDR_OVERHEAD);
+        long bytes = ideal;
+        if (bytes < PRE_RECORD_BUDGET_FLOOR_BYTES) bytes = PRE_RECORD_BUDGET_FLOOR_BYTES;
+        if (bytes > PRE_RECORD_BUDGET_CEILING_BYTES) bytes = PRE_RECORD_BUDGET_CEILING_BYTES;
+        if (ideal > PRE_RECORD_BUDGET_CEILING_BYTES) {
+            // User configured more pre-roll than the 64 MB ceiling can hold at
+            // this bitrate. The ring will evict older packets to stay within
+            // the byte arena, so the effective window will be < durationSeconds.
+            // Log so the user can correlate observed pre-roll with their
+            // settings; this matches the legacy slot-pool's behavior at the
+            // same ceiling.
+            long achievableSeconds = (long)
+                ((PRE_RECORD_BUDGET_CEILING_BYTES * 8.0) / (bitrateBps * PRE_RECORD_IDR_OVERHEAD));
+            logger.warn("Pre-record budget capped at "
+                + (PRE_RECORD_BUDGET_CEILING_BYTES / 1024 / 1024)
+                + "MB; requested " + durationSeconds + "s × "
+                + (bitrateBps / 1_000_000) + "Mbps needs "
+                + (ideal / 1024 / 1024) + "MB. Effective window ≈ "
+                + achievableSeconds + "s.");
+        }
+        return (int) bytes;
     }
     
     /**
@@ -829,6 +1422,298 @@ public class HardwareEventRecorderGpu {
      */
     public boolean isFormatAvailable() {
         return savedFormat != null;
+    }
+
+    // ==================== AUDIO MUXING API ====================
+    //
+    // Called by AacIngestServer (daemon side) when the app process connects
+    // and announces its AAC encoder parameters. The handshake is:
+    //   1. App connects, sends one CONFIG packet with CSD-0 + sampleRate
+    //      + channelCount + bitrate.
+    //   2. Daemon calls setAudioConfig(...). This DOES NOT cause anything
+    //      to happen to a running muxer — it just primes the next event /
+    //      segment rotation so its addTrack(audioFormat) call has data.
+    //   3. App sends DATA packets (AAC frames + PTS in microseconds since
+    //      capture started).
+    //   4. Daemon calls pushAudioPacket(...) per frame. The packet rides
+    //      the existing muxerWriteQueue and the disk writer routes it to
+    //      audioTrackIndex.
+    //
+    // Lifecycle: the app side stops capture on ACC OFF, mode change, or
+    // toggle off; the daemon clears audioMuxingEnabled when it sees the
+    // ingest socket close. Stale audioCsd0 is fine — the next connect just
+    // overwrites it.
+
+    /**
+     * Set the AAC encoder configuration that the muxer will use for its
+     * audio track. Safe to call from any thread; takes effect at the next
+     * recording start or segment rotation. Setting csd0=null disables
+     * audio muxing for subsequent segments.
+     */
+    public void setAudioConfig(byte[] csd0, int sampleRate, int channelCount, int bitrate) {
+        if (csd0 == null || csd0.length == 0) {
+            this.audioConfig = null;
+            // Reset the confidence counter: a later re-enable starts
+            // from "no packets yet" so the first post-enable muxer
+            // opens video-only until packets actually flow, avoiding
+            // the empty-audio-track quarantine.
+            this.audioPacketCountSinceConfigSet = 0;
+            // Clear the pre-record ring: its packets reference an audio
+            // session that's no longer active, and a later re-enable would
+            // start a fresh capture stream whose PTSs no longer align with
+            // the stale packets in the ring.
+            aacRing.clear();
+            logger.info("Audio muxing disabled (csd0=null)");
+            return;
+        }
+        // Single volatile write — no torn-read possible. Defensive clone of
+        // the byte[] so a caller mutating their original array later cannot
+        // corrupt our snapshot.
+        this.audioConfig = new AudioConfig(csd0.clone(), sampleRate, channelCount, bitrate);
+        // Reset confidence counter on every config swap so a stale
+        // "audio was flowing under the previous config" doesn't bleed
+        // into the new config's track-add decision.
+        this.audioPacketCountSinceConfigSet = 0;
+        logger.info(String.format(
+            "Audio config set: %d Hz %d ch, %d kbps, csd0=%d bytes",
+            sampleRate, channelCount, bitrate / 1000, csd0.length));
+    }
+
+    /**
+     * Disable audio muxing. Used when the app's audio capture stops
+     * (toggle off, ACC off, app process died). Already-queued audio
+     * packets in muxerWriteQueue are dropped by the writer when it sees
+     * audioTrackIndex == -1; the active recording closes out as
+     * video-only, which is exactly what should happen.
+     */
+    public void disableAudioMuxing() {
+        if (audioConfig != null) {
+            logger.info("Audio muxing disabled by caller");
+        }
+        this.audioConfig = null;
+        // Mirror setAudioConfig(null): reset confidence so a subsequent
+        // enable doesn't inherit "packets flowing" state from the prior
+        // session.
+        this.audioPacketCountSinceConfigSet = 0;
+        // Drop any pre-record packets we'd captured during the previous
+        // audio-enabled session. Same rationale as setAudioConfig(null):
+        // the next enable starts a fresh capture stream and the stale
+        // packets would no longer line up with the new PTS origin.
+        aacRing.clear();
+    }
+
+    /**
+     * Returns true if audio muxing is enabled and the muxer has an audio
+     * track wired up. Used by AacIngestServer to drop incoming packets
+     * cheaply when no recording is in flight.
+     */
+    public boolean isAudioMuxingActive() {
+        return audioConfig != null && audioTrackIndex >= 0 && isWritingToFile;
+    }
+
+    /**
+     * Returns true iff this encoder instance has received and stored the
+     * AAC AudioSpecificConfig. Used by AacIngestServer to detect "encoder
+     * was recreated under us" (e.g. recording mode switch tears down the
+     * pipeline + encoder; a fresh instance starts with audioConfig=null
+     * even though the long-lived AAC TCP client is still streaming
+     * packets). On false, the ingest server replays its cached CONFIG
+     * payload so the new encoder picks up the muxer track on its next
+     * recording start.
+     */
+    public boolean hasAudioConfig() {
+        return audioConfig != null;
+    }
+
+    /**
+     * Push one AAC frame into the muxer write queue. Frame data must be a
+     * raw AAC access unit (NO ADTS header — MediaMuxer wants raw AU).
+     *
+     * @param data    AAC AU bytes
+     * @param length  Valid byte count in data
+     * @param ptsUs   Presentation timestamp in microseconds, monotonic
+     *                with the video PTSs (same wall clock origin)
+     * @return true if accepted, false if dropped (no recording, no audio
+     *         track, or queue under SD-card backpressure)
+     */
+    public boolean pushAudioPacket(byte[] data, int length, long ptsUs) {
+        return pushAudioPacket(data, 0, length, ptsUs);
+    }
+
+    /**
+     * Offset variant of {@link #pushAudioPacket(byte[], int, long)} — copies
+     * directly from {@code data} at {@code offset}, eliminating a
+     * per-frame heap copy in callers that already have a buffered AAC
+     * stream. The intended caller (AacIngestServer) reads frames from a
+     * SocketChannel into a recycled scratch buffer and forwards
+     * {@code (scratch, frameOffset, frameLength, pts)} without a
+     * temporary {@code byte[]} per frame.
+     *
+     * @param data    AAC AU bytes
+     * @param offset  Starting byte index into data
+     * @param length  Valid byte count starting at offset
+     * @param ptsUs   Presentation timestamp in microseconds
+     */
+    public boolean pushAudioPacket(byte[] data, int offset, int length, long ptsUs) {
+        // Cheap pre-checks outside any lock — fast-fail path for the common
+        // "no recording in flight" case.
+        if (data == null || length <= 0 || offset < 0
+                || offset > data.length - length) {
+            return false;
+        }
+        // Pre-record capture is independent of isWritingToFile: the whole
+        // point of the audio ring is to hold the seconds BEFORE a recording
+        // starts so the resulting clip has audio at frame 0 instead of 5 s
+        // of silent video. Gate only on audioConfig — when the user has
+        // audio disabled there's no point copying bytes into a ring whose
+        // drain on event-trigger is also gated on the same field. The ring
+        // owns its own deque + atomic byte counter; no lock taken here.
+        if (audioConfig != null) {
+            aacRing.add(data, offset, length, ptsUs);
+            // Bump the confidence counter every time we receive a valid
+            // audio packet against the current config. This is what
+            // maybeAddAudioTrack consults at muxer-start / rotation time
+            // to decide whether audio is actually flowing — if no packets
+            // have arrived yet we open video-only to avoid the empty-track
+            // quarantine, and pick up audio at the next rotation.
+            // Volatile write; no lock — the read side (maybeAddAudioTrack)
+            // tolerates a transient stale read since the next rotation
+            // recovers.
+            audioPacketCountSinceConfigSet++;
+        }
+        if (!isWritingToFile || audioConfig == null || audioTrackIndex < 0) {
+            return false;
+        }
+        // AAC frames are tiny (~256 B at 64 kbps × 20 ms). acquireMuxerPacket
+        // walks the micro pool first so we never waste a P-frame or IDR slot
+        // on audio. (See MUXER_PACKET_MICRO_CEILING.)
+        MuxerPacket pkt = acquireMuxerPacket(length);
+        if (pkt == null) return false;
+        pkt.data.clear();
+        pkt.data.put(data, offset, length);
+        pkt.data.flip();
+        pkt.payloadSize = length;
+        // No flags — AAC frames have no BUFFER_FLAG_KEY_FRAME concept the
+        // muxer cares about, and crucially we want them to be eligible for
+        // drop-oldest-non-keyframe under SD backpressure (audio gap is
+        // tolerable; video gap is not).
+        pkt.info.set(0, length, ptsUs, 0);
+        pkt.trackKind = TRACK_KIND_AUDIO;
+        // Re-check the gate under muxerLock and only offer if still valid.
+        // Otherwise: between the gate read above and offerMuxerPacket, a
+        // concurrent closeEventRecording() could flip isWritingToFile /
+        // tear down the muxer. The dropped audio is fine, but if a NEW
+        // recording starts before the queue drains, this stale packet
+        // (with OLD-recording PTS) would land in the NEW muxer and
+        // produce out-of-order PTS errors. Tight critical section: a
+        // single state check + one bounded queue offer.
+        synchronized (muxerLock) {
+            if (!isWritingToFile || audioConfig == null || audioTrackIndex < 0) {
+                releaseMuxerPacket(pkt);
+                return false;
+            }
+            offerMuxerPacket(pkt);
+        }
+        return true;
+    }
+
+    /**
+     * Force-rotate the active segment NOW, wrapping the current .mp4 and
+     * starting a new one. Used by the API endpoint when audioEnabled flips
+     * on so the user's next clip actually has audio (rather than waiting
+     * up to the natural 2-minute rotation tick for the new segment to pick
+     * up the audio track).
+     *
+     * <p>No-op if no recording is in flight. Holds {@link #startStopLock}
+     * to serialize against start/stop entry points; the inner
+     * {@link #rotateSegment()} acquires {@link #muxerLock} per the
+     * documented lock ordering.
+     */
+    public void forceSegmentRotation() {
+        synchronized (startStopLock) {
+            if (!isWritingToFile) {
+                return;
+            }
+            // segmentBasePath is set by triggerEventRecording. If null,
+            // rotateSegment would NPE; defensive check matches the
+            // structure of stopEventRecording's outer-volatile / inner-lock
+            // pattern.
+            if (segmentBasePath == null) {
+                logger.warn("forceSegmentRotation skipped — no segmentBasePath (recording mid-init)");
+                return;
+            }
+            // Debounce against the natural-rotation path. The drainer's
+            // 2-minute tick calls rotateSegment() WITHOUT startStopLock,
+            // so a force here can interleave: both paths pre-construct a
+            // new MediaMuxer off-lock and then swap in sequence, producing
+            // an empty/near-empty middle segment with PTS bookkeeping in
+            // its initial state (firstFramePtsUs == -1).
+            //
+            // Briefly take muxerLock just to read segmentStartTime
+            // atomically against rotateSegment's swap (which writes
+            // segmentStartTime under muxerLock). Release before calling
+            // rotateSegment(), which acquires muxerLock itself per the
+            // documented lock ordering — we don't want to hold muxerLock
+            // across the rotateSegment call (rotateSegment's body assumes
+            // it can pre-construct the new muxer OFF the lock and then
+            // briefly enter the lock; nesting would defeat that).
+            //
+            // Lock ordering: recordingLock → startStopLock → muxerLock.
+            // We're already holding startStopLock; taking muxerLock here
+            // is consistent.
+            final long sinceLastRotate;
+            synchronized (muxerLock) {
+                sinceLastRotate = (segmentStartTime > 0)
+                        ? (System.currentTimeMillis() - segmentStartTime)
+                        : Long.MAX_VALUE;
+            }
+            if (sinceLastRotate < ROTATE_DEBOUNCE_MS) {
+                logger.info("forceSegmentRotation debounced — last rotation "
+                        + sinceLastRotate + "ms ago (< " + ROTATE_DEBOUNCE_MS
+                        + "ms window); skipping to avoid empty middle segment");
+                return;
+            }
+            logger.info("forceSegmentRotation: wrapping current segment so the next one carries audio");
+            rotateSegment();
+
+            // After rotation, verify the new segment actually got the audio
+            // track. If not (CAS lost to a concurrent natural rotation that
+            // pre-constructed its muxer while audioConfig was briefly null,
+            // or the audio config is in a stale window mid-reconfigure),
+            // schedule one follow-up rotation 1.5s later. By then either
+            // (a) the next AAC DATA packet has triggered the
+            // identity-changed replay path in AacIngestServer and audio is
+            // wired up, or (b) audio is genuinely gone again (config null)
+            // and the follow-up is a no-op.
+            //
+            // Daemon thread so JVM shutdown isn't blocked on the sleep.
+            // Single-shot — no spin if the second attempt also misses.
+            if (audioTrackIndex < 0 && hasAudioConfig()) {
+                logger.info("forceSegmentRotation: new segment has no audio track — scheduling 1.5s follow-up");
+                Thread followup = new Thread(new Runnable() {
+                    @Override public void run() {
+                        try {
+                            Thread.sleep(1500);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        }
+                        synchronized (startStopLock) {
+                            if (!isWritingToFile) return;
+                            // Already wired up by the next natural rotation
+                            // tick or by another forceSegmentRotation call.
+                            if (audioTrackIndex >= 0) return;
+                            // Audio gone again — nothing to gain by rotating.
+                            if (!hasAudioConfig()) return;
+                            rotateSegment();
+                            logger.info("forceSegmentRotation follow-up fired");
+                        }
+                    }
+                }, "ForceRotateFollowup");
+                followup.setDaemon(true);
+                followup.start();
+            }
+        }
     }
 
     /**
@@ -986,7 +1871,14 @@ public class HardwareEventRecorderGpu {
             recordedFrames = 0;
             firstFramePtsUs = -1;
             lastFramePtsUs = -1;
+            ptsOriginUs = -1;
+            lastAudioPtsUs = -1L;
             writerAbortedCorrupt = false;
+            // Reset per-recording audio failure counter. Without this, the
+            // every-100 log threshold would be a lifetime-of-object counter
+            // and field logs would confuse a chronic-bad-recording symptom
+            // with a one-time burst inside a single event.
+            audioWriteFailureCount.set(0);
 
             // Create muxer. Hold muxerLock so the disk writer never observes a
             // half-constructed muxer (e.g., started but trackIndex still -1).
@@ -999,9 +1891,17 @@ public class HardwareEventRecorderGpu {
                     // If we have a saved format, use it immediately
                     if (savedFormat != null) {
                         trackIndex = muxer.addTrack(savedFormat);
+                        // Add audio track BEFORE muxer.start() — MediaMuxer
+                        // rejects addTrack post-start. If audio is enabled
+                        // but the app's CSD-0 hasn't arrived yet, fall
+                        // through video-only; the muxer is fixed for the
+                        // life of this segment. The next rotation picks up
+                        // the audio track if the CSD has landed by then.
+                        audioTrackIndex = maybeAddAudioTrack(muxer);
                         muxer.start();
                         muxerStarted = true;
-                        logger.info("Muxer started with saved format (track=" + trackIndex + ")");
+                        logger.info("Muxer started with saved format (videoTrack="
+                            + trackIndex + ", audioTrack=" + audioTrackIndex + ")");
                     }
                     muxerOk = true;
                 } catch (Exception e) {
@@ -1012,6 +1912,7 @@ public class HardwareEventRecorderGpu {
                     }
                     muxerStarted = false;
                     trackIndex = -1;
+                    audioTrackIndex = -1;
                 }
             }
             if (!muxerOk) {
@@ -1047,6 +1948,135 @@ public class HardwareEventRecorderGpu {
                 }
             }
 
+            // Audio pre-record flush. Drains the AAC ring into the muxer
+            // queue so this event clip has audio at frame 0 instead of the
+            // previous "5 s of silent video before audio kicks in" behaviour.
+            //
+            // Gating:
+            //   - Only useful when audio is configured (audioConfig != null)
+            //     AND the muxer has an audio track (maybeAddAudioTrack
+            //     succeeded above, i.e. audioTrackIndex >= 0). If audio was
+            //     enabled mid-pipeline AFTER the muxer started, the track
+            //     was never added — drain anyway and discard so the next
+            //     event's pre-record window starts clean.
+            //   - PTS-window filter: ring packets older than the youngest
+            //     ring entry's PTS minus the pre-record duration belong to
+            //     a previous (closed) recording's tail or a long-idle gap.
+            //     Their absolute PTSs would still be valid for
+            //     writeRebasedAudio's negative-rebase clamp, but they'd all
+            //     collapse to PTS=0 and stack on the segment's first audio
+            //     frame. Filter them out.
+            //
+            //     Anchoring the window at the youngest ring PTS (rather
+            //     than the daemon's System.nanoTime()) avoids assuming
+            //     cross-process clock parity. PTSs are stamped in the APP
+            //     process by AppAudioCaptureController.captureLoop using
+            //     System.nanoTime() / 1000; the daemon's nanoTime() shares
+            //     the same kernel CLOCK_MONOTONIC backing on Android in
+            //     practice, but there is no contractual guarantee. Drift
+            //     under suspend or on quirky kernels would otherwise cause
+            //     the filter to drop every pre-record packet, leaving the
+            //     segment silent for the entire pre-record window.
+            //
+            // Lock-wise: this runs under startStopLock (we're inside its
+            // synchronized block) which is fine — aacRing operations are
+            // wait-free and offerMuxerPacket walks muxerWriteQueue without
+            // taking startStopLock. Lock-ordering invariant preserved.
+            //
+            // muxerLock requirement: each offerMuxerPacket() call below
+            // must hold muxerLock so its eviction walk
+            // (drop-oldest-non-keyframe under SD backpressure) is atomic
+            // w.r.t. concurrent producers. pushAudioPacket() takes muxerLock
+            // around its own offerMuxerPacket(); without doing the same
+            // here, two threads could be inside offerMuxerPacket
+            // concurrently and the non-atomic eviction walk could drop a
+            // video keyframe. We acquire/release muxerLock per packet
+            // (rather than wrapping the whole loop) to avoid unnecessarily
+            // serializing against the disk writer for the duration of the
+            // pre-record drain. Lock ordering is preserved
+            // (recordingLock → startStopLock → muxerLock; we hold
+            // startStopLock and take muxerLock briefly).
+            if (audioConfig != null) {
+                java.util.List<AacCircularBuffer.Packet> audioPackets =
+                    aacRing.drainAll();
+                if (audioTrackIndex >= 0 && !audioPackets.isEmpty()) {
+                    // Use the youngest ring packet's PTS as the time anchor
+                    // for the pre-record window. This avoids the
+                    // cross-process clock-domain assumption (daemon's
+                    // System.nanoTime() vs app's System.nanoTime() — same
+                    // kernel CLOCK_MONOTONIC backing on Android, but no
+                    // contractual guarantee).
+                    //
+                    // Ring is FIFO insertion order; pushAudioPacket sends
+                    // PTSs monotonically, so the last packet is the
+                    // youngest.
+                    long anchorPtsUs = audioPackets.get(audioPackets.size() - 1).ptsUs;
+                    long minPtsUs = anchorPtsUs
+                        - Math.max(1, preRecordDurationSeconds) * 1_000_000L;
+                    int enqueued = 0;
+                    int filtered = 0;
+                    boolean abortedMidLoop = false;
+                    for (AacCircularBuffer.Packet ap : audioPackets) {
+                        // Re-check per-packet: a concurrent AacIngestServer
+                        // disconnect can call disableAudioMuxing() /
+                        // setAudioConfig(null) mid-loop, in which case
+                        // continuing to enqueue audio packets is wasted work
+                        // — the disk writer would drop them at the gate
+                        // (audioTrackIndex < 0). Discard remaining packets
+                        // (don't re-add to ring; the next event gets fresh
+                        // packets from whichever client is live then).
+                        if (audioTrackIndex < 0 || audioConfig == null) {
+                            logger.info("Audio pre-record drain aborted mid-loop: track gone");
+                            abortedMidLoop = true;
+                            break;
+                        }
+                        if (ap.ptsUs < minPtsUs) {
+                            filtered++;
+                            continue;
+                        }
+                        MuxerPacket mp = acquireMuxerPacket(ap.data.length);
+                        if (mp == null) continue;
+                        mp.data.clear();
+                        mp.data.put(ap.data);
+                        mp.data.flip();
+                        mp.payloadSize = ap.data.length;
+                        mp.info.set(0, ap.data.length, ap.ptsUs, 0);
+                        mp.trackKind = TRACK_KIND_AUDIO;
+                        synchronized (muxerLock) {
+                            // Re-check after acquiring the lock — the audio
+                            // track / writing state may have flipped between
+                            // the outer per-packet check and this lock
+                            // acquisition (closeEventRecording or a
+                            // concurrent disableAudioMuxing).
+                            if (audioTrackIndex < 0 || audioConfig == null || !isWritingToFile) {
+                                releaseMuxerPacket(mp);
+                                abortedMidLoop = true;
+                                break;
+                            }
+                            offerMuxerPacket(mp);
+                        }
+                        enqueued++;
+                    }
+                    if (abortedMidLoop) {
+                        logger.info("Audio pre-record flush: " + enqueued
+                            + " packets queued before abort, " + filtered
+                            + " filtered as out-of-window (window="
+                            + preRecordDurationSeconds + "s, anchor="
+                            + anchorPtsUs + "us)");
+                    }
+                    logger.info("Audio pre-record flush: " + enqueued
+                        + " packets queued, " + filtered + " filtered as out-of-window"
+                        + " (window=" + preRecordDurationSeconds + "s, anchor="
+                        + anchorPtsUs + "us)");
+                } else if (!audioPackets.isEmpty()) {
+                    // Audio enabled but no muxer track — packets discarded.
+                    // Next recording will pick up fresh audio from a clean
+                    // ring (drainAll already emptied it).
+                    logger.info("Audio pre-record flush skipped: no audio track on muxer "
+                        + "(" + audioPackets.size() + " ring packets discarded)");
+                }
+            }
+
             // Reset state
             startTimeNs = System.nanoTime();
             segmentStartTime = System.currentTimeMillis();  // Enable segment rotation for long events
@@ -1077,6 +2107,7 @@ public class HardwareEventRecorderGpu {
                 }
                 muxerStarted = false;
                 trackIndex = -1;
+                audioTrackIndex = -1;
             }
             if (tempFile != null && tempFile.exists()) tempFile.delete();
             tempFile = null;
@@ -1192,10 +2223,17 @@ public class HardwareEventRecorderGpu {
                 if (muxerStarted && muxer != null) {
                     try {
                         packet.rewindForWrite();
-                        muxer.writeSampleData(trackIndex, packet.data, packet.info);
-                        if (firstFramePtsUs < 0) firstFramePtsUs = packet.info.presentationTimeUs;
-                        lastFramePtsUs = packet.info.presentationTimeUs;
-                        recordedFrames++;
+                        if (packet.trackKind == TRACK_KIND_AUDIO) {
+                            if (audioTrackIndex >= 0) {
+                                writeRebasedAudio(muxer, audioTrackIndex,
+                                    packet.data, packet.info);
+                            }
+                        } else {
+                            writeRebased(muxer, trackIndex, packet.data, packet.info);
+                            // firstFramePtsUs/lastFramePtsUs are tracked inside
+                            // writeRebased on the rebased timeline.
+                            recordedFrames++;
+                        }
                         flushed++;
                     } catch (Exception e) {
                         logger.warn("Final flush write error: " + e.getMessage());
@@ -1237,6 +2275,7 @@ public class HardwareEventRecorderGpu {
             } finally {
                 muxer = null;
                 trackIndex = -1;
+                audioTrackIndex = -1;
             }
         }
 
@@ -1315,6 +2354,8 @@ public class HardwareEventRecorderGpu {
         recordedFrames = 0;
         firstFramePtsUs = -1;
         lastFramePtsUs = -1;
+        ptsOriginUs = -1;
+        lastAudioPtsUs = -1L;
         segmentStartTime = 0;
         segmentNumber = 0;
         segmentBasePath = null;
@@ -1484,12 +2525,30 @@ public class HardwareEventRecorderGpu {
      * Releases all resources.
      */
     public void release() {
-        // SOTA: Stop drainer thread first
-        stopDrainerThread();
-
+        // CRITICAL ORDERING: do NOT stop the drainer up-front. The previous
+        // ordering (stopDrainer → stopRecording → encoder.release) was buggy:
+        // closeEventRecording calls stopDrainerThread() AGAIN at line ~1157,
+        // then RESTARTS the drainer at line ~1255 (so the encoder GL thread
+        // doesn't backpressure on output-queue saturation during rename).
+        // Coming back from that restart, release() then proceeds to call
+        // encoder.stop() + encoder.release() — racing the freshly-started
+        // drainer's dequeueOutputBuffer on a now-released codec, which logs
+        // a transient ISE every shutdown.
+        //
+        // Correct ordering:
+        //   1. Stop the active recording (drains the muxer cleanly,
+        //      restarts drainer to keep GL thread responsive).
+        //   2. Wait for finalizers.
+        //   3. Stop the drainer permanently — set a "do not restart" flag
+        //      first so any in-flight close path observes it.
+        //   4. encoder.stop() + release().
         if (recording) {
             stopRecording();
         }
+        // Suppress further drainer restarts — closeEventRecording already
+        // restarted it; we want the FINAL stop to stick.
+        drainerRestartSuppressed = true;
+        stopDrainerThread();
 
         // Wait for any in-flight rotation finalizers AFTER stopRecording so
         // the close path's rename has already finished but rotation finalizers
@@ -1541,7 +2600,29 @@ public class HardwareEventRecorderGpu {
         // encoder lifetimes; that's where stale-content rejection belongs.
         preRecordBuffer = null;
 
+        // Drain the per-instance muxer packet pools. Without this drain,
+        // a bitrate-only reinit (release → new encoder) leaves the old
+        // pools holding their direct ByteBuffers until the JVM Cleaner
+        // reclaims them at next GC, while the new encoder's pools grow
+        // in parallel. Steady-state native footprint is unchanged; this
+        // just reclaims the peak-memory blip during the reinit window.
+        // Setting buffer fields to null lets the Cleaner reclaim each
+        // direct ByteBuffer at the next GC instead of waiting for the
+        // entire encoder instance to become unreachable.
+        drainPool(muxerPacketPoolMicro, muxerPacketPoolMicroSize);
+        drainPool(muxerPacketPoolSmall, muxerPacketPoolSmallSize);
+        drainPool(muxerPacketPoolLarge, muxerPacketPoolLargeSize);
+
         logger.info( "Released");
+    }
+
+    private static void drainPool(java.util.concurrent.ConcurrentLinkedDeque<MuxerPacket> pool,
+                                  java.util.concurrent.atomic.AtomicInteger size) {
+        MuxerPacket p;
+        while ((p = pool.poll()) != null) {
+            p.data = null;
+        }
+        size.set(0);
     }
     
     // ==================== SOTA: Background Drainer Thread ====================
@@ -1555,7 +2636,11 @@ public class HardwareEventRecorderGpu {
             logger.warn("Drainer thread already running");
             return;
         }
-        
+        if (drainerRestartSuppressed) {
+            logger.info("Drainer restart suppressed (release in progress)");
+            return;
+        }
+
         drainerRunning = true;
         drainerThread = new Thread(() -> {
             // Audit-driven: drainer is on the realtime-critical path. If it
@@ -1596,8 +2681,31 @@ public class HardwareEventRecorderGpu {
                     Thread.sleep(4);
                 } catch (InterruptedException e) {
                     break;
-                } catch (Exception e) {
-                    logger.error("Drainer error: " + e.getMessage());
+                } catch (Throwable t) {
+                    // Catch Throwable, NOT just Exception. The flush block
+                    // re-throws Errors after logging+cleanup; if we only
+                    // catch Exception, an OOMError silently kills this
+                    // thread — drainerRunning stays true, encoder output
+                    // queue saturates, eglSwapBuffers stalls, the GL thread
+                    // freezes, and there is no daemon-level watchdog to
+                    // notice. We'd rather burn a log line and keep
+                    // draining: the next iteration picks up where we left
+                    // off, the encoder pipeline keeps moving, and the
+                    // (recoverable) recording continues. If the Error is
+                    // genuinely fatal (e.g. native crash), the JVM will
+                    // tear down regardless — we lose nothing by trying.
+                    logger.error("Drainer error (caught Throwable): " + t.getMessage());
+                    if (t instanceof Error) {
+                        // Log a stack trace for post-mortem.
+                        try {
+                            java.io.StringWriter sw = new java.io.StringWriter();
+                            t.printStackTrace(new java.io.PrintWriter(sw));
+                            logger.error("Drainer Error trace: " + sw.toString());
+                        } catch (Throwable ignored) {}
+                    }
+                    // Brief backoff so a hot loop of repeated Errors doesn't
+                    // pin the CPU. 50ms is a few frames at worst.
+                    try { Thread.sleep(50); } catch (InterruptedException ie) { break; }
                 }
             }
             logger.info("Encoder drainer thread stopped");
@@ -1670,6 +2778,11 @@ public class HardwareEventRecorderGpu {
      * Call this after startCamera() succeeds.
      */
     public void restartDrainerAfterCameraClose() {
+        // Defensive: a prior release() may have left drainerRestartSuppressed
+        // true. The camera-close-then-reopen path is a normal-lifecycle event
+        // that must NOT be silently no-op'd. Only release() ↔ a new encoder
+        // instance is supposed to permanently stop the drainer.
+        drainerRestartSuppressed = false;
         if (!drainerRunning) {
             startDrainerThread();
             logger.info("Drainer restarted after camera reopen");
@@ -1738,11 +2851,30 @@ public class HardwareEventRecorderGpu {
                     // moov atom and produces a sized-but-unplayable .mp4.
                     synchronized (muxerLock) {
                         if (muxerStarted && muxer != null) {
+                            // Route by track-kind. Video uses the canonical
+                            // writeRebased path so its PTS tracking and
+                            // duration computation stay intact. Audio shares
+                            // ptsOriginUs with video so A/V remain aligned;
+                            // we route via writeRebasedAudio which seeds the
+                            // origin if the very first packet of the segment
+                            // happens to be audio (rare but possible).
                             packet.rewindForWrite();
-                            muxer.writeSampleData(trackIndex, packet.data, packet.info);
-                            if (firstFramePtsUs < 0) firstFramePtsUs = packet.info.presentationTimeUs;
-                            lastFramePtsUs = packet.info.presentationTimeUs;
-                            recordedFrames++;
+                            if (packet.trackKind == TRACK_KIND_AUDIO) {
+                                if (audioTrackIndex >= 0) {
+                                    writeRebasedAudio(muxer, audioTrackIndex,
+                                        packet.data, packet.info);
+                                }
+                                // else: audio not provisioned for this segment
+                                // (toggle off, CSD missing) — packet dropped
+                                // silently. The encoder upstream is allowed
+                                // to keep producing frames; we just don't
+                                // mux them.
+                            } else {
+                                writeRebased(muxer, trackIndex,
+                                    packet.data, packet.info);
+                                // PTS tracking handled inside writeRebased.
+                                recordedFrames++;
+                            }
                             consecutiveWriteFailures[0] = 0;
                         }
                     }
@@ -1855,52 +2987,84 @@ public class HardwareEventRecorderGpu {
         if (flushInProgress && muxerStarted) {
             H264ByteRingBuffer.Cursor cursor = pendingFlushCursor;
             int flushedCount = 0;
-            if (cursor != null) {
-                try {
-                    while (true) {
-                        int sz = cursor.peekSize();
-                        if (sz <= 0) break;
-                        // Acquire-and-fill must be exception-safe: if next()
-                        // throws (e.g., outDst.put surfaces a transient
-                        // BufferOverflowException because the encoder produced
-                        // a frame larger than the muxer pool's slot ceiling),
-                        // we must NOT leak the packet back to GC. The pool is
-                        // bounded; a leaked direct buffer waits for the
-                        // Cleaner and starves later acquires.
-                        MuxerPacket mp = acquireMuxerPacket(sz);
-                        boolean handed = false;
-                        try {
-                            mp.data.position(0);
-                            mp.data.limit(mp.data.capacity());
-                            if (!cursor.next(mp.data, flushCursorInfo)) {
-                                // Aborted (pin broken) or exhausted.
-                                break;
-                            }
-                            mp.payloadSize = flushCursorInfo.size;
-                            mp.info.set(0, flushCursorInfo.size,
-                                flushCursorInfo.presentationTimeUs, flushCursorInfo.flags);
-                            offerMuxerPacket(mp);
-                            handed = true;
-                            flushedCount++;
-                        } finally {
-                            if (!handed) {
-                                releaseMuxerPacket(mp);
+            // Outer try/finally guarantees flushInProgress is cleared even if
+            // the inner loop throws. Without this, a thrown exception escapes
+            // up through the drainer's catch — pendingFlushCursor is nulled
+            // by the inner finally but flushInProgress stays true, so the
+            // `!flushInProgress` gate at line ~2018 keeps live frames from
+            // entering the muxer queue until something else flips it false.
+            // Recoverable in practice (next tick takes the cursor==null path
+            // and clears the flag), but the symptom is a silently-truncated
+            // pre-record window. Make the invariant explicit.
+            try {
+                if (cursor != null) {
+                    try {
+                        while (true) {
+                            int sz = cursor.peekSize();
+                            if (sz <= 0) break;
+                            // Acquire-and-fill must be exception-safe: if next()
+                            // throws (e.g., outDst.put surfaces a transient
+                            // BufferOverflowException because the encoder produced
+                            // a frame larger than the muxer pool's slot ceiling),
+                            // we must NOT leak the packet back to GC. The pool is
+                            // bounded; a leaked direct buffer waits for the
+                            // Cleaner and starves later acquires.
+                            MuxerPacket mp = acquireMuxerPacket(sz);
+                            boolean handed = false;
+                            try {
+                                mp.data.position(0);
+                                mp.data.limit(mp.data.capacity());
+                                if (!cursor.next(mp.data, flushCursorInfo)) {
+                                    // Aborted (pin broken) or exhausted.
+                                    break;
+                                }
+                                mp.payloadSize = flushCursorInfo.size;
+                                mp.info.set(0, flushCursorInfo.size,
+                                    flushCursorInfo.presentationTimeUs, flushCursorInfo.flags);
+                                offerMuxerPacket(mp);
+                                handed = true;
+                                flushedCount++;
+                            } finally {
+                                if (!handed) {
+                                    releaseMuxerPacket(mp);
+                                }
                             }
                         }
+                        if (cursor.aborted()) {
+                            logger.warn("Pre-record flush aborted by concurrent keyframe (pin broken) — partial flush of "
+                                + flushedCount + " packets");
+                        }
+                    } catch (Throwable t) {
+                        // Catch Throwable, not Exception. An OOMError (or any
+                        // VirtualMachineError) inside cursor.next()/put() would
+                        // otherwise escape with pendingFlushCursor still set
+                        // and the pin stuck on the orphaned cursor's
+                        // pinReadFloor. The producer would then refuse to
+                        // evict P-frames until the next encoder reinit calls
+                        // clear() — silently collapsing the pre-record window
+                        // to keyframes-only (≈1 frame per 2s GOP, ≈3 frames
+                        // for a 5s window).
+                        //
+                        // We deliberately do NOT re-throw Errors: the cursor
+                        // is closed in the inner finally, flushInProgress is
+                        // cleared in the outer finally, and the drainer's
+                        // outer Throwable catch would just log a duplicate.
+                        // Recording continues with a truncated pre-record
+                        // window — exactly the right degraded behaviour.
+                        logger.error("Pre-record flush failed at packet "
+                            + flushedCount + " — partial flush, continuing recording: "
+                            + t.getMessage());
+                    } finally {
+                        cursor.close();
+                        pendingFlushCursor = null;
                     }
-                    if (cursor.aborted()) {
-                        logger.warn("Pre-record flush aborted by concurrent keyframe (pin broken) — partial flush of "
-                            + flushedCount + " packets");
-                    }
-                } finally {
-                    cursor.close();
-                    pendingFlushCursor = null;
                 }
+                if (flushedCount > 0) {
+                    logger.info("Async flush complete: " + flushedCount + " pre-record frames queued for disk write");
+                }
+            } finally {
+                flushInProgress = false;
             }
-            if (flushedCount > 0) {
-                logger.info("Async flush complete: " + flushedCount + " pre-record frames queued for disk write");
-            }
-            flushInProgress = false;
         }
         
         // Check if segment rotation needed (only when actively writing to file).
@@ -1976,9 +3140,11 @@ public class HardwareEventRecorderGpu {
                     synchronized (muxerLock) {
                         if (muxer != null && !muxerStarted) {
                             trackIndex = muxer.addTrack(format);
+                            audioTrackIndex = maybeAddAudioTrack(muxer);
                             muxer.start();
                             muxerStarted = true;
-                            logger.info("Muxer started (track=" + trackIndex + ")");
+                            logger.info("Muxer started (videoTrack=" + trackIndex
+                                + ", audioTrack=" + audioTrackIndex + ")");
                         }
                     }
                 }
@@ -2001,36 +3167,90 @@ public class HardwareEventRecorderGpu {
             } else if (outputBufferIndex >= 0) {
                 // Got encoded data
                 ByteBuffer outputBuffer = encoder.getOutputBuffer(outputBufferIndex);
-                
+
+                // CODEC_CONFIG filter. HEVC encoders (notably Adreno 610) can
+                // emit a BUFFER_FLAG_CODEC_CONFIG packet at outputBufferIndex
+                // >= 0 with bufferInfo.size > 0 and presentationTimeUs = 0
+                // — typically right after a format renegotiation, dynamic
+                // IDR request, or a camera close-then-reopen. SPS/PPS for
+                // the muxer is taken from the saved MediaFormat at trigger
+                // time, so a CODEC_CONFIG packet at this site is redundant
+                // for the muxer AND has a stale PTS=0 that would inject an
+                // out-of-order sample into the queue (corrupting playback
+                // the same way the flush-window bug did). Drop it cleanly,
+                // release the buffer, and continue.
+                //
+                // Also drop from the pre-record ring: the ring stores
+                // already-decoded-by-format packets, and a stale CODEC_CONFIG
+                // with PTS=0 in the ring would fail the cursor's monotonic
+                // PTS chain on flush.
+                if (outputBuffer != null
+                        && (bufferInfo.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                    encoder.releaseOutputBuffer(outputBufferIndex, false);
+                    continue;
+                }
+
                 if (outputBuffer != null && bufferInfo.size > 0) {
                     // ALWAYS add to circular buffer (for pre-record) - unless stream-only mode
                     if (usePreRecordBuffer && preRecordBuffer != null) {
                         preRecordBuffer.add(outputBuffer, bufferInfo);
                     }
                     
-                    // PATH A: Write to disk (if event recording active)
-                    // SOTA: Don't write to muxer directly — push to the muxer write queue.
-                    // The disk writer thread handles the actual SD card I/O, preventing
-                    // I/O stalls from blocking the encoder dequeue loop. Pooled
-                    // packet avoids per-frame ByteBuffer.allocateDirect on the
-                    // drainer thread (5–50 ms native heap stalls observed during
-                    // pre-record flush bursts).
-                    if (isWritingToFile && muxerStarted && !flushInProgress) {
+                    // PATH A: Write to disk (if event recording active).
+                    //
+                    // SOTA: Don't write to muxer directly — push to the muxer
+                    // write queue. The disk writer thread handles the actual
+                    // SD card I/O, preventing I/O stalls from blocking the
+                    // encoder dequeue loop. Pooled packet avoids per-frame
+                    // ByteBuffer.allocateDirect on the drainer thread (5–50
+                    // ms native heap stalls observed during pre-record flush
+                    // bursts).
+                    //
+                    // CRITICAL: do NOT gate on `!flushInProgress`. The previous
+                    // version gated live frames behind the flush window, so the
+                    // ~30ms of live-encoder output produced WHILE the flush was
+                    // streaming the cursor was silently dropped (released back
+                    // to the encoder, never enqueued). At 15 fps that's
+                    // ~10–30 H.265 frames missing right at the pre-record→live
+                    // boundary; the decoder runs out of reference frames and
+                    // the playback corrupts at exactly that moment (≈the
+                    // pre-record duration, e.g. 6s for the 6.7s pre-record
+                    // window we observed).
+                    //
+                    // Why it's safe to enqueue during flush: the disk writer
+                    // is a single thread that drains muxerWriteQueue in FIFO
+                    // order. The flush enqueues pre-record packets first; the
+                    // drainer at this site enqueues live packets after them.
+                    // PTS is monotonic across the boundary (encoder's clock
+                    // is the source for pre-record stored PTSs AND live PTSs).
+                    // The muxer sees one continuous, ordered stream.
+                    if (isWritingToFile && muxerStarted) {
                         MuxerPacket mp = acquireMuxerPacket(bufferInfo.size);
                         fillMuxerPacket(mp, outputBuffer, bufferInfo);
                         offerMuxerPacket(mp);
                     }
                     
-                    // PATH B: Send to network (if streaming)
+                    // PATH B: Send to network (if streaming).
+                    // Save+restore position/limit on the original buffer
+                    // instead of allocating a fresh ByteBuffer.duplicate()
+                    // per packet. Path A (muxer enqueue) finished above; the
+                    // callback runs synchronously on this drainer thread and
+                    // returns before encoder.releaseOutputBuffer() at the end
+                    // of this iteration, so outputBuffer's mutation here is
+                    // confined to the current thread and bounded to the
+                    // stream-callback duration.
                     if (streamCallback != null && streamHeadersSent) {
+                        int savedPos = outputBuffer.position();
+                        int savedLim = outputBuffer.limit();
                         try {
-                            // Duplicate buffer to avoid interfering with muxer
-                            ByteBuffer streamBuffer = outputBuffer.duplicate();
-                            streamBuffer.position(bufferInfo.offset);
-                            streamBuffer.limit(bufferInfo.offset + bufferInfo.size);
-                            streamCallback.onH264Packet(streamBuffer, bufferInfo);
+                            outputBuffer.position(bufferInfo.offset);
+                            outputBuffer.limit(bufferInfo.offset + bufferInfo.size);
+                            streamCallback.onH264Packet(outputBuffer, bufferInfo);
                         } catch (Exception e) {
                             logger.error("Stream callback error", e);
+                        } finally {
+                            outputBuffer.limit(savedLim);
+                            outputBuffer.position(savedPos);
                         }
                     }
                 }
@@ -2051,6 +3271,23 @@ public class HardwareEventRecorderGpu {
         if (!isWritingToFile) {
             return;
         }
+        // Gate concurrent rotation attempts. The drainer tick and
+        // forceSegmentRotation can both reach here without sharing a lock;
+        // without this CAS, both pre-construct a new MediaMuxer off-lock,
+        // both enter the swap window, and the SECOND one's "old muxer"
+        // is the FIRST one's brand-new (empty) muxer → empty middle .mp4.
+        if (!rotationInFlight.compareAndSet(false, true)) {
+            logger.info("rotateSegment skipped — another rotation in flight");
+            return;
+        }
+        try {
+            rotateSegmentLocked();
+        } finally {
+            rotationInFlight.set(false);
+        }
+    }
+
+    private void rotateSegmentLocked() {
 
         // SOTA RC6: hot-swap segment rotation.
         //
@@ -2091,11 +3328,16 @@ public class HardwareEventRecorderGpu {
         File newTempFile = new File(newPath + ".tmp");
         MediaMuxer newMuxer;
         int newTrackIndex = -1;
+        int newAudioTrackIndex = -1;
         try {
             newMuxer = new MediaMuxer(newTempFile.getAbsolutePath(),
                     MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
             if (savedFormat != null) {
                 newTrackIndex = newMuxer.addTrack(savedFormat);
+                // Re-evaluate audio for the new segment so a mid-recording
+                // toggle flip OR a fresh CSD upload from the app takes
+                // effect at the rotation boundary.
+                newAudioTrackIndex = maybeAddAudioTrack(newMuxer);
             } else {
                 logger.error("Cannot rotate: savedFormat is null (encoder hasn't published format)");
                 newMuxer.release();
@@ -2126,10 +3368,18 @@ public class HardwareEventRecorderGpu {
                 if (muxerStarted && muxer != null) {
                     try {
                         pkt.rewindForWrite();
-                        muxer.writeSampleData(trackIndex, pkt.data, pkt.info);
-                        if (firstFramePtsUs < 0) firstFramePtsUs = pkt.info.presentationTimeUs;
-                        lastFramePtsUs = pkt.info.presentationTimeUs;
-                        recordedFrames++;
+                        if (pkt.trackKind == TRACK_KIND_AUDIO) {
+                            if (audioTrackIndex >= 0) {
+                                writeRebasedAudio(muxer, audioTrackIndex,
+                                    pkt.data, pkt.info);
+                            }
+                        } else {
+                            writeRebased(muxer, trackIndex, pkt.data, pkt.info);
+                            // PTS tracking handled inside writeRebased; uses
+                            // the OLD segment's origin since muxer/ptsOriginUs
+                            // haven't been swapped yet.
+                            recordedFrames++;
+                        }
                         drained++;
                     } catch (Exception e) {
                         logger.warn("Rotation drain error: " + e.getMessage());
@@ -2159,14 +3409,20 @@ public class HardwareEventRecorderGpu {
                 newMuxer.start();
                 muxer = newMuxer;
                 trackIndex = newTrackIndex;
+                audioTrackIndex = newAudioTrackIndex;
                 muxerStarted = true;
                 tempFile = newTempFile;
                 outputPath = newPath;
                 // Reset per-segment counters AFTER capturing oldFirstPtsUs etc.
-                // for the finalizer.
+                // for the finalizer. Reset ptsOriginUs too so the new
+                // segment's muxer captures its own origin from its first
+                // packet — without this the new muxer would inherit the old
+                // segment's origin and produce out-of-range PTSs.
                 recordedFrames = 0;
                 firstFramePtsUs = -1;
                 lastFramePtsUs = -1;
+                ptsOriginUs = -1;
+                lastAudioPtsUs = -1L;
                 segmentStartTime = System.currentTimeMillis();
                 rotationOk = true;
             } catch (Exception e) {

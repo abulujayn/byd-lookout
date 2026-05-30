@@ -154,21 +154,75 @@ public class RecordingModeManager {
         scheduleColdStartResync();
     }
 
+    /**
+     * Run a periodic re-sync ticker. Initial cold-start re-sync at +8s
+     * catches the case where construction ran before AccSentryDaemon /
+     * GearMonitor delivered first state. Subsequent ticks every 30s
+     * catch the "pipeline mid-teardown" silent-skip race in
+     * activateMode(): if pipeline.start(false) returns while stopping=true
+     * (concurrent surveillance teardown or stale-FPS stop), the activation
+     * silently sets modeActive=false and the only retry trigger is
+     * "next mode trigger" — but for CONTINUOUS, ACC is already ON and
+     * gear is irrelevant, so no further trigger fires. The user would
+     * have to cycle ACC OFF→ON manually.
+     *
+     * The periodic resync calls resyncFromHardware which already has a
+     * "retry activation if mode set but !modeActive" branch that picks
+     * this case up cleanly. Idempotent — modeActive guard prevents
+     * redundant activations.
+     *
+     * Costs at 30s tick:
+     *   - 1 reflective hardware-probe call (already in queryAccState path)
+     *   - 1 GearMonitor.getCurrentGear() volatile read
+     * Negligible.
+     */
+    private volatile Thread resyncTickerThread;
+    private volatile boolean resyncTickerRunning;
+
     private void scheduleColdStartResync() {
-        new Thread(() -> {
+        resyncTickerRunning = true;
+        resyncTickerThread = new Thread(() -> {
+            // Initial cold-start delay matches construction's warmup-then-
+            // activate window (~4s warmup + ~2s pipeline init + slack).
             try {
                 Thread.sleep(COLD_START_RESYNC_DELAY_MS);
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
                 return;
             }
+            if (!resyncTickerRunning) return;
             try {
                 resyncFromHardware("cold-start");
             } catch (Exception e) {
                 logger.warn("Cold-start re-sync error: " + e.getMessage());
             }
-        }, "RecordingModeResync").start();
+
+            // Periodic ticker. Catches the silent-skip race between
+            // activateMode() and a concurrent pipeline teardown — without
+            // this, CONTINUOUS-mode users could see no recording until they
+            // cycle ACC OFF→ON. 30s is a balance between recovery latency
+            // and overhead; the ticker is mostly no-op (modeActive guard
+            // skips when state matches expected).
+            while (resyncTickerRunning) {
+                try {
+                    Thread.sleep(PERIODIC_RESYNC_INTERVAL_MS);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                if (!resyncTickerRunning) return;
+                try {
+                    resyncFromHardware("periodic");
+                } catch (Exception e) {
+                    logger.warn("Periodic re-sync error: " + e.getMessage());
+                }
+            }
+        }, "RecordingModeResync");
+        resyncTickerThread.setDaemon(true);
+        resyncTickerThread.start();
     }
+
+    private static final long PERIODIC_RESYNC_INTERVAL_MS = 30_000L;
 
     /**
      * Re-query authoritative ACC + gear from hardware/monitors and re-drive
@@ -190,9 +244,22 @@ public class RecordingModeManager {
 
         boolean accChanged = hwAcc != accIsOn;
         boolean gearChanged = hwGear != currentGear;
-        logger.info("Re-sync (" + reason + "): hwAcc=" + hwAcc + " accIsOn=" + accIsOn
+        // Steady-state quiet logging: at 30s ticker interval, an info log
+        // every call = 2880 lines/day on a parked car for nothing useful.
+        // Log info only when something actually changed or a retry will
+        // fire; the no-change case stays at debug.
+        boolean willRetry = !accChanged && !gearChanged && accIsOn && !modeActive
+                && (currentMode == Mode.CONTINUOUS
+                    || (currentMode == Mode.DRIVE_MODE && isDrivingGear(currentGear))
+                    || (currentMode == Mode.PROXIMITY_GUARD && currentGear != GEAR_P));
+        String resyncMsg = "Re-sync (" + reason + "): hwAcc=" + hwAcc + " accIsOn=" + accIsOn
             + ", hwGear=" + gearToString(hwGear) + " currentGear=" + gearToString(currentGear)
-            + ", mode=" + currentMode + ", modeActive=" + modeActive);
+            + ", mode=" + currentMode + ", modeActive=" + modeActive;
+        if (accChanged || gearChanged || willRetry) {
+            logger.info(resyncMsg);
+        } else {
+            logger.debug(resyncMsg);
+        }
 
         if (gearChanged) {
             // Route through the public handler so existing
@@ -784,29 +851,91 @@ public class RecordingModeManager {
     
     // ==================== CONFIG PERSISTENCE ====================
     
+    // Cached reflection for queryAccStateFromHardware. The periodic resync
+    // calls this every 30s; without caching, each call does Class.forName +
+    // 2x Class.getMethod (linear scans of the method table) on a constrained
+    // head-unit. Resolving once at class-init and reusing keeps the per-tick
+    // cost to two reflective Method.invoke() calls. Volatile for safe
+    // publication; we accept the rare double-resolve race (idempotent).
+    private static volatile Class<?> bodyworkDeviceClass;
+    private static volatile java.lang.reflect.Method bodyworkGetInstanceMethod;
+    private static volatile java.lang.reflect.Method bodyworkGetPowerLevelMethod;
+    private static volatile boolean bodyworkReflectionResolved = false;
+    private static volatile boolean bodyworkReflectionFailed = false;
+
+    private static void resolveBodyworkReflection() {
+        if (bodyworkReflectionResolved || bodyworkReflectionFailed) return;
+        try {
+            Class<?> cls = Class.forName("android.hardware.bydauto.bodywork.BYDAutoBodyworkDevice");
+            java.lang.reflect.Method getInstance = cls.getMethod("getInstance", android.content.Context.class);
+            java.lang.reflect.Method getPowerLevel = cls.getMethod("getPowerLevel");
+            bodyworkDeviceClass = cls;
+            bodyworkGetInstanceMethod = getInstance;
+            bodyworkGetPowerLevelMethod = getPowerLevel;
+            bodyworkReflectionResolved = true;
+        } catch (Exception e) {
+            // Permanent failure (class or method genuinely not present) —
+            // record so we skip the lookup on every subsequent call. The
+            // BYD HAL surface is fixed at boot; if it's missing now, it'll
+            // still be missing in 30s.
+            bodyworkReflectionFailed = true;
+            logger.debug("BYDAutoBodyworkDevice reflection unavailable: " + e.getMessage());
+        }
+    }
+
     /**
      * Query ACC state directly from BYD hardware.
-     * Falls back to AccMonitor if hardware query fails.
+     * Falls back to AccMonitor if hardware query fails or returns a
+     * sentinel value indicating "state is unreliable".
+     *
+     * BYDAutoBodyworkDevice power-level constants (from the HAL header):
+     *   0 = OFF
+     *   1 = ACC (key in accessory position)
+     *   2 = ON  (engine off, ignition on)
+     *   3 = OK  (engine running)
+     *   4 = FAKE_OK     (HAL is bluffing — treat as untrustworthy)
+     *   255 = INVALID   (HAL doesn't know — treat as untrustworthy)
+     *
+     * The previous `level >= 2` check classified BOTH FAKE_OK and INVALID as
+     * ACC=ON, which would incorrectly auto-activate recording when the HAL
+     * was reporting "I don't know." Tightened to accept only the four
+     * legitimate values; anything else falls through to AccMonitor (which
+     * holds whatever AccSentryDaemon last pushed via IPC — the most
+     * reliable cross-process source of truth on this head-unit).
+     *
+     * Note: the HAL singleton itself is queried fresh on every call — only
+     * the JVM reflection metadata (Class + Method refs) is cached. So if
+     * the BYD service binder restarts between ticks, we get the freshly
+     * reconnected device on the next tick automatically.
      */
     private boolean queryAccStateFromHardware() {
-        // Try direct hardware query via BYDAutoBodyworkDevice
-        try {
-            Class<?> deviceClass = Class.forName("android.hardware.bydauto.bodywork.BYDAutoBodyworkDevice");
-            java.lang.reflect.Method getInstance = deviceClass.getMethod("getInstance", android.content.Context.class);
-            Object device = getInstance.invoke(null, context);
-            if (device != null) {
-                java.lang.reflect.Method getPowerLevel = deviceClass.getMethod("getPowerLevel");
-                int level = (Integer) getPowerLevel.invoke(device);
-                // Power levels: 0=OFF, 1=ACC, 2=ON, 3=START
-                boolean isOn = level >= 2;
-                logger.debug("Hardware power level: " + level + " (ACC " + (isOn ? "ON" : "OFF") + ")");
-                return isOn;
+        resolveBodyworkReflection();
+        if (bodyworkReflectionResolved) {
+            try {
+                Object device = bodyworkGetInstanceMethod.invoke(null, context);
+                if (device != null) {
+                    int level = (Integer) bodyworkGetPowerLevelMethod.invoke(device);
+                    // Only trust the four legitimate states. INVALID (255),
+                    // FAKE_OK (4), or any unexpected value → fall through to
+                    // the IPC-backed AccMonitor.
+                    if (level >= 0 && level <= 3) {
+                        boolean isOn = level >= 2;
+                        logger.debug("Hardware power level: " + level + " (ACC " + (isOn ? "ON" : "OFF") + ")");
+                        return isOn;
+                    }
+                    // Sentinel / out-of-range — log and fall through.
+                    logger.debug("Hardware power level=" + level
+                            + " (sentinel/unknown — falling back to AccMonitor)");
+                }
+            } catch (Exception e) {
+                // Per-call failure (e.g., device service died briefly) — fall
+                // through to AccMonitor. Don't mark reflection failed; the
+                // resolution worked, this is a runtime invocation problem.
+                logger.debug("Hardware ACC query failed: " + e.getMessage());
             }
-        } catch (Exception e) {
-            logger.debug("Hardware ACC query failed: " + e.getMessage());
         }
-        
-        // Fallback to AccMonitor
+
+        // Fallback to AccMonitor (last IPC-pushed value from AccSentryDaemon)
         return com.overdrive.app.monitor.AccMonitor.isAccOn();
     }
 
@@ -855,6 +984,17 @@ public class RecordingModeManager {
      */
     public void shutdown() {
         logger.info("Shutting down RecordingModeManager...");
+        // Stop the periodic resync ticker first so it can't fire one more
+        // resyncFromHardware() against a torn-down pipeline. The thread
+        // is daemon-flagged so it won't block process exit anyway, but
+        // signaling cleanly avoids a noisy "pipeline already stopped"
+        // log on shutdown.
+        resyncTickerRunning = false;
+        Thread t = resyncTickerThread;
+        if (t != null) {
+            t.interrupt();
+            resyncTickerThread = null;
+        }
         CameraDaemon.stopAvcKeepAlive();
         deactivateMode(currentMode);
         if (proximityController != null) {

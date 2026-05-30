@@ -384,26 +384,8 @@ public class BydCloudApiHandler {
         HttpResponse.sendJson(out, response.toString());
     }
 
-    /**
-     * Get Bangcle tables stream — same strategy as BydCloudDeterrent.
-     */
     private static InputStream getTablesStream() {
-        // Try /data/local/tmp/ first
-        java.io.File tablesFile = new java.io.File("/data/local/tmp/bangcle_tables.bin");
-        if (tablesFile.exists() && tablesFile.length() > 0) {
-            try {
-                return new java.io.FileInputStream(tablesFile);
-            } catch (Exception ignored) {}
-        }
-
-        // Try assets via DaemonBootstrap context
-        try {
-            android.content.Context ctx = com.overdrive.app.daemon.DaemonBootstrap.getContext();
-            if (ctx != null) {
-                return ctx.getAssets().open("byd/bangcle_tables.bin");
-            }
-        } catch (Exception ignored) {}
-
-        return null;
+        return com.overdrive.app.byd.cloud.crypto.BangcleTablesFile.openStream(
+                com.overdrive.app.daemon.DaemonBootstrap.getContext());
     }
 }

@@ -26,6 +26,54 @@ public class AccMonitor {
     // This prevents false "acc: true" in status when daemon restarts
     private static volatile boolean accOn = false;
 
+    // Track the last sentinel state we logged (FAKE_OK=4, INVALID=255, or
+    // out-of-range value), so we log only on transitions. Without this,
+    // a persistently broken HAL would emit ~2880 "powerLevel=INVALID" lines
+    // per day. -1 = no sentinel currently observed (last reading was a
+    // real 0/1/2/3 or no probe has run yet).
+    private static volatile int lastLoggedSentinel = -1;
+
+    // Cached reflection for probeAccState. Without caching, every probe
+    // (called every 5s by CameraDaemon.startAccOnDisarmWatchdog while
+    // sentry is active = ~17,000 probes/day overnight) re-runs
+    // Class.forName + 2× getMethod. The HAL surface is fixed at boot, so
+    // resolve once and reuse. Volatile for safe publication; idempotent
+    // double-resolve race is acceptable.
+    //
+    // Mirrors the pattern already used in RecordingModeManager
+    // .resolveBodyworkReflection — same target Class+Methods, same
+    // resolved/failed semantics.
+    private static volatile Class<?> bodyworkDeviceClassCache;
+    private static volatile java.lang.reflect.Method bodyworkGetInstanceCache;
+    private static volatile java.lang.reflect.Method bodyworkGetPowerLevelCache;
+    private static volatile boolean bodyworkReflectionResolved = false;
+    private static volatile boolean bodyworkReflectionFailed = false;
+
+    private static void resolveBodyworkReflection() {
+        if (bodyworkReflectionResolved || bodyworkReflectionFailed) return;
+        try {
+            Class<?> cls = Class.forName("android.hardware.bydauto.bodywork.BYDAutoBodyworkDevice");
+            java.lang.reflect.Method getInstance =
+                cls.getMethod("getInstance", android.content.Context.class);
+            java.lang.reflect.Method getPowerLevel = cls.getMethod("getPowerLevel");
+            bodyworkDeviceClassCache = cls;
+            bodyworkGetInstanceCache = getInstance;
+            bodyworkGetPowerLevelCache = getPowerLevel;
+            // MUST be the last write — readers that observe resolved=true rely
+            // on volatile happens-before to see the three Class/Method fields
+            // already populated. Reordering this above the cache assignments
+            // would let a racing reader see resolved=true with null Methods.
+            bodyworkReflectionResolved = true;
+        } catch (Exception e) {
+            // Permanent — class/method genuinely missing on this firmware.
+            // Per-call invoke failures (transient binder errors) do NOT
+            // come through here; they hit the outer catch in probeAccState.
+            bodyworkReflectionFailed = true;
+            CameraDaemon.log("AccMonitor: BYDAutoBodyworkDevice reflection unavailable: "
+                + e.getMessage());
+        }
+    }
+
     public static boolean isAccOn() {
         return accOn;
     }
@@ -51,18 +99,48 @@ public class AccMonitor {
      * @return true if ACC is OFF (sentry mode should be active), false if ACC is ON or unknown
      */
     public static boolean probeAccState(android.content.Context context) {
+        resolveBodyworkReflection();
+        if (!bodyworkReflectionResolved) {
+            // Class genuinely missing on this firmware — safe default.
+            // Don't enter sentry on a permanent reflection failure.
+            return false;
+        }
         try {
-            Class<?> deviceClass = Class.forName("android.hardware.bydauto.bodywork.BYDAutoBodyworkDevice");
-            java.lang.reflect.Method getInstance = deviceClass.getMethod("getInstance", android.content.Context.class);
-            Object device = getInstance.invoke(null, context);
+            Object device = bodyworkGetInstanceCache.invoke(null, context);
 
             if (device == null) {
                 CameraDaemon.log("AccMonitor: BYDAutoBodyworkDevice.getInstance returned null");
                 return false;
             }
 
-            java.lang.reflect.Method getPowerLevel = deviceClass.getMethod("getPowerLevel");
-            int level = (Integer) getPowerLevel.invoke(device);
+            int level = (Integer) bodyworkGetPowerLevelCache.invoke(device);
+
+            // Only trust the four legitimate power levels (0/1/2/3). The HAL
+            // can also return FAKE_OK=4 or INVALID=255, both of which mean
+            // "this reading is untrustworthy." Treating either as ACC=ON
+            // (because both are >= POWER_LEVEL_ON=2) would incorrectly drop
+            // sentry mode. On sentinel/unknown, KEEP the prior state — the
+            // last IPC from AccSentryDaemon is more reliable than a HAL
+            // bluff. Return true (sentry) only if we're confident ACC=OFF.
+            if (level < 0 || level > 3) {
+                // Log only when entering a new sentinel state; otherwise a
+                // persistently broken HAL would flood the log at the probe
+                // interval. Reset the sentinel tracker once we observe a
+                // real value again (handled in the success branch below).
+                if (lastLoggedSentinel != level) {
+                    CameraDaemon.log("AccMonitor: hardware probe powerLevel="
+                        + (level == 4 ? "FAKE_OK" : (level == 255 ? "INVALID" : "UNKNOWN(" + level + ")"))
+                        + " — keeping prior accOn=" + accOn);
+                    lastLoggedSentinel = level;
+                }
+                return !accOn;
+            }
+            // Real reading — clear the sentinel tracker so the next sentinel
+            // (if any) gets logged. Also log the recovery once.
+            if (lastLoggedSentinel != -1) {
+                CameraDaemon.log("AccMonitor: hardware probe recovered (level=" + level + ")");
+                lastLoggedSentinel = -1;
+            }
 
             boolean isAccOn = level >= POWER_LEVEL_ON;
             accOn = isAccOn;

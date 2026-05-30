@@ -1,5 +1,6 @@
 package com.overdrive.app.ui.fragment
 
+import android.content.Context
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
@@ -49,6 +50,9 @@ class VideoPlayerFragment : Fragment() {
         const val ARG_PLAYLIST_TITLES = "playlist_titles"
         const val ARG_PLAYLIST_INDEX = "playlist_index"
         private const val SEEK_UPDATE_MS = 250L
+        // SharedPreferences-backed persistence for the mute toggle.
+        private const val PREFS_PLAYER = "video_player_prefs"
+        private const val PREF_MUTED = "muted"
     }
 
     private var inlineMode: Boolean = false
@@ -68,6 +72,15 @@ class VideoPlayerFragment : Fragment() {
     private var btnPrev: ImageButton? = null
     private var btnNext: ImageButton? = null
     private var btnFullscreen: ImageButton? = null
+    private var btnMute: ImageButton? = null
+    // Tracks the desired mute state across clip changes within this
+    // fragment instance. Initial value reads from SharedPreferences (default
+    // = muted) so the user's choice survives navigation. The MediaPlayer's
+    // own muted state is set in setOnPreparedListener once playback starts.
+    private var userPrefMuted: Boolean = true
+    // Held while the player is prepared; lets us flip mute on demand from
+    // the button click handler without waiting for the next prepare cycle.
+    private var currentMediaPlayer: MediaPlayer? = null
     private lateinit var eventTimeline: EventTimelineView
 
     /**
@@ -147,6 +160,23 @@ class VideoPlayerFragment : Fragment() {
         btnPrev = view.findViewById(R.id.btnPrev)
         btnNext = view.findViewById(R.id.btnNext)
         btnFullscreen = view.findViewById(R.id.btnFullscreen)
+        btnMute = view.findViewById(R.id.btnMute)
+        // Restore last-chosen mute state so the user's preference carries
+        // across clips and app restarts. Order of precedence (mirrors the
+        // events.html web player):
+        //   1. Explicit pref written by a previous mute-button tap wins.
+        //   2. No explicit choice yet AND the user has audio recording
+        //      enabled in unified config → default to UNMUTED (so they can
+        //      actually hear the captured audio without a second tap).
+        //   3. Otherwise default to muted (safer first-run experience).
+        val prefs = requireContext()
+            .getSharedPreferences(PREFS_PLAYER, Context.MODE_PRIVATE)
+        userPrefMuted = if (prefs.contains(PREF_MUTED)) {
+            prefs.getBoolean(PREF_MUTED, true)
+        } else {
+            !readAudioEnabledFromConfig()
+        }
+        refreshMuteIcon()
         eventTimeline = view.findViewById(R.id.eventTimeline)
         topBar = view.findViewById(R.id.topBar)
         bottomControls = view.findViewById(R.id.bottomControls)
@@ -258,7 +288,62 @@ class VideoPlayerFragment : Fragment() {
         scheduleOverlayHide()
     }
 
+    /**
+     * Read the recording.audioEnabled flag from UnifiedConfigManager so the
+     * mute default for first-ever playback can mirror whether the user has
+     * audio recording on. Best-effort: any exception or missing section
+     * yields false (= keep the muted default).
+     */
+    private fun readAudioEnabledFromConfig(): Boolean {
+        return try {
+            val recCfg = com.overdrive.app.config.UnifiedConfigManager.loadConfig()
+                .optJSONObject("recording")
+            recCfg?.optBoolean("audioEnabled", false) ?: false
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Apply the current userPrefMuted state to a MediaPlayer. The public
+     * API only exposes setVolume(left, right) — there's no setMuted — so
+     * we volume-zero. Audio comes back to full when toggled off; we don't
+     * preserve a partial volume because the player UI has no separate
+     * volume slider, just on/off.
+     */
+    private fun applyMuteToPlayer(mp: MediaPlayer) {
+        try {
+            if (userPrefMuted) {
+                mp.setVolume(0f, 0f)
+            } else {
+                mp.setVolume(1f, 1f)
+            }
+        } catch (e: IllegalStateException) {
+            // MediaPlayer in an invalid state (rare race during teardown);
+            // the next setup cycle will pick up the preference.
+        }
+    }
+
+    /**
+     * Repaint the mute button to reflect userPrefMuted. Called from
+     * onViewCreated after restoring the pref and from the click handler.
+     */
+    private fun refreshMuteIcon() {
+        val btn = btnMute ?: return
+        if (userPrefMuted) {
+            btn.setImageResource(R.drawable.ic_volume_off)
+        } else {
+            btn.setImageResource(R.drawable.ic_volume_on)
+        }
+    }
+
     private fun setupVideoPlayer(path: String) {
+        // Drop the stale MediaPlayer reference BEFORE setVideoURI tears down
+        // the previous one. VideoView destroys the old player internally on
+        // setVideoURI; without this clear, jumpTo() leaves currentMediaPlayer
+        // pointing at a released instance until the new prepare callback
+        // fires, which would route mute toggles to a dead player.
+        currentMediaPlayer = null
         videoView.setVideoURI(Uri.fromFile(File(path)))
 
         videoView.setOnPreparedListener { mp ->
@@ -268,6 +353,12 @@ class VideoPlayerFragment : Fragment() {
             eventTimeline.setPlayhead(0)
 
             mp.isLooping = false
+            currentMediaPlayer = mp
+            // Apply user's persisted mute preference. setVolume(0,0) is the
+            // canonical way to mute a MediaPlayer — there's no setMuted on
+            // the public API. Done before start() so the first frame's
+            // audio is silent if the user wants it that way.
+            applyMuteToPlayer(mp)
             videoView.start()
             btnPlayPause.setImageResource(android.R.drawable.ic_media_pause)
             handler.post(updateRunnable)
@@ -279,6 +370,10 @@ class VideoPlayerFragment : Fragment() {
             handler.removeCallbacks(updateRunnable)
             handler.removeCallbacks(hideOverlayRunnable)
             setOverlayVisible(true)
+            // Drop the now-finished MediaPlayer so a stray mute-toggle tap
+            // between completion and the next prepare doesn't reach into a
+            // released instance. The new prepared listener resets it.
+            currentMediaPlayer = null
             // Auto-advance: if we have a next clip, play it. Mirrors the
             // events.html "next video on end" behavior so the user can review
             // a day's clips without tapping between each.
@@ -320,6 +415,22 @@ class VideoPlayerFragment : Fragment() {
             if (playlistIndex >= 0 && playlistIndex < playlistPaths.size - 1) {
                 jumpTo(playlistIndex + 1)
             }
+        }
+
+        btnMute?.setOnClickListener {
+            userPrefMuted = !userPrefMuted
+            // Persist immediately so a crash / process death between now and
+            // onPause doesn't lose the user's choice.
+            requireContext()
+                .getSharedPreferences(PREFS_PLAYER, Context.MODE_PRIVATE)
+                .edit()
+                .putBoolean(PREF_MUTED, userPrefMuted)
+                .apply()
+            currentMediaPlayer?.let { applyMuteToPlayer(it) }
+            refreshMuteIcon()
+            // Reset auto-hide so the user sees the icon flip before the
+            // chrome fades.
+            if (overlayVisible && videoView.isPlaying) scheduleOverlayHide()
         }
 
         btnFullscreen?.setOnClickListener {

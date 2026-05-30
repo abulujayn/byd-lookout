@@ -22,6 +22,7 @@
     <string name="cd_expand_collapse">拡大/崩壊</string>
     <string name="cd_recording_status">記録状態</string>
     <string name="cd_trip_tracking_status">旅行追跡状況</string>
+    <string name="cd_mic_status">マイクロフォンキャプチャの状態</string>
     <string name="cd_video_thumbnail">ビデオミニカー</string>
     <string name="cd_play">再生</string>
     <string name="cd_back">戻る</string>
@@ -30,6 +31,7 @@
     <string name="cd_player_next">次の録画</string>
     <string name="cd_player_maximize">プレイヤーを最大限に</string>
     <string name="cd_player_minimize">出口フルスクリーン</string>
+    <string name="cd_player_mute">オーディオを切り替える</string>
     <string name="cd_delete">削除</string>
     <string name="cd_expand">拡大する</string>
     <string name="cd_configure">設定</string>
@@ -40,6 +42,7 @@
     <string name="cd_permission_granted">許可が認められた</string>
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">トリップ</string>
+    <string name="overlay_mic_inactive_label">MIC</string>
     <string name="log_entry_default_timestamp">12時34分56分</string>
     <string name="log_entry_default_tag">[タグ]</string>
     <string name="log_entry_default_message">ログメッセージ</string>
@@ -333,6 +336,7 @@
     <string name="toast_fetching_log">%1$sの記録を...</string>
     <string name="toast_log_empty_or_missing">ログファイルは空か見つかりませんでした</string>
     <string name="toast_log_empty">ログファイルは空いている</string>
+    <string name="toast_daemon_manager_unavailable">Daemon 管理者は準備ができていない. もう一度試してみてください.</string>
     <string name="toast_log_save_failed">記録保存失敗: %1$s</string>
     <string name="toast_log_not_found">ログファイルが見つかりませんでした</string>
     <string name="log_share_title">%1$s ログ - %2$s</string>
@@ -350,6 +354,12 @@
     <string name="play_with_chooser">遊びなさい</string>
     <string name="setup_version_banner">更新された v%1$s 再び確認自動起動,BYDは,すべてのインストールでそれを消す</string>
     <string name="setup_overlay_already_granted">すでに 認め られ て いる</string>
+    <string name="setup_tips_header">提示 &amp; トラブルシューティング</string>
+    <string name="setup_traffic_title">BYD トラフィックモニターを無効にする</string>
+    <string name="setup_traffic_body">BYD トラフィックモニターは,インターネットにアクセスできない第三者のアプリをブロックします.それを無効化すると,OverDriveとインストールする他のアプリが実際にネットワークを使用できます.その後ハードリブートが必要になります.</string>
+    <string name="setup_traffic_button">オープントラフィックモニター</string>
+    <string name="setup_camera_fix_title">カメラは黒か間違ってるのか?</string>
+    <string name="setup_camera_fix_body">カメラのIDを0に設定し,保存をタップして,カメラデモンを再起動します.フィードがまだ間違っている場合は,カメラID1で繰り返します.マッピングセクションを未然にしてください.</string>
     <string name="camera_current_manual">現在のカメラ: %1$d (マニュアル)</string>
     <string name="camera_current_auto_label">現在の: 自動</string>
     <string name="soh_estimation_active">推定活動</string>

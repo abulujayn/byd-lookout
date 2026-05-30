@@ -155,9 +155,11 @@ class MainActivity : AppCompatActivity() {
         
         // Check for app updates (delayed to not block startup)
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            // Clean up any leftover update APK from previous install
-            val adb = com.overdrive.app.launcher.AdbDaemonLauncher(this)
-            adb.executeShellCommand("rm -f /data/local/tmp/overdrive_update.apk", object : com.overdrive.app.launcher.AdbDaemonLauncher.LaunchCallback {
+            // Clean up any leftover update APK from previous install. Use the
+            // shared daemonStartupManager.adbLauncher — allocating a fresh
+            // AdbDaemonLauncher here would leak its non-daemon executor + a
+            // tunnel-poll scheduler thread on every postDelayed firing.
+            daemonStartupManager.adbLauncher.executeShellCommand("rm -f /data/local/tmp/overdrive_update.apk", object : com.overdrive.app.launcher.AdbDaemonLauncher.LaunchCallback {
                 override fun onLog(message: String) {}
                 override fun onLaunched() {}
                 override fun onError(error: String) {}
@@ -257,6 +259,7 @@ class MainActivity : AppCompatActivity() {
                 "runDaemonStartup: onNewIntent without post-update marker — no-op")
             return
         }
+
         synchronized (daemonStartupCoordinator) {
             if (daemonStartupCoordinator.inFlight) {
                 android.util.Log.i("MainActivity",
@@ -265,6 +268,13 @@ class MainActivity : AppCompatActivity() {
             }
             daemonStartupCoordinator.inFlight = true
         }
+
+        // Defensive sentinel cleanup. Gated by the inFlight guard above so
+        // duplicate onNewIntent calls don't fire redundant ADB rms while
+        // another startup pass is already running. Routes through
+        // daemonStartupManager's shared AdbDaemonLauncher — see
+        // DaemonStartupManager.clearStaleSentinels for the contract.
+        daemonStartupManager.clearStaleSentinels()
 
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
             Thread {
@@ -404,10 +414,11 @@ class MainActivity : AppCompatActivity() {
                 logsViewModel.info("Update", "App updated to $updatedVersion")
             }
             try {
-                val adb = com.overdrive.app.launcher.AdbDaemonLauncher(this)
+                // Reuse the shared adbLauncher; see comment at the rm site
+                // for why allocating a fresh one here leaks resources.
                 val hintFile = com.overdrive.app.updater
                     .UpdateLifecycle.TELEGRAM_POST_UPDATE_HINT_FILE
-                adb.executeShellCommand(
+                daemonStartupManager.adbLauncher.executeShellCommand(
                     "echo '$updatedVersion' > $hintFile",
                     object : com.overdrive.app.launcher
                         .AdbDaemonLauncher.LaunchCallback {
@@ -492,19 +503,23 @@ class MainActivity : AppCompatActivity() {
         appUpdater = updater
         updater.checkForUpdate(object : com.overdrive.app.updater.AppUpdater.UpdateCallback {
             override fun onUpdateAvailable(currentVersion: String, newVersion: String, releaseNotes: String) {
+                // Don't close updater here — performAppUpdate will use it.
                 com.overdrive.app.updater.UpdateDialog.showUpdateAvailable(
                     this@MainActivity, currentVersion, newVersion, releaseNotes,
                     { performAppUpdate(updater) },
-                    null
+                    { updater.close() }  // Dismiss path: release executor + scheduler.
                 )
             }
 
             override fun onNoUpdate(currentVersion: String) {
                 logsViewModel.debug("Update", "App is up to date (v$currentVersion)")
+                // No further use — release per-instance executor.
+                updater.close()
             }
 
             override fun onError(error: String) {
                 logsViewModel.debug("Update", "Update check failed: $error")
+                updater.close()
             }
         })
     }
@@ -521,16 +536,18 @@ class MainActivity : AppCompatActivity() {
                 com.overdrive.app.updater.UpdateDialog.showUpdateAvailable(
                     this@MainActivity, currentVersion, newVersion, releaseNotes,
                     { performAppUpdate(updater) },
-                    null
+                    { updater.close() }  // Dismiss path: release executor + scheduler.
                 )
             }
 
             override fun onNoUpdate(currentVersion: String) {
                 Toast.makeText(this@MainActivity, getString(R.string.toast_app_up_to_date, currentVersion), Toast.LENGTH_LONG).show()
+                updater.close()
             }
 
             override fun onError(error: String) {
                 Toast.makeText(this@MainActivity, getString(R.string.toast_update_check_failed, error), Toast.LENGTH_LONG).show()
+                updater.close()
             }
         })
     }
@@ -554,6 +571,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun performAppUpdate(updater: com.overdrive.app.updater.AppUpdater) {
         val progress = com.overdrive.app.updater.UpdateDialog.showProgress(this) {
+            // Cancel-only — do NOT call updater.close() here. The
+            // background downloadAndInstall task is still in flight; it
+            // observes the cancelled flag and calls runShell("rm -f
+            // APK_PATH") which routes back into getAdbLauncher(). If we
+            // null'd adbLauncher via close() before that runs, the lazy
+            // reallocation strands a fresh AdbDaemonLauncher's executor +
+            // tunnel-poll scheduler. The downloadAndInstall onError path
+            // ("cancelled") already calls updater.close() — let it run.
             updater.cancel()
         }
 
@@ -597,6 +622,10 @@ class MainActivity : AppCompatActivity() {
 
             override fun onError(error: String) {
                 runOnUiThread { progress.showError(error) }
+                // Install failed; release per-instance resources. (onSuccess
+                // path doesn't need this — the app is being restarted by
+                // pm install and process death tears everything down.)
+                updater.close()
             }
         })
     }
@@ -1723,8 +1752,8 @@ class MainActivity : AppCompatActivity() {
             // Phase 2: kill + relaunch on the UI thread.
             runOnUiThread {
                 if (!activityAlive()) return@runOnUiThread
-                val adb = com.overdrive.app.launcher.AdbDaemonLauncher(this)
-                adb.killDaemon(object : com.overdrive.app.launcher.AdbDaemonLauncher.LaunchCallback {
+                // Reuse shared adbLauncher (avoids per-call leak).
+                daemonStartupManager.adbLauncher.killDaemon(object : com.overdrive.app.launcher.AdbDaemonLauncher.LaunchCallback {
                     override fun onLog(message: String) {
                         logsViewModel.debug("Camera", message)
                     }
@@ -1833,9 +1862,9 @@ class MainActivity : AppCompatActivity() {
                     Toast.makeText(this, getString(R.string.toast_restarting_camera_daemon), Toast.LENGTH_SHORT).show()
                 }
                 
-                // Kill the camera daemon — DaemonLauncher's watchdog will auto-restart it
-                val adb = com.overdrive.app.launcher.AdbDaemonLauncher(this)
-                adb.killDaemon(object : com.overdrive.app.launcher.AdbDaemonLauncher.LaunchCallback {
+                // Kill the camera daemon — DaemonLauncher's watchdog will auto-restart it.
+                // Reuse shared adbLauncher (avoids per-call leak).
+                daemonStartupManager.adbLauncher.killDaemon(object : com.overdrive.app.launcher.AdbDaemonLauncher.LaunchCallback {
                     override fun onLog(message: String) {
                         logsViewModel.debug("Camera", message)
                     }
@@ -2303,9 +2332,9 @@ class MainActivity : AppCompatActivity() {
         // Show loading state while we check
         updateTrafficMonitorMenuItemText(getString(R.string.traffic_monitor_loading))
         
-        val adb = AdbDaemonLauncher(this)
+        // Reuse shared adbLauncher (avoids per-call leak).
         // Use 'grep ... || echo NOT_DISABLED' to ensure exit code 0 regardless of grep result
-        adb.executeShellCommand(
+        daemonStartupManager.adbLauncher.executeShellCommand(
             "pm list packages -d 2>/dev/null | grep com.byd.trafficmonitor || echo NOT_DISABLED",
             object : AdbDaemonLauncher.LaunchCallback {
                 override fun onLog(message: String) {
@@ -2403,8 +2432,8 @@ class MainActivity : AppCompatActivity() {
         val action = if (enable) "Enabling" else "Disabling"
         Toast.makeText(this, getString(R.string.toast_traffic_monitor_changing, action), Toast.LENGTH_SHORT).show()
         
-        val adb = AdbDaemonLauncher(this)
-        adb.executeShellCommand(cmd, object : AdbDaemonLauncher.LaunchCallback {
+        // Reuse shared adbLauncher (avoids per-call leak).
+        daemonStartupManager.adbLauncher.executeShellCommand(cmd, object : AdbDaemonLauncher.LaunchCallback {
             override fun onLog(message: String) {
                 android.util.Log.i("TrafficMonitor", "$action result: $message")
             }

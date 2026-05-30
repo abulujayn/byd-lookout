@@ -30,6 +30,23 @@ class TunnelLauncher(
         fun onTunnelUrl(url: String)
         fun onError(error: String)
     }
+
+    /**
+     * Dedicated scheduler for delayed work (post-kill settles, URL polls).
+     * Without this we'd `Thread.sleep` inside ADB-callback handlers, parking
+     * the shared single-thread ADB executor for the sleep duration. Same
+     * pattern as ZrokLauncher.reconcileScheduler.
+     */
+    private val pollScheduler: java.util.concurrent.ScheduledExecutorService =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+                Thread(r, "tunnel-poll").apply { isDaemon = true }
+            }
+
+    fun shutdown() {
+        try { pollScheduler.shutdownNow() } catch (e: Exception) {
+            logManager.warn(TAG, "pollScheduler shutdown failed: ${e.message}")
+        }
+    }
     
     /**
      * Launch Cloudflared tunnel via ADB shell.
@@ -96,12 +113,26 @@ class TunnelLauncher(
                 override fun onSuccess(output: String) {
                     if (output.trim().isNotEmpty()) {
                         logManager.info(TAG, "Killing zrok (mutually exclusive with cloudflared)")
-                        adbShellExecutor.execute(
-                            command = "killall -9 zrok 2>/dev/null; echo done",
+                        // Use the script-via-tmpfile form so toybox `pkill -f
+                        // 'zrok'` can't self-match the calling shell's argv.
+                        // Order: sentinel + chmod + rm script BEFORE the
+                        // pkill cascade, so even if pkill suicides nothing
+                        // important is dropped (defense-in-depth even though
+                        // the script form already prevents the suicide).
+                        val killScript =
+                            "echo \"disabled — cloudflared starting at \$(date)\" > /data/local/tmp/zrok.disabled\n" +
+                            "chmod 666 /data/local/tmp/zrok.disabled 2>/dev/null\n" +
+                            "rm -f /data/local/tmp/start_zrok.sh 2>/dev/null\n" +
+                            com.overdrive.app.launcher.DaemonLauncher.psAwkKillLine("zrok") +
+                            "killall -9 zrok 2>/dev/null\n" +
+                            "echo done\n"
+                        adbShellExecutor.executeScript(
+                            scriptBody = killScript,
                             callback = object : AdbShellExecutor.ShellCallback {
                                 override fun onSuccess(o: String) {
-                                    Thread.sleep(300)
-                                    onComplete()
+                                    // Settle on pollScheduler so the ADB
+                                    // executor stays free during the 300ms wait.
+                                    pollScheduler.schedule({ onComplete() }, 300, java.util.concurrent.TimeUnit.MILLISECONDS)
                                 }
                                 override fun onError(e: String) { onComplete() }
                             }
@@ -234,7 +265,7 @@ class TunnelLauncher(
                         logManager.error(TAG, "Cloudflared timed out. Log: ${output.takeLast(500)}")
                         callback.onError("Failed to get URL. Log tail:\n${output.takeLast(500)}")
                     }
-                    
+
                     override fun onError(error: String) {
                         callback.onError("Timed out waiting for tunnel URL")
                     }
@@ -242,9 +273,19 @@ class TunnelLauncher(
             )
             return
         }
-        
-        Thread.sleep(1000)
-        
+
+        // Schedule the next poll on pollScheduler instead of Thread.sleep
+        // here. This function runs from inside an ADB-executor callback;
+        // a 1s sleep would park the shared single-thread executor and
+        // serialize every other queued shell command behind it. Across
+        // 30 attempts that's up to 30s of executor blackout while a
+        // single cloudflared handshake completes.
+        pollScheduler.schedule({
+            doWaitForTunnelUrlPoll(callback, attempt)
+        }, 1, java.util.concurrent.TimeUnit.SECONDS)
+    }
+
+    private fun doWaitForTunnelUrlPoll(callback: TunnelCallback, attempt: Int) {
         adbShellExecutor.execute(
             command = "cat $CLOUDFLARED_LOG 2>/dev/null",
             callback = object : AdbShellExecutor.ShellCallback {

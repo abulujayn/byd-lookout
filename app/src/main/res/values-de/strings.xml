@@ -22,6 +22,7 @@
     <string name="cd_expand_collapse">Erweiterung / Zusammenbruch</string>
     <string name="cd_recording_status">Aufzeichnungsstatus</string>
     <string name="cd_trip_tracking_status">Status der Reiseverfolgung</string>
+    <string name="cd_mic_status">Mikrofon-Aufnahme-Status</string>
     <string name="cd_video_thumbnail">Video-Tumbnail</string>
     <string name="cd_play">Abspielen</string>
     <string name="cd_back">Zurück</string>
@@ -30,6 +31,7 @@
     <string name="cd_player_next">Nächste Aufnahme</string>
     <string name="cd_player_maximize">Maximieren Sie den Spieler</string>
     <string name="cd_player_minimize">Vollbildschirm Ausfahrt</string>
+    <string name="cd_player_mute">Schalten Sie Audio aus</string>
     <string name="cd_delete">Löschen</string>
     <string name="cd_expand">Erweiterung</string>
     <string name="cd_configure">Konfiguration</string>
@@ -40,6 +42,7 @@
     <string name="cd_permission_granted">Erteilung der Genehmigung</string>
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">TRIP</string>
+    <string name="overlay_mic_inactive_label">MIC</string>
     <string name="log_entry_default_timestamp">- Ich bin hier.</string>
     <string name="log_entry_default_tag">- Ich weiß nicht.</string>
     <string name="log_entry_default_message">Log-Nachricht hier</string>
@@ -333,6 +336,7 @@
     <string name="toast_fetching_log">Ich hol das %1$s-Log...</string>
     <string name="toast_log_empty_or_missing">Protokolldatei ist leer oder nicht gefunden</string>
     <string name="toast_log_empty">Die Protokolldatei ist leer</string>
+    <string name="toast_daemon_manager_unavailable">Daemon Manager nicht bereit, versuchen Sie es in einem Moment wieder.</string>
     <string name="toast_log_save_failed">Nicht gespeichert: %1$s</string>
     <string name="toast_log_not_found">Protokolldatei nicht gefunden oder nicht lesbar</string>
     <string name="log_share_title">%1$s Log - %2$s</string>
@@ -350,6 +354,12 @@
     <string name="play_with_chooser">Spielen Sie mit</string>
     <string name="setup_version_banner">Aktualisiert auf v%1$s  erneut Autostart bestätigen, BYD löscht es bei jeder Installation</string>
     <string name="setup_overlay_already_granted">Bereits gewährt</string>
+    <string name="setup_tips_header">Tipps und Fehlerbehebung</string>
+    <string name="setup_traffic_title">BYD Verkehrsmonitor deaktivieren</string>
+    <string name="setup_traffic_body">Der BYD Traffic Monitor blockiert Apps von Drittanbietern, das Internet zu erreichen. Das Deaktivieren erlaubt OverDrive und alle anderen Apps, die Sie installieren, das Netzwerk tatsächlich zu nutzen. Ein harter Neustart ist anschließend erforderlich.</string>
+    <string name="setup_traffic_button">Öffneten Verkehrsmonitor</string>
+    <string name="setup_camera_fix_title">Kamera füttert schwarz oder falsch?</string>
+    <string name="setup_camera_fix_body">Öffnen Sie Diagnostik → Kamera-Sonde, setzen Sie die Kamera-ID auf 0, tippen Sie auf Speichern und starten Sie dann den Kamera-Demon neu. Wenn die Feeds immer noch falsch sind, wiederholen Sie mit der Kamera-ID 1. Lassen Sie den Kartenabschnitt unberührt.</string>
     <string name="camera_current_manual">Aktueller: Kamera %1$d (Manual)</string>
     <string name="camera_current_auto_label">Derzeit: Auto</string>
     <string name="soh_estimation_active">Schätzungsaktiv</string>

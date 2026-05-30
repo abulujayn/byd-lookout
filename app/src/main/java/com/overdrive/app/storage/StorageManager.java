@@ -236,6 +236,12 @@ public class StorageManager {
     private final AtomicBoolean recordingActive = new AtomicBoolean(false);
     private final AtomicBoolean surveillanceActive = new AtomicBoolean(false);
 
+    // Absolute path of the currently-recording trip telemetry file (.jsonl.gz)
+    // or null when no trip is active. Path-based instead of a boolean so a
+    // limit-change cleanup mid-trip can still reap older trip files; only the
+    // in-flight file is protected. Read by ensureSpace before each delete.
+    private volatile String activeTripFilePath = null;
+
     // SOTA: Authoritative "encoder is mid-write" probe.
     //
     // The setRecordingActive / setSurveillanceActive booleans above track the
@@ -314,6 +320,14 @@ public class StorageManager {
     private int usbWatchdogConsecutiveFailures = 0;
     private static final int SD_WATCHDOG_MAX_VERBOSE_FAILURES = 5;  // Log verbosely for first 5 failures
     private static final int SD_WATCHDOG_QUIET_LOG_INTERVAL = 20;   // Then log every 20th attempt (~5 min)
+
+    // Rate-limit for the raw `sm list-volumes` diagnostic dump. The fingerprint
+    // line (publicRows=N matchedRows=M) is cheap and stays at logInfo on every
+    // failure; the multi-line raw output only re-prints when 5 minutes have
+    // elapsed since the last dump. Without this, a multi-hour park with the
+    // SD genuinely missing produces ~240 raw dumps/hour which floods cam_daemon.log.
+    private long lastSmRawDumpAtMs = 0;
+    private static final long SM_RAW_DUMP_INTERVAL_MS = 5 * 60_000;
     
     /**
      * Parse a storage-type string from persisted config. Anything that
@@ -379,6 +393,7 @@ public class StorageManager {
         asyncCleanupExecutor.execute(() -> {
             synchronized (cleanupLock) {
                 try {
+                    sweepOrphanTempFiles();
                     ensureRecordingsSpace(0);
                     ensureSurveillanceSpace(0);
                     ensureProximitySpace(0);
@@ -388,6 +403,73 @@ public class StorageManager {
                 }
             }
         });
+    }
+
+    /**
+     * Delete orphan {@code .mp4.tmp} and {@code .broken} files left behind by
+     * abnormal daemon exits (SIGKILL, OOM, ACC-cycle kill mid-recording).
+     *
+     * <p>Only the close path renames {@code .mp4.tmp → .mp4}; if the daemon
+     * dies before the rename, the {@code .tmp} sits forever — counted by the
+     * filesystem but invisible to the events UI. On BYD head-units where
+     * the daemon is regularly killed by ACC cycles, these accumulate until
+     * the SD card fills.
+     *
+     * <p>Conservative policy: only delete files older than {@code TEMP_FILE_GRACE_MS}
+     * (10 minutes) so we never race a recording in flight. Anything younger
+     * is assumed to belong to a live recording on a sibling daemon process.
+     *
+     * <p>Sweeps surveillance, proximity, and recordings dirs (current + legacy
+     * locations).
+     */
+    private void sweepOrphanTempFiles() {
+        final long graceMs = 10 * 60 * 1000L;
+        final long cutoff = System.currentTimeMillis() - graceMs;
+        int deleted = 0;
+        long bytesFreed = 0;
+
+        java.util.HashSet<String> seenPaths = new java.util.HashSet<>();
+        for (String category : new String[]{"recordings", "surveillance", "proximity", "trips"}) {
+            String[] partials = partialExtensionsForCategory(category);
+            if (partials.length == 0) continue;
+            for (File dir : getReapableDirs(category)) {
+                if (dir == null) continue;
+                String path = dir.getAbsolutePath();
+                if (!seenPaths.add(path)) continue;
+                if (!dir.isDirectory()) continue;
+                File[] files = dir.listFiles((d, name) -> {
+                    for (String ext : partials) {
+                        if (name.endsWith(ext)) return true;
+                    }
+                    return false;
+                });
+                if (files == null) continue;
+                for (File f : files) {
+                    // Don't unlink a still-being-written trip file in case
+                    // the recorder uses an atomic ".jsonl.gz.tmp → .jsonl.gz"
+                    // rename and the in-flight file is the .tmp.
+                    if (activeTripFilePath != null
+                            && (activeTripFilePath.equals(f.getAbsolutePath())
+                                || activeTripFilePath.equals(f.getAbsolutePath() + ".tmp"))) {
+                        continue;
+                    }
+                    if (f.lastModified() > cutoff) continue;  // grace window
+                    long size = f.length();
+                    boolean ok = f.delete();
+                    if (!ok) ok = deleteFileViaShell(f);
+                    if (ok) {
+                        deleted++;
+                        bytesFreed += size;
+                    } else {
+                        logWarn("Orphan tmp delete failed: " + f.getAbsolutePath());
+                    }
+                }
+            }
+        }
+        if (deleted > 0) {
+            logInfo("Orphan tmp sweep: deleted " + deleted + " files, "
+                    + (bytesFreed / 1024) + " KB freed");
+        }
     }
     
     public static synchronized StorageManager getInstance() {
@@ -465,6 +547,46 @@ public class StorageManager {
 
         logDebug("Mounting " + targetClass + "...");
 
+        // Pre-mount discovery via /proc/mounts. On some BYD ROMs the system
+        // remounts the SD slot itself a few seconds after ACC OFF, but `sm
+        // list-volumes` lags behind the kernel's actual mount table — so the
+        // SD is live at /storage/<uuid> but `sm` either omits the row or
+        // reports it as `unmounted`. Without this probe, ensureVolumeMounted
+        // would proceed to `sm mount <id>` (which fails because the kernel
+        // already owns the mount) and fall back to internal storage despite
+        // the card being writable the whole time.
+        //
+        // discoverVolumes()'s /proc/mounts pass already does the right thing,
+        // but the mount path didn't share that knowledge. Run a discovery
+        // pass FIRST; if it commits the field for our class, we're done.
+        try {
+            discoverVolumes();
+            if (isSd && sdCardAvailable && sdCardPath != null
+                    && isPathLikelyMounted(sdCardPath)) {
+                logInfo(targetClass + " already mounted via /proc/mounts: " + sdCardPath);
+                if (isSd) initSdCardDirectories(); else initUsbDirectories();
+                updateActiveDirectories();
+                return true;
+            }
+            if (!isSd && usbAvailable && usbPath != null
+                    && isPathLikelyMounted(usbPath)) {
+                logInfo(targetClass + " already mounted via /proc/mounts: " + usbPath);
+                initUsbDirectories();
+                updateActiveDirectories();
+                return true;
+            }
+        } catch (Throwable t) {
+            // Discovery is best-effort here — never let it block the
+            // sm-driven mount path below.
+            logDebug("Pre-mount discovery threw: " + t.getMessage());
+        }
+
+        // Raw sm output captured here so we can dump it on failure. Some BYD
+        // ROMs at ACC OFF emit no `public:` row for the SD slot at all —
+        // distinguishing that from the "row exists but in unmounted state"
+        // case is critical for diagnosis. Without the dump, the daemon log
+        // shows "SD card mount failed" with no clue WHICH failure mode.
+        StringBuilder rawSmOutput = new StringBuilder();
         try {
             Process listProcess = Runtime.getRuntime().exec(new String[]{"sm", "list-volumes", "all"});
             BufferedReader reader = new BufferedReader(new InputStreamReader(listProcess.getInputStream()));
@@ -472,11 +594,15 @@ public class StorageManager {
             String volumeId = null;
             String volumeUuid = null;
             int volMajor = -1, volMinor = -1;
+            int publicRowCount = 0;
+            int matchedRowCount = 0;
 
             while ((line = reader.readLine()) != null) {
                 line = line.trim();
+                rawSmOutput.append(line).append('\n');
                 logDebug("sm list-volumes: " + line);
                 if (!line.startsWith("public:")) continue;
+                publicRowCount++;
                 String[] parts = line.split("\\s+");
                 if (parts.length < 3) continue;
 
@@ -492,6 +618,7 @@ public class StorageManager {
                 String thisUuid = parts[2];
                 String klass = classifyPublicVolume(major, minor, thisUuid);
                 if (!targetClass.equals(klass)) continue;  // wrong volume class
+                matchedRowCount++;
 
                 if ("mounted".equals(state)) {
                     String mountPath = "/storage/" + thisUuid;
@@ -527,6 +654,24 @@ public class StorageManager {
             reader.close();
             waitForBounded(listProcess, 2_000, "sm list-volumes (ensureVolumeMounted)");
 
+            // Diagnostic: capture the WHY of an `sm list-volumes` miss. On
+            // affected BYD models at ACC OFF this often shows publicRows>0
+            // but matchedRows==0 (slot present but classifier rejected it
+            // because sys.byd.mSdcardUuid is empty during the transition).
+            // The mismatch fingerprint tells us whether mitigation B (kernel
+            // fallback) or mitigation C (path-based discovery) needs to fire.
+            if (volumeId == null) {
+                logInfo("sm list-volumes: no " + targetClass + " match (publicRows="
+                    + publicRowCount + ", matchedRows=" + matchedRowCount
+                    + ") — falling back to kernel-level retry");
+                long nowMs = System.currentTimeMillis();
+                if (rawSmOutput.length() > 0
+                        && (nowMs - lastSmRawDumpAtMs) >= SM_RAW_DUMP_INTERVAL_MS) {
+                    logInfo("sm list-volumes raw output:\n" + rawSmOutput.toString().trim());
+                    lastSmRawDumpAtMs = nowMs;
+                }
+            }
+
             if (volumeId != null) {
                 Process mountProcess = Runtime.getRuntime().exec(new String[]{"sm", "mount", volumeId});
                 BufferedReader outReader = new BufferedReader(new InputStreamReader(mountProcess.getInputStream()));
@@ -547,12 +692,27 @@ public class StorageManager {
 
                 if (exitCode == 0 && volumeUuid != null) {
                     String mountPath = "/storage/" + volumeUuid;
-                    for (int i = 0; i < 10; i++) {
-                        Thread.sleep(500);
-                        // Cheap check: 10 × 500ms iterations × 2s shell timeout
-                        // could otherwise consume 25s of fork-bound work that
-                        // itself feeds the FUSE contention. Cheap probe runs
-                        // in microseconds and provides the same liveness signal.
+                    // Lengthened from 10 to 20 iterations (5s → 10s budget).
+                    // On affected BYD models the FUSE bridge is published
+                    // ~3-6s after `sm mount` returns 0 — the prior 5s budget
+                    // raced the publication and falsely concluded the mount
+                    // failed. Per-iteration cost is microseconds (StatFs +
+                    // canWrite, no shell fork), so the longer poll is free
+                    // when the mount is healthy.
+                    boolean interrupted = false;
+                    for (int i = 0; i < 20 && !interrupted; i++) {
+                        try {
+                            Thread.sleep(500);
+                        } catch (InterruptedException ie) {
+                            // Restore the flag and break — the watchdog (or
+                            // shutdown path) is asking us to stop. Without
+                            // this, the prior code swallowed the interrupt
+                            // via the outer Exception catch and silently
+                            // turned a shutdown request into 10s of polling.
+                            Thread.currentThread().interrupt();
+                            interrupted = true;
+                            break;
+                        }
                         if (isPathLikelyMounted(mountPath)) {
                             if (isSd) {
                                 sdCardPath = mountPath;
@@ -562,28 +722,150 @@ public class StorageManager {
                                 usbPath = mountPath;
                                 usbAvailable = true;
                             }
-                            logInfo(targetClass + " mounted successfully at: " + mountPath);
+                            logInfo(targetClass + " mounted successfully at: " + mountPath
+                                + " (poll attempt " + (i + 1) + "/20)");
                             if (isSd) initSdCardDirectories(); else initUsbDirectories();
                             updateActiveDirectories();
                             return true;
                         }
-                        logDebug("Waiting for " + targetClass + " mount... attempt " + (i+1) + "/10");
+                        logDebug("Waiting for " + targetClass + " mount... attempt " + (i+1) + "/20");
                     }
                     logWarn(targetClass + " mount path not accessible after mount: " + mountPath);
                 } else {
                     logWarn("sm mount " + volumeId + " failed with exit code: " + exitCode);
                 }
             } else {
-                logDebug("No public " + targetClass + " volume found");
+                logDebug("No public " + targetClass + " volume found in sm output");
             }
 
         } catch (Exception e) {
             logError("Error mounting " + targetClass + ": " + e.getMessage());
         }
 
+        // TODO: USB has no analogous kernel-level fallback. /sys/class/mmc_host
+        // is mmc-only, so an equivalent USB probe would walk /sys/bus/usb/devices.
+        // The reported symptom (ACC OFF → external storage invisible) is SD-only
+        // so far; revisit if USB-only configs report the same pattern.
+        // Kernel-level fallback for the "sm doesn't see the slot at all" case.
+        // On affected BYD ROMs, ACC OFF transiently deregisters the volume from
+        // vold's VolumeRecord — but the underlying mmcblk* device is still
+        // alive and the kernel mount table either still holds it or is about
+        // to. Two recovery routes:
+        //   (a) The card may already be mounted by the system at /mnt/media_rw/
+        //       or /storage/<uuid> with no `sm` row — discoverVolumes() picks
+        //       this up via /proc/mounts. Run a fresh discovery and re-check.
+        //   (b) The card is physically present (visible under /sys/class/mmc_host)
+        //       but vold hasn't surfaced it yet — wait + re-discover up to 5
+        //       times (5s total) for vold to catch up. We don't try `sm forget`
+        //       or partition rescans here; those are too invasive and can leave
+        //       a wedged volume worse off.
+        // If neither route catches the card, fall through to internal storage —
+        // the caller's existing fallback path handles that gracefully.
+        if (isSd && !sdCardAvailable && isSdCardPhysicallyPresent()) {
+            logInfo("Kernel fallback: SD slot reports a card present but sm/proc-mounts didn't find it — polling for vold catch-up");
+            for (int i = 0; i < 5; i++) {
+                try { Thread.sleep(1000); } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+                discoverVolumes();
+                if (sdCardAvailable && sdCardPath != null
+                        && isPathLikelyMounted(sdCardPath)) {
+                    logInfo("Kernel fallback: SD picked up after " + (i + 1) + "s at " + sdCardPath);
+                    initSdCardDirectories();
+                    updateActiveDirectories();
+                    return true;
+                }
+            }
+            logWarn("Kernel fallback: SD slot card present but vold never surfaced it within 5s");
+        }
+
         // Re-run discovery in case mount succeeded but we missed it
         discoverVolumes();
         return isSd ? sdCardAvailable : usbAvailable;
+    }
+
+    /**
+     * Probe whether the SD slot has a physical card inserted, independent
+     * of vold/sm state. Used by the kernel-level mount fallback to distinguish
+     * "card pulled" (give up cleanly) from "vold hasn't caught up yet"
+     * (worth waiting on). Reads /sys/class/mmc_host/mmcN/mmcN:* — the kernel
+     * publishes this entry as soon as the card is electrically detected,
+     * regardless of mount state.
+     *
+     * @return true if at least one mmc_host has a card-present subdirectory
+     */
+    private boolean isSdCardPhysicallyPresent() {
+        try {
+            File mmcHostDir = new File("/sys/class/mmc_host");
+            if (!mmcHostDir.exists() || !mmcHostDir.isDirectory()) return false;
+            File[] hosts = mmcHostDir.listFiles();
+            if (hosts == null) return false;
+            for (File host : hosts) {
+                File[] children = host.listFiles();
+                if (children == null) continue;
+                for (File child : children) {
+                    // mmcN:NNNN entries appear when a card is attached.
+                    // Internal eMMC also creates such entries (mmc0:0001 typically),
+                    // so the presence check alone isn't SD-specific — but the
+                    // caller already gated on classifyPublicVolume not finding
+                    // an SD via sm, so any mmc_host child here that ISN'T the
+                    // eMMC indicates an inserted external card. We don't need
+                    // to disambiguate further: false-positives just trigger a
+                    // 5s vold-catchup poll that no-ops and falls through.
+                    if (child.getName().matches("mmc\\d+:[0-9a-fA-F]+")) {
+                        return true;
+                    }
+                }
+            }
+        } catch (Throwable t) {
+            logDebug("isSdCardPhysicallyPresent probe failed: " + t.getMessage());
+        }
+        return false;
+    }
+
+    /**
+     * Cheap probe: is any USB mass-storage device attached?
+     *
+     * <p>Used by the single-volume tiebreaker in {@link #discoverVolumes}
+     * to distinguish "lone SCSI-bridged SD card" (no USB device → treat as
+     * SD) from "real USB stick is the only thing inserted" (USB device
+     * present → keep classifying as USB). We walk {@code /sys/bus/usb/devices}
+     * for entries with {@code bInterfaceClass=08} (Mass Storage); pure-host
+     * USB ports have no children matching that. Returns false on probe error
+     * so the tiebreaker stays conservative — better to miss the SD promotion
+     * than to misclassify a real USB stick as SD.
+     */
+    private boolean isUsbDeviceAttached() {
+        try {
+            File usbDir = new File("/sys/bus/usb/devices");
+            if (!usbDir.exists() || !usbDir.isDirectory()) return false;
+            File[] devices = usbDir.listFiles();
+            if (devices == null) return false;
+            for (File dev : devices) {
+                // Skip root hubs (usb1, usb2, …) — those are always present
+                // even when nothing is plugged in. Real attached devices show
+                // up as e.g. 1-1, 1-1.2 (port path notation).
+                String name = dev.getName();
+                if (name.startsWith("usb") || !name.contains("-")) continue;
+                File[] children = dev.listFiles();
+                if (children == null) continue;
+                for (File child : children) {
+                    File classFile = new File(child, "bInterfaceClass");
+                    if (!classFile.isFile() || !classFile.canRead()) continue;
+                    try (BufferedReader r = new BufferedReader(new FileReader(classFile))) {
+                        String cls = r.readLine();
+                        // 08 = USB Mass Storage. 06 = Image (cameras), other
+                        // classes (HID etc.) won't surface as a public:
+                        // volume in sm list-volumes anyway.
+                        if (cls != null && "08".equalsIgnoreCase(cls.trim())) return true;
+                    } catch (Exception ignored) {}
+                }
+            }
+        } catch (Throwable t) {
+            logDebug("isUsbDeviceAttached probe failed: " + t.getMessage());
+        }
+        return false;
     }
     
     /**
@@ -860,6 +1142,13 @@ public class StorageManager {
         String foundUsbPath = null;
         boolean foundUsbAvail = false;
 
+        // Track every mounted public volume we observed, even ones the
+        // classifier couldn't bucket. Used by the single-volume tiebreaker
+        // below to promote an ambiguously-typed lone volume to SD when no
+        // physical USB stick is present (the v17-and-earlier "any writable
+        // public volume → SD" behaviour, scoped to safe conditions).
+        java.util.List<String[]> ambiguousMounts = new java.util.ArrayList<>();
+
         // Method 1: sm list-volumes all
         try {
             Process listProcess = Runtime.getRuntime().exec(new String[]{"sm", "list-volumes", "all"});
@@ -891,6 +1180,9 @@ public class StorageManager {
                 if (!isPathLikelyMounted(mountPath)) continue;
 
                 String klass = classifyPublicVolume(major, minor, volumeUuid);
+                ambiguousMounts.add(new String[]{mountPath, volumeUuid,
+                        klass == null ? "" : klass,
+                        String.valueOf(major), String.valueOf(minor)});
                 if ("SD".equals(klass) && !foundSdAvail) {
                     foundSdPath = mountPath;
                     foundSdAvail = true;
@@ -964,6 +1256,36 @@ public class StorageManager {
             } catch (Exception e) {
                 logDebug("Could not parse /proc/mounts: " + e.getMessage());
             }
+        }
+
+        // Method 4: single-volume tiebreaker (v17 behaviour, scoped).
+        // Affected firmwares route the SD slot through a SCSI/USB bridge so
+        // the kernel surfaces it as DEVNAME=sd*, major 8 — indistinguishable
+        // from a real USB stick to classifyPublicVolume(). On those vehicles
+        // the BYD prop is also empty, so Method 2 can't help, and the v17
+        // permissive "any writable public volume → SD" code path was lost in
+        // the type-discriminating rewrite. Recover for the unambiguous case:
+        //   - SD still not found
+        //   - exactly one mounted public volume observed by Method 1
+        //   - no physical USB device attached (per /sys/bus/usb/devices)
+        // Then the lone volume is, by elimination, the SD slot.
+        if (!foundSdAvail && ambiguousMounts.size() == 1
+                && !isUsbDeviceAttached()) {
+            String[] only = ambiguousMounts.get(0);
+            String mountPath = only[0];
+            String volumeUuid = only[1];
+            // If we already classed this as USB above, demote it — we now
+            // know it's the only volume and there's no real USB to call it.
+            if (mountPath.equals(foundUsbPath)) {
+                foundUsbPath = null;
+                foundUsbAvail = false;
+            }
+            foundSdPath = mountPath;
+            foundSdAvail = true;
+            learnSdUuid(volumeUuid);
+            logInfo("Found SD card via single-volume tiebreaker (no USB attached): "
+                    + mountPath + " [" + only[3] + ":" + only[4]
+                    + ", classifier=" + (only[2].isEmpty() ? "ambiguous" : only[2]) + "]");
         }
 
         // Commit results atomically. Volumes that disappeared since the last
@@ -1819,15 +2141,63 @@ public class StorageManager {
     }
 
     /**
-     * Sum .mp4 files across the given dirs, deduplicating by filename
-     * (so a clip mirrored on internal + SD-card isn't counted twice).
+     * Auxiliary filename prefixes that don't share a stem with the anchor but
+     * still belong to {@code category} and must be reaped to keep the limit
+     * honest. Used by the orphan-sidecar pass — these files are matched as
+     * sidecars whose anchor stem is parsed by stripping the auxiliary prefix.
      *
+     * <p>Surveillance: per-actor thumbnails are written as
+     * {@code thumb_event_<base>_a<id>_<rel>.jpg} (SurveillanceEngineGpu:4823).
+     * They don't start with {@code event_}, so the standard prefix gate
+     * filters them out — without this auxiliary entry they accumulate
+     * untracked.
+     */
+    private static String[] auxiliaryPrefixesForCategory(String category) {
+        switch (category) {
+            // Per-actor JPGs are named `thumb_<anchorStem>_a<id>_<rel>.jpg`,
+            // where anchorStem already includes the `event_` prefix
+            // (SurveillanceEngineGpu:4815-4824 derives tmpBase from the
+            // segment basename minus ".mp4"). The aux prefix must be just
+            // `thumb_` — anything longer would double-count `event_` and
+            // miss every actual file.
+            case "surveillance": return new String[]{"thumb_"};
+            default:             return new String[]{};
+        }
+    }
+
+    /**
+     * Returns true if {@code name} matches the category's primary prefix or
+     * any auxiliary prefix. Centralizes the prefix gate so size accounting,
+     * the anchor reaper, and the orphan-sidecar pass agree on which files
+     * belong to a category.
+     */
+    private static boolean nameMatchesCategoryPrefix(String name, String primaryPrefix,
+                                                     String[] auxPrefixes) {
+        if (primaryPrefix != null && name.startsWith(primaryPrefix)) return true;
+        for (String aux : auxPrefixes) {
+            if (name.startsWith(aux)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Sum primary + sidecar files across the given dirs, deduplicating by
+     * filename (so a clip mirrored on internal + SD-card isn't counted twice).
+     * Must match what {@link #ensureSpace} actually frees, otherwise the UI
+     * reports usage past the limit while cleanup believes it's fine.
+     *
+     * @param category   Category key — recordings/surveillance/proximity/trips.
      * @param namePrefix If non-null, only files whose name starts with
      *                   this prefix are summed. Used when the dir set
      *                   includes the flat legacy base shared across
      *                   categories.
      */
-    private long getDirectoriesTotalSize(List<File> dirs, String namePrefix) {
+    private long getDirectoriesTotalSize(String category, List<File> dirs, String namePrefix) {
+        String primaryExt = primaryExtensionForCategory(category);
+        String[] sidecarExts = sidecarExtensionsForCategory(category);
+        String[] partialExts = partialExtensionsForCategory(category);
+        String[] auxPrefixes = auxiliaryPrefixesForCategory(category);
+
         long size = 0;
         Set<String> seen = new HashSet<>();
         for (File dir : dirs) {
@@ -1840,11 +2210,23 @@ public class StorageManager {
             for (File f : files) {
                 if (!f.isFile()) continue;
                 String name = f.getName();
-                if (namePrefix != null && !name.startsWith(namePrefix)) continue;
-                // Only the per-category extension counts (.mp4 + sidecar .json)
-                // for limit accounting; filenames in the flat base that don't
-                // match the prefix would already have been skipped above.
-                if (!name.endsWith(".mp4") && !name.endsWith(".json")) continue;
+                if (namePrefix != null
+                        && !nameMatchesCategoryPrefix(name, namePrefix, auxPrefixes)) continue;
+
+                boolean isPrimary = name.endsWith(primaryExt);
+                boolean isSidecar = false;
+                boolean isPartial = false;
+                if (!isPrimary) {
+                    for (String ext : sidecarExts) {
+                        if (name.endsWith(ext)) { isSidecar = true; break; }
+                    }
+                }
+                if (!isPrimary && !isSidecar) {
+                    for (String ext : partialExts) {
+                        if (name.endsWith(ext)) { isPartial = true; break; }
+                    }
+                }
+                if (!isPrimary && !isSidecar && !isPartial) continue;
                 if (!seen.add(name)) continue;
                 size += f.length();
             }
@@ -2045,7 +2427,7 @@ public class StorageManager {
      * report 800 MB used while the limit is 500 MB and cleanup never fires.
      */
     public long getRecordingsSize() {
-        return getDirectoriesTotalSize(getReapableDirs("recordings"), namePrefixForCategory("recordings"));
+        return getDirectoriesTotalSize("recordings", getReapableDirs("recordings"), namePrefixForCategory("recordings"));
     }
 
     /**
@@ -2053,7 +2435,7 @@ public class StorageManager {
      * inactive internal/SD-card mirror, and the legacy sentry_events path).
      */
     public long getSurveillanceSize() {
-        return getDirectoriesTotalSize(getReapableDirs("surveillance"), namePrefixForCategory("surveillance"));
+        return getDirectoriesTotalSize("surveillance", getReapableDirs("surveillance"), namePrefixForCategory("surveillance"));
     }
 
     /**
@@ -2061,7 +2443,7 @@ public class StorageManager {
      * inactive internal/SD-card mirror, and the legacy proximity_events path).
      */
     public long getProximitySize() {
-        return getDirectoriesTotalSize(getReapableDirs("proximity"), namePrefixForCategory("proximity"));
+        return getDirectoriesTotalSize("proximity", getReapableDirs("proximity"), namePrefixForCategory("proximity"));
     }
     
     /**
@@ -2070,31 +2452,32 @@ public class StorageManager {
      * line up with reported totals.
      */
     public int getRecordingsCount() {
-        return getFileCountAcross(getReapableDirs("recordings"), namePrefixForCategory("recordings"));
+        return getFileCountAcross("recordings", getReapableDirs("recordings"), namePrefixForCategory("recordings"));
     }
 
     /**
      * Get surveillance events file count across all locations.
      */
     public int getSurveillanceCount() {
-        return getFileCountAcross(getReapableDirs("surveillance"), namePrefixForCategory("surveillance"));
+        return getFileCountAcross("surveillance", getReapableDirs("surveillance"), namePrefixForCategory("surveillance"));
     }
 
     /**
      * Get proximity events file count across all locations.
      */
     public int getProximityCount() {
-        return getFileCountAcross(getReapableDirs("proximity"), namePrefixForCategory("proximity"));
+        return getFileCountAcross("proximity", getReapableDirs("proximity"), namePrefixForCategory("proximity"));
     }
 
-    private int getFileCountAcross(List<File> dirs, String namePrefix) {
+    private int getFileCountAcross(String category, List<File> dirs, String namePrefix) {
+        String primaryExt = primaryExtensionForCategory(category);
         int total = 0;
         Set<String> seen = new HashSet<>();
         for (File dir : dirs) {
             if (dir == null || !dir.exists() || !dir.isDirectory()) continue;
-            File[] files = dir.listFiles((d, name) -> name.endsWith(".mp4"));
+            File[] files = dir.listFiles((d, name) -> name.endsWith(primaryExt));
             if (files == null) {
-                files = listFilesViaShell(dir);
+                files = listFilesByExt(dir, primaryExt);
             }
             if (files == null) continue;
             for (File f : files) {
@@ -2113,72 +2496,36 @@ public class StorageManager {
      * Get current size of trips directory in bytes.
      */
     public long getTripsSize() {
-        return getDirectorySize(tripsDir);
+        return getDirectoriesTotalSize("trips", getReapableDirs("trips"), namePrefixForCategory("trips"));
     }
-    
+
     /**
      * Get trips file count.
      */
     public int getTripsCount() {
-        return getFileCount(tripsDir);
+        return getFileCountAcross("trips", getReapableDirs("trips"), namePrefixForCategory("trips"));
     }
-    
-    private long getDirectorySize(File dir) {
-        if (!dir.exists() || !dir.isDirectory()) return 0;
-        
-        long size = 0;
-        // Count ALL files in the directory (mp4, json sidecars, tmp, etc.)
-        File[] files = dir.listFiles();
-        
-        if (files == null) {
-            // Directory might be owned by UI app - use shell to list
-            files = listFilesViaShell(dir);
-        }
-        
-        if (files != null) {
-            for (File f : files) {
-                if (f.isFile()) {
-                    size += f.length();
-                }
-            }
-        }
-        return size;
-    }
-    
-    private int getFileCount(File dir) {
-        if (!dir.exists() || !dir.isDirectory()) return 0;
-        
-        // SOTA: Try direct listFiles first, fall back to shell if null
-        File[] files = dir.listFiles((d, name) -> name.endsWith(".mp4"));
-        
-        if (files == null) {
-            // Directory might be owned by UI app - use shell to list
-            files = listFilesViaShell(dir);
-        }
-        
-        return files != null ? files.length : 0;
-    }
-    
+
     /**
      * SOTA: List files via shell command when direct access fails.
      * This handles the case where UI app owns the directory but daemon needs to list files.
+     * Returns every file in the directory regardless of extension.
      */
     private File[] listFilesViaShell(File dir) {
         try {
             Process p = Runtime.getRuntime().exec(new String[]{"ls", dir.getAbsolutePath()});
             java.io.BufferedReader reader = new java.io.BufferedReader(
                 new java.io.InputStreamReader(p.getInputStream()));
-            
+
             java.util.List<File> files = new java.util.ArrayList<>();
             String line;
             while ((line = reader.readLine()) != null) {
-                if (line.endsWith(".mp4")) {
-                    files.add(new File(dir, line));
-                }
+                if (line.isEmpty()) continue;
+                files.add(new File(dir, line));
             }
             reader.close();
             p.waitFor();
-            
+
             logDebug("listFilesViaShell: found " + files.size() + " files in " + dir.getName());
             return files.toArray(new File[0]);
         } catch (Exception e) {
@@ -2186,21 +2533,83 @@ public class StorageManager {
             return new File[0];
         }
     }
+
+    /**
+     * Same as {@link #listFilesViaShell(File)} but filtered to a specific
+     * extension. Used by the cleanup path so the anchor-collection step
+     * picks up the right primary file type for each category.
+     */
+    private File[] listFilesByExt(File dir, String ext) {
+        File[] all = listFilesViaShell(dir);
+        if (all == null || all.length == 0) return all;
+        java.util.List<File> matched = new java.util.ArrayList<>();
+        for (File f : all) {
+            if (f.getName().endsWith(ext)) matched.add(f);
+        }
+        return matched.toArray(new File[0]);
+    }
     
     // ==================== Cleanup Logic ====================
     
+    /**
+     * If a recording is in flight, defer the cleanup so it runs on the next
+     * encoder-idle periodic tick. Returns true when deferral happened.
+     *
+     * <p>Three of the public ensure*Space callers can race the encoder:
+     * user-initiated limit changes from the HTTP/IPC settings handlers
+     * (QualitySettingsApiHandler, SurveillanceIpcServer, TcpCommandServer).
+     * Without this gate, lowering the recordings limit while actively
+     * recording triggers a delete burst that contends with the disk
+     * writer and produces multi-second eglSwap stalls observed in field
+     * logs. The post-save cleanup path has its own gate at
+     * onRecordingFileSaved; this generalises the same guard to limit-
+     * change paths so the cleanup contract is uniform.
+     *
+     * <p>Hard-overlimit escape: if usage already exceeds the limit by
+     * &gt;5%, deferral is skipped — at that point the encoder will
+     * backpressure on disk full anyway, so unblocking storage is the
+     * lesser evil. Mirrors the periodic-loop policy.
+     */
+    private boolean deferIfEncoderBusy(String deferredKey, long currentSize, long limitBytes) {
+        if (!isEncoderWriting()) return false;
+        boolean hardOverLimit = limitBytes > 0 && currentSize > limitBytes * 21 / 20;
+        if (hardOverLimit) {
+            logWarn("Cleanup forced during recording: " + deferredKey + " at "
+                + formatSize(currentSize) + "/" + formatSize(limitBytes) + " (HARD)");
+            return false;
+        }
+        deferredCleanupDirs.add(deferredKey);
+        logDebug("Cleanup deferred (encoder busy): " + deferredKey + " — will drain on next idle tick");
+        return true;
+    }
+
     /**
      * Ensure recordings storage is within size limit.
      * Deletes oldest files (across active + inactive + legacy locations)
      * until the total falls under the limit.
      *
+     * <p>Defers when the encoder is mid-write (see {@link #deferIfEncoderBusy})
+     * unless usage is hard-over-limit, in which case cleanup runs anyway to
+     * keep the disk writer from hitting ENOSPC.
+     *
      * @param reserveBytes Additional bytes to reserve for new file
-     * @return true if cleanup was successful and space is available
+     * @return true if cleanup was successful and space is available, or true
+     *         when deferred (the deferred-cleanup drain will retry).
      */
     public boolean ensureRecordingsSpace(long reserveBytes) {
-        return ensureSpace(getReapableDirs("recordings"), recordingsDir,
-            namePrefixForCategory("recordings"),
-            recordingsLimitMb * 1024 * 1024, reserveBytes);
+        // cleanupLock serializes against post-save async cleanups, periodic
+        // ticks, and the reset/wipe path. Without it, two concurrent runs
+        // can sort overlapping file lists and double-delete or hit
+        // ConcurrentModificationException on the dedup set.
+        synchronized (cleanupLock) {
+            if (deferIfEncoderBusy(DEFERRED_RECORDINGS, getRecordingsSize(),
+                    recordingsLimitMb * 1024 * 1024)) {
+                return true;
+            }
+            return ensureSpace("recordings", getReapableDirs("recordings"), recordingsDir,
+                namePrefixForCategory("recordings"),
+                recordingsLimitMb * 1024 * 1024, reserveBytes);
+        }
     }
 
     /**
@@ -2212,9 +2621,15 @@ public class StorageManager {
      * @return true if cleanup was successful and space is available
      */
     public boolean ensureSurveillanceSpace(long reserveBytes) {
-        return ensureSpace(getReapableDirs("surveillance"), surveillanceDir,
-            namePrefixForCategory("surveillance"),
-            surveillanceLimitMb * 1024 * 1024, reserveBytes);
+        synchronized (cleanupLock) {
+            if (deferIfEncoderBusy(DEFERRED_SURVEILLANCE, getSurveillanceSize(),
+                    surveillanceLimitMb * 1024 * 1024)) {
+                return true;
+            }
+            return ensureSpace("surveillance", getReapableDirs("surveillance"), surveillanceDir,
+                namePrefixForCategory("surveillance"),
+                surveillanceLimitMb * 1024 * 1024, reserveBytes);
+        }
     }
 
     /**
@@ -2226,9 +2641,15 @@ public class StorageManager {
      * @return true if cleanup was successful and space is available
      */
     public boolean ensureProximitySpace(long reserveBytes) {
-        return ensureSpace(getReapableDirs("proximity"), proximityDir,
-            namePrefixForCategory("proximity"),
-            proximityLimitMb * 1024 * 1024, reserveBytes);
+        synchronized (cleanupLock) {
+            if (deferIfEncoderBusy(DEFERRED_PROXIMITY, getProximitySize(),
+                    proximityLimitMb * 1024 * 1024)) {
+                return true;
+            }
+            return ensureSpace("proximity", getReapableDirs("proximity"), proximityDir,
+                namePrefixForCategory("proximity"),
+                proximityLimitMb * 1024 * 1024, reserveBytes);
+        }
     }
 
     /**
@@ -2239,23 +2660,110 @@ public class StorageManager {
      * @return true if cleanup was successful and space is available
      */
     public boolean ensureTripsSpace(long reserveBytes) {
-        return ensureSpace(getReapableDirs("trips"), tripsDir,
-            namePrefixForCategory("trips"),
-            tripsLimitMb * 1024 * 1024, reserveBytes);
+        synchronized (cleanupLock) {
+            if (deferIfEncoderBusy(DEFERRED_TRIPS, getTripsSize(),
+                    tripsLimitMb * 1024 * 1024)) {
+                return true;
+            }
+            return ensureSpace("trips", getReapableDirs("trips"), tripsDir,
+                namePrefixForCategory("trips"),
+                tripsLimitMb * 1024 * 1024, reserveBytes);
+        }
     }
     
     /**
+     * Primary file extension for a category. Cleanup walks files matching
+     * this extension as the "anchor" rows; sidecars are pulled in via
+     * {@link #sidecarExtensionsForCategory(String)}.
+     *
+     * @return non-null lowercase extension including the leading dot.
+     */
+    private static String primaryExtensionForCategory(String category) {
+        switch (category) {
+            case "recordings":   return ".mp4";
+            case "surveillance": return ".mp4";
+            case "proximity":    return ".mp4";
+            case "trips":        return ".jsonl.gz";
+            default:             return ".mp4";
+        }
+    }
+
+    /**
+     * Partial / orphan extensions that aren't anchors but still consume disk
+     * space the user expects to be subject to the limit. These are produced
+     * by abnormal exits (SIGKILL between {@code .mp4.tmp} and {@code .mp4}
+     * rename, encoder write that left a {@code .broken}, hero-image
+     * extraction that left a {@code .jpg.tmp}). Counted by size accounting
+     * and {@link #sweepOrphanTempFiles} reaps them with a 10-minute grace
+     * window so live writers aren't disturbed.
+     *
+     * @return possibly empty array of lowercase suffixes (with leading dot
+     *         or compound like {@code .mp4.tmp}).
+     */
+    private static String[] partialExtensionsForCategory(String category) {
+        switch (category) {
+            case "recordings":   return new String[]{".mp4.tmp", ".broken"};
+            case "surveillance": return new String[]{".mp4.tmp", ".broken", ".jpg.tmp", ".json.tmp", ".srt.tmp"};
+            case "proximity":    return new String[]{".mp4.tmp", ".broken"};
+            case "trips":        return new String[]{".jsonl.gz.tmp"};
+            default:             return new String[]{};
+        }
+    }
+
+    /**
+     * Sidecar extensions that share a stem with the primary file and should
+     * be reaped together. Used both for size accounting (so the on-disk
+     * footprint matches what the user sees in the UI) and for delete-time
+     * orphan cleanup.
+     *
+     * @return possibly empty array of lowercase extensions (each starting
+     *         with a dot), in addition to the primary extension.
+     */
+    private static String[] sidecarExtensionsForCategory(String category) {
+        switch (category) {
+            case "recordings":
+                // cam_*.mp4 has no sidecars in the current build.
+                return new String[]{};
+            case "surveillance":
+                // event_*: timeline JSON, hero JPG, overlay SRT.
+                return new String[]{".json", ".jpg", ".srt"};
+            case "proximity":
+                return new String[]{".json"};
+            case "trips":
+                return new String[]{};
+            default:
+                return new String[]{};
+        }
+    }
+
+    /**
+     * Strip the primary extension from a file name, leaving the stem used
+     * to match sidecars. Handles compound extensions like ".jsonl.gz".
+     */
+    private static String stemForName(String fileName, String primaryExt) {
+        if (fileName.endsWith(primaryExt)) {
+            return fileName.substring(0, fileName.length() - primaryExt.length());
+        }
+        return fileName;
+    }
+
+    /**
      * Generic cleanup method that operates across a set of directories.
      *
-     * Pools all .mp4 files from every dir (active, inactive mirror, legacy),
-     * sorts globally by mtime, and deletes oldest-first until the combined
-     * total is under the limit. This guarantees the user-configured limit
-     * is honored across orphan locations after a storage-type switch or
-     * after a legacy install left behind clips.
+     * Pools all primary-extension files from every dir (active, inactive
+     * mirror, legacy), sorts globally by mtime, and deletes oldest-first
+     * (along with each anchor's sidecars) until the combined total is
+     * under the limit. This guarantees the user-configured limit is honored
+     * across orphan locations after a storage-type switch or after a legacy
+     * install left behind clips.
+     *
+     * Size accounting includes sidecars so the limit reflects the on-disk
+     * footprint the user sees in the UI, not just the anchor file's bytes.
      *
      * SOTA: Uses shell fallback for listing/deleting when directory is owned
      * by a different UID than the daemon.
      *
+     * @param category    Category key — recordings/surveillance/proximity/trips.
      * @param dirs        Every directory whose files count toward this limit.
      *                    May contain a mix of active, inactive, and legacy
      *                    paths. Nulls/missing dirs are skipped.
@@ -2265,7 +2773,8 @@ public class StorageManager {
      * @param reserveBytes Additional bytes to keep free (subtracted from limit).
      * @return true if cleanup was successful and space is available
      */
-    private boolean ensureSpace(List<File> dirs, File activeDir, String namePrefix,
+    private boolean ensureSpace(String category, List<File> dirs, File activeDir,
+                                String namePrefix,
                                 long limitBytes, long reserveBytes) {
         if (activeDir != null && (!activeDir.exists() || !activeDir.isDirectory())) {
             activeDir.mkdirs();
@@ -2274,19 +2783,23 @@ public class StorageManager {
         long targetSize = limitBytes - reserveBytes;
         if (targetSize < 0) targetSize = 0;
 
-        // Collect every reapable file, deduplicated by filename so a clip
-        // that exists on both internal and SD card isn't accounted twice.
-        // When namePrefix is non-null, restrict to files matching the
-        // category (some dirs in the list are shared with other categories
-        // — typically the flat legacy base).
+        final String primaryExt = primaryExtensionForCategory(category);
+        final String[] sidecarExts = sidecarExtensionsForCategory(category);
+        final String[] auxPrefixes = auxiliaryPrefixesForCategory(category);
+
+        // Collect every reapable anchor file, deduplicated by filename so a
+        // clip that exists on both internal and SD card isn't accounted twice.
+        // When namePrefix is non-null, restrict to files matching the category
+        // (some dirs in the list — typically the flat legacy base — are shared
+        // across categories).
         List<File> allFiles = new ArrayList<>();
         Set<String> seenNames = new HashSet<>();
         long currentSize = 0;
         for (File dir : dirs) {
             if (dir == null || !dir.exists() || !dir.isDirectory()) continue;
-            File[] files = dir.listFiles((d, name) -> name.endsWith(".mp4"));
+            File[] files = dir.listFiles((d, name) -> name.endsWith(primaryExt));
             if (files == null) {
-                files = listFilesViaShell(dir);
+                files = listFilesByExt(dir, primaryExt);
             }
             if (files == null) continue;
             for (File f : files) {
@@ -2296,6 +2809,23 @@ public class StorageManager {
                 if (!seenNames.add(name)) continue;
                 allFiles.add(f);
                 currentSize += f.length();
+                // Add sidecar bytes to the running total so we measure the
+                // same on-disk footprint we'd actually free by deleting the
+                // anchor + its sidecars below. Two sidecar shapes:
+                //   - same-stem siblings: <stem><sidecarExt>  (json/srt/jpg)
+                //   - aux-prefix siblings: <auxPrefix><stem>_*  (per-actor thumbs)
+                if (sidecarExts.length > 0 || auxPrefixes.length > 0) {
+                    String stem = stemForName(name, primaryExt);
+                    for (String ext : sidecarExts) {
+                        File sidecar = new File(f.getParentFile(), stem + ext);
+                        if (sidecar.isFile()) currentSize += sidecar.length();
+                    }
+                    if (auxPrefixes.length > 0) {
+                        for (File aux : findAuxiliarySiblings(f.getParentFile(), auxPrefixes, stem)) {
+                            currentSize += aux.length();
+                        }
+                    }
+                }
             }
         }
 
@@ -2314,8 +2844,22 @@ public class StorageManager {
         long deletedSize = 0;
         boolean reapedFromInactive = false;
 
+        // Path of the in-flight trip telemetry file, if any. Only honored
+        // when reaping the trips category; recordings/surveillance use the
+        // encoder-writing probe further down.
+        final String protectedTripPath = "trips".equals(category) ? activeTripFilePath : null;
+
         for (File file : allFiles) {
             if (currentSize <= targetSize) break;
+
+            // Don't unlink a still-being-written trip file. The recorder
+            // keeps the GZIPOutputStream open across SAMPLE_INTERVAL_MS ticks;
+            // a delete here would orphan every byte buffered after this point.
+            if (protectedTripPath != null
+                    && protectedTripPath.equals(file.getAbsolutePath())) {
+                logDebug("Skipping in-flight trip file: " + file.getName());
+                continue;
+            }
 
             long fileSize = file.length();
             boolean deleted = file.delete();
@@ -2333,14 +2877,38 @@ public class StorageManager {
                 }
                 logInfo("Deleted old file: " + file.getAbsolutePath() + " (" + formatSize(fileSize) + ")");
 
-                // Also delete the JSON sidecar (event timeline) sitting next
-                // to the mp4 — it's keyed off the mp4 filename, so when the
-                // mp4 goes the sidecar is dead weight.
-                String jsonName = file.getName().replace(".mp4", ".json");
-                File jsonSidecar = new File(file.getParentFile(), jsonName);
-                if (jsonSidecar.exists()) {
-                    if (!jsonSidecar.delete()) {
-                        deleteFileViaShell(jsonSidecar);
+                // Sidecars share the anchor's stem and are dead weight once
+                // the anchor is gone. Walk the registered set instead of the
+                // recordings-only ".mp4 → .json" replace().
+                if (sidecarExts.length > 0) {
+                    String stem = stemForName(file.getName(), primaryExt);
+                    for (String ext : sidecarExts) {
+                        File sidecar = new File(file.getParentFile(), stem + ext);
+                        if (sidecar.exists()) {
+                            long sidecarSize = sidecar.length();
+                            boolean sidecarDeleted = sidecar.delete();
+                            if (!sidecarDeleted) sidecarDeleted = deleteFileViaShell(sidecar);
+                            if (sidecarDeleted) {
+                                currentSize -= sidecarSize;
+                                deletedSize += sidecarSize;
+                            }
+                        }
+                    }
+                }
+
+                // Aux-prefix siblings (per-actor thumbs `thumb_event_<base>_a*`).
+                // These don't share a stem suffix with the anchor — they share
+                // a prefix construction (auxPrefix + anchorStem + "_…").
+                if (auxPrefixes.length > 0) {
+                    String stem = stemForName(file.getName(), primaryExt);
+                    for (File aux : findAuxiliarySiblings(file.getParentFile(), auxPrefixes, stem)) {
+                        long auxSize = aux.length();
+                        boolean auxDeleted = aux.delete();
+                        if (!auxDeleted) auxDeleted = deleteFileViaShell(aux);
+                        if (auxDeleted) {
+                            currentSize -= auxSize;
+                            deletedSize += auxSize;
+                        }
                     }
                 }
 
@@ -2359,6 +2927,85 @@ public class StorageManager {
         if (deletedCount > 0) {
             logInfo("Cleanup complete: deleted " + deletedCount + " files (" + formatSize(deletedSize) + ")"
                 + (reapedFromInactive ? " — including orphan/legacy locations" : ""));
+        }
+
+        // Orphan-sidecar pass. The collection loop above accumulated every
+        // anchor stem in `seenNames`; any sidecar (same-stem .json/.jpg/.srt
+        // or aux-prefix `thumb_event_<stem>_a*`) whose stem isn't in that set
+        // belongs to an anchor that was deleted in a prior cycle (or by an
+        // app-side reset that didn't sweep sidecars). Reap them so per-actor
+        // thumbnails / SRT / JSON fragments don't accumulate forever.
+        // Skipped when the category has no sidecars or aux prefixes.
+        if (sidecarExts.length > 0 || auxPrefixes.length > 0) {
+            // Convert anchor-name set to stems for sidecar comparison.
+            Set<String> liveStems = new HashSet<>();
+            for (String anchorName : seenNames) {
+                liveStems.add(stemForName(anchorName, primaryExt));
+            }
+            // Anchors we just deleted are still in seenNames but their
+            // sidecars have already been wiped above; safe to leave them in.
+            int orphansDeleted = 0;
+            long orphansFreed = 0;
+            Set<String> seenSidecarPaths = new HashSet<>();
+            for (File dir : dirs) {
+                if (dir == null || !dir.exists() || !dir.isDirectory()) continue;
+                File[] files = dir.listFiles();
+                if (files == null) files = listFilesViaShell(dir);
+                if (files == null) continue;
+                for (File f : files) {
+                    if (!f.isFile()) continue;
+                    String name = f.getName();
+                    // Sidecar candidates may match the primary prefix
+                    // (event_xxx.json) OR an aux prefix (thumb_event_xxx_a17.jpg);
+                    // both must be considered, hence nameMatchesCategoryPrefix.
+                    if (namePrefix != null
+                            && !nameMatchesCategoryPrefix(name, namePrefix, auxPrefixes)) continue;
+
+                    String stem = null;
+                    // Aux-prefix sibling first, since a thumb_event_xxx_a*.jpg
+                    // also matches the .jpg sidecar branch — without this
+                    // ordering, we'd parse stem as the full minus-".jpg" name
+                    // and incorrectly conclude it's an orphan on every tick.
+                    String matchedAux = null;
+                    for (String aux : auxPrefixes) {
+                        if (name.startsWith(aux)) { matchedAux = aux; break; }
+                    }
+                    if (matchedAux != null) {
+                        // Per-actor thumb shape: "<aux><anchorStem>_a<id>[_<rel>].<ext>".
+                        // The anchor stem itself can contain underscores
+                        // (event_<date>_<time>), so we can't parse with
+                        // indexOf('_', auxLen). Find the LAST "_a<digit>" run
+                        // and treat everything between aux and that as stem.
+                        int auxLen = matchedAux.length();
+                        int actorMarker = lastIndexOfActorMarker(name, auxLen);
+                        if (actorMarker > auxLen) {
+                            stem = name.substring(auxLen, actorMarker);
+                        }
+                    } else {
+                        // Same-stem sidecar (event_xxx.json/.srt/.jpg).
+                        for (String ext : sidecarExts) {
+                            if (name.endsWith(ext)) {
+                                stem = name.substring(0, name.length() - ext.length());
+                                break;
+                            }
+                        }
+                    }
+                    if (stem == null) continue;
+                    if (!seenSidecarPaths.add(f.getAbsolutePath())) continue;
+                    if (liveStems.contains(stem)) continue;  // anchor still around
+                    long sz = f.length();
+                    boolean ok = f.delete();
+                    if (!ok) ok = deleteFileViaShell(f);
+                    if (ok) {
+                        orphansDeleted++;
+                        orphansFreed += sz;
+                        currentSize -= sz;
+                    }
+                }
+            }
+            if (orphansDeleted > 0) {
+                logInfo("Sidecar orphans reaped: " + orphansDeleted + " files (" + formatSize(orphansFreed) + ")");
+            }
         }
 
         // If still over limit and the active dir lives on the SD card, fall
@@ -2383,6 +3030,59 @@ public class StorageManager {
     }
     
     /**
+     * Find the last "_a<digit>" actor-id marker in a thumb filename. Returns
+     * the offset of the underscore in "_a", or -1 if none found within
+     * {@code [from, name.length())}. The anchor stem (e.g.
+     * {@code event_<date>_<time>}) can contain underscores, so we cannot
+     * use the first underscore after the aux prefix.
+     */
+    private static int lastIndexOfActorMarker(String name, int from) {
+        for (int i = name.length() - 2; i >= from; i--) {
+            if (name.charAt(i) != '_') continue;
+            if (i + 1 >= name.length() || name.charAt(i + 1) != 'a') continue;
+            // Require a digit after "_a" so we don't match arbitrary text.
+            if (i + 2 < name.length() && Character.isDigit(name.charAt(i + 2))) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Find every aux-prefix sibling of an anchor stem within a directory.
+     * For surveillance, an anchor {@code event_<base>.mp4} in {@code dir}
+     * has aux siblings matching {@code thumb_event_<base>_*} — per-actor
+     * thumbnails written by {@code SurveillanceEngineGpu.dispatchSegmentMetadata}.
+     *
+     * <p>Returns an empty list when {@code auxPrefixes} is empty, the dir
+     * doesn't exist, or no matches are found.
+     */
+    private List<File> findAuxiliarySiblings(File dir, String[] auxPrefixes, String stem) {
+        if (dir == null || auxPrefixes == null || auxPrefixes.length == 0
+                || !dir.isDirectory()) {
+            return java.util.Collections.emptyList();
+        }
+        List<File> hits = new ArrayList<>();
+        File[] files = dir.listFiles();
+        if (files == null) files = listFilesViaShell(dir);
+        if (files == null) return hits;
+        for (File f : files) {
+            if (!f.isFile()) continue;
+            String name = f.getName();
+            for (String aux : auxPrefixes) {
+                // Match `<aux><stem>_…` so we don't accidentally swallow
+                // an unrelated stem that happens to share a prefix.
+                String wanted = aux + stem + "_";
+                if (name.startsWith(wanted)) {
+                    hits.add(f);
+                    break;
+                }
+            }
+        }
+        return hits;
+    }
+
+    /**
      * SOTA: Delete file via shell command when Java delete fails.
      */
     private boolean deleteFileViaShell(File file) {
@@ -2397,13 +3097,18 @@ public class StorageManager {
     }
     
     /**
-     * Run cleanup on both directories.
+     * Run cleanup across every category. Holds {@link #cleanupLock} once
+     * for the whole sweep so the four passes appear atomic to peers; the
+     * lock is reentrant, so the per-call locks in ensureXxxSpace are no-ops
+     * inside this scope.
      */
     public void runCleanup() {
-        ensureRecordingsSpace(0);
-        ensureSurveillanceSpace(0);
-        ensureProximitySpace(0);
-        ensureTripsSpace(0);
+        synchronized (cleanupLock) {
+            ensureRecordingsSpace(0);
+            ensureSurveillanceSpace(0);
+            ensureProximitySpace(0);
+            ensureTripsSpace(0);
+        }
     }
     
     // ==================== Utility ====================
@@ -2884,6 +3589,18 @@ public class StorageManager {
                 // re-converge after a long recording.
                 drainDeferredCleanupIfDue();
 
+                // Sweep orphan .mp4.tmp / .broken / .jpg.tmp partials. Held by
+                // a 10-minute grace window inside the helper, so anything
+                // touched by a live writer is safe. Without this in the
+                // periodic loop, partials accumulated only got reaped at
+                // daemon boot — a long-running daemon hit by an OOM kill
+                // mid-recording could leave the disk half-full of tmps that
+                // the size-based reaper never frees because it only walks
+                // primary-extension files.
+                synchronized (cleanupLock) {
+                    sweepOrphanTempFiles();
+                }
+
                 // Standard periodic pass (catches dirs that grew past the limit
                 // while the daemon was offline, or after a manual limit change).
                 synchronized (cleanupLock) {
@@ -3233,6 +3950,20 @@ public class StorageManager {
      */
     public void setSurveillanceActive(boolean active) {
         surveillanceActive.set(active);
+    }
+
+    /**
+     * Mark a trip telemetry file as in-flight so {@link #ensureSpace} skips
+     * it during cleanup. The recorder still writes through a buffered
+     * GZIPOutputStream; if cleanup were to delete and unlink the file mid-write
+     * on Linux, subsequent writes go to a still-open fd whose bytes are lost
+     * once close() runs (the inode is reaped at fd-close, not at unlink).
+     *
+     * Pass {@code null} on stop. Path-based rather than a boolean so older
+     * trip files can still be reaped during an active trip.
+     */
+    public void setActiveTripFile(File file) {
+        activeTripFilePath = (file != null) ? file.getAbsolutePath() : null;
     }
     
     /**

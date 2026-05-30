@@ -38,7 +38,10 @@ public final class ThumbnailBuffer {
     private static final int OUT_SIDE = 640;
     private static final int JPEG_QUALITY = 85;
 
-    private static final class Slot {
+    /** Package-visible so the caller-driven per-actor writer (see
+     *  {@link #writePerActorJpeg}) can iterate a snapshot of slots after
+     *  the buffer has been cleared synchronously. */
+    static final class Slot {
         byte[] rgb;
         int srcW;
         int srcH;
@@ -196,60 +199,102 @@ public final class ThumbnailBuffer {
     }
 
     /**
-     * Flush captured thumbnails to disk and pick the hero image (highest-score
-     * across all actors). Called on recording close.
-     *
-     * @param mp4File         The recording file the thumbs accompany
-     * @param relRecordingMsByActorId  Map of actorId → recording-relative timestamp,
-     *                                 used to name the per-actor JPEG and as a hint
-     *                                 for the JSON sidecar. May be null.
-     * @return Hero thumbnail file (or null if no thumbnails captured).
+     * Pick the highest-score slot from a snapshot. Pure helper used by the
+     * sync (engine-stop) and async (segment-rotation) hero writers so both
+     * compute the hero off the same snapshot the caller already drained.
+     * Doing the snapshot AT DRAIN TIME (rather than later inside the
+     * executor) avoids a cross-segment race: rotation listener and
+     * stopRecording can both call into here for different segments — each
+     * captures its own snapshot synchronously, so the second segment isn't
+     * left with an empty buffer because the first already drained.
      */
-    public synchronized File flushToDisk(File mp4File, Map<Long, Long> relRecordingMsByActorId) {
-        if (slots.isEmpty() || mp4File == null) return null;
-        File parent = mp4File.getParentFile();
-        if (parent == null) return null;
-
-        String base = mp4File.getName();
-        if (base.endsWith(".mp4")) base = base.substring(0, base.length() - 4);
-
+    static Slot pickHero(List<Slot> snap) {
         Slot hero = null;
         long heroScore = -1L;
-
-        for (Slot s : slots.values()) {
+        for (Slot s : snap) {
             long sc = score(s.severity, s.confidence, s.proximity, s.classGroup);
             if (sc > heroScore) {
                 heroScore = sc;
                 hero = s;
             }
-            try {
-                long rel = relRecordingMsByActorId != null
-                        ? (relRecordingMsByActorId.containsKey(s.actorId)
-                                ? relRecordingMsByActorId.get(s.actorId) : -1L)
-                        : -1L;
-                String jpegName = "thumb_" + base + "_a" + s.actorId
-                        + (rel >= 0 ? ("_" + rel) : "") + ".jpg";
-                File jpeg = new File(parent, jpegName);
-                writeJpeg(s, jpeg);
-            } catch (Exception e) {
-                logger.warn("Per-actor thumb write failed: " + e.getMessage());
-            }
         }
+        return hero;
+    }
 
-        File heroFile = null;
-        if (hero != null) {
-            try {
-                heroFile = new File(parent, base + ".jpg");
-                writeJpeg(hero, heroFile);
-            } catch (Exception e) {
-                logger.warn("Hero thumb write failed: " + e.getMessage());
-                heroFile = null;
-            }
+    /**
+     * Write the hero JPEG from a pre-drained snapshot. Caller decides whether
+     * this runs on the engine thread (sync hero, publish path needs it
+     * deterministic) or on the executor (rotation path, no publish dep).
+     *
+     * @param snap     Pre-drained snapshot from {@link #drainSnapshotForAsync()}.
+     * @param mp4File  Recording the hero accompanies; named
+     *                 {@code <basename>.jpg} in the same directory.
+     * @return Hero JPEG file on disk, or null if no slots / write failed.
+     */
+    public synchronized File writeHeroFromSnapshot(List<Slot> snap, File mp4File) {
+        if (snap == null || snap.isEmpty() || mp4File == null) return null;
+        File parent = mp4File.getParentFile();
+        if (parent == null) return null;
+        Slot hero = pickHero(snap);
+        if (hero == null) return null;
+        String base = mp4File.getName();
+        if (base.endsWith(".mp4")) base = base.substring(0, base.length() - 4);
+        File heroFile = new File(parent, base + ".jpg");
+        try {
+            // Synchronized: writeJpeg uses the instance argbScratch field;
+            // engine-thread (stopRecording publish) and executor-thread
+            // (segment-rotation listener) can BOTH call this for different
+            // segments at the same time. Lock the buffer instance so the
+            // scratch buffer isn't torn between callers. JPEG compress is
+            // ~50ms — short enough that serializing rotation+stop heroes
+            // doesn't matter; correctness wins over minor parallelism.
+            writeJpeg(hero, heroFile);
+            return heroFile;
+        } catch (Exception e) {
+            logger.warn("Hero thumb write failed: " + e.getMessage());
+            return null;
         }
+    }
 
-        // Free buffers; slots will be re-populated on the next recording.
+    /**
+     * Detach the current per-actor slots into a snapshot list and clear the
+     * internal map. Caller drives the actual JPEG writes on a background
+     * executor via {@link #writePerActorJpeg}, one slot at a time.
+     *
+     * <p>Returning a snapshot rather than draining inside the writer lets
+     * the caller decide which executor to use AND lets the buffer be
+     * cleared synchronously here — so the next recording's
+     * {@link #observe(java.util.List, byte[], int, int, int)} starts with a
+     * clean slate even if per-actor writes are still pending.
+     *
+     * <p>The returned slots reference the SAME {@code byte[] rgb} arrays the
+     * buffer was holding — caller must NOT mutate them. After this call the
+     * buffer no longer holds them, so they're safe to use until the
+     * background executor finishes JPEG compression.
+     *
+     * @return list of slots (empty if nothing captured). Never null.
+     */
+    public synchronized List<Slot> drainSnapshotForAsync() {
+        if (slots.isEmpty()) return java.util.Collections.emptyList();
+        List<Slot> snap = new ArrayList<>(slots.values());
         slots.clear();
-        return heroFile;
+        return snap;
+    }
+
+    /**
+     * Write a single per-actor JPEG. Caller-driven: invoked from the
+     * background executor inside SurveillanceEngineGpu's per-segment
+     * publish path. Allocates a fresh scratch int[] every call — cold path
+     * (≤ a few JPEGs per recording) so the allocation cost is negligible
+     * compared to the JPEG compress itself.
+     *
+     * <p>Does NOT touch the buffer-instance {@link #argbScratch} field, so
+     * the engine-thread sync hero writer (which uses that field) and this
+     * async per-actor writer are safe to run concurrently for different
+     * segments.
+     */
+    public void writePerActorJpeg(Slot s, File outFile) throws Exception {
+        writeJpegWithScratch(s, outFile, null);
     }
 
     /**
@@ -276,18 +321,41 @@ public final class ThumbnailBuffer {
 
     // ---------- writer ------------------------------------------------------
 
+    /**
+     * Sync-path JPEG writer; uses the buffer's pooled {@link #argbScratch}
+     * which is owned by the surveillance (caller) thread. Must NOT be
+     * called from the async per-actor executor — use
+     * {@link #writeJpegWithScratch} there.
+     */
     private void writeJpeg(Slot s, File outFile) throws Exception {
+        argbScratch = writeJpegImpl(s, outFile, argbScratch);
+    }
+
+    /**
+     * Async-path JPEG writer; takes a caller-owned scratch buffer (or null
+     * for first call) and returns the (possibly grown) buffer for reuse on
+     * the next iteration. Lets the per-actor lambda pool ARGB allocation
+     * across slots without sharing state with the sync hero path.
+     */
+    private static int[] writeJpegWithScratch(Slot s, File outFile, int[] scratch)
+            throws Exception {
+        return writeJpegImpl(s, outFile, scratch);
+    }
+
+    /** Shared implementation. Returns the (possibly grown) scratch buffer. */
+    private static int[] writeJpegImpl(Slot s, File outFile, int[] scratchIn) throws Exception {
         Bitmap bmp = null;
         Bitmap out = null;
+        int[] argbScratchLocal = scratchIn;
         try {
             bmp = Bitmap.createBitmap(s.srcW, s.srcH, Bitmap.Config.ARGB_8888);
             // Convert RGB byte[] → ARGB pixel array, reusing a pooled scratch
             // buffer when possible. Realloc only when the size grows.
             int needPixels = s.srcW * s.srcH;
-            if (argbScratch == null || argbScratch.length < needPixels) {
-                argbScratch = new int[needPixels];
+            if (argbScratchLocal == null || argbScratchLocal.length < needPixels) {
+                argbScratchLocal = new int[needPixels];
             }
-            int[] pixels = argbScratch;
+            int[] pixels = argbScratchLocal;
             for (int i = 0, p = 0; i < s.rgb.length; i += 3, p++) {
                 int r = s.rgb[i] & 0xFF;
                 int g = s.rgb[i + 1] & 0xFF;
@@ -369,6 +437,7 @@ public final class ThumbnailBuffer {
             if (out != null) out.recycle();
             if (bmp != null && bmp != out) bmp.recycle();
         }
+        return argbScratchLocal;
     }
 
     private static int severityColor(Actor.Severity sev) {

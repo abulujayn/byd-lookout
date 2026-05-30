@@ -114,6 +114,22 @@
                                 </label>
                             </div>
                         </div>
+
+                        <!-- ACC-OFF mode: Smart (motion + AI events) vs Continuous (plain rolling) -->
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-name" data-i18n="surveillance.accoff_mode">ACC-OFF Mode</div>
+                                <div class="setting-desc" data-i18n="surveillance.accoff_mode_desc">Smart records motion-triggered events. Continuous records the whole time the car is parked, with no filters and no AI.</div>
+                            </div>
+                            <div class="setting-control">
+                                <div class="btn-group" id="accOffModeBtns">
+                                    <button class="btn-toggle" data-value="smart" onclick="SurvSettings.setAccOffMode('smart')" data-i18n="surveillance.accoff_smart">Smart</button>
+                                    <button class="btn-toggle" data-value="continuous" onclick="SurvSettings.setAccOffMode('continuous')" data-i18n="surveillance.accoff_continuous">Continuous</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="setting-hint" id="accOffModeHint" data-i18n="surveillance.accoff_hint_smart">Motion + AI gating. Recordings begin only when something moves and AI confirms a person, vehicle, or other relevant object.</div>
+
                         <div class="info-box">
                             <div class="info-row"><span class="label" data-i18n="surveillance.status_label">Status</span><span class="value" id="survState" data-i18n="common.idle">Idle</span></div>
                             <div class="info-row">
@@ -241,13 +257,13 @@
                             </div>
                             <div class="setting-control">
                                 <div class="btn-group" id="detectionZoneBtns">
-                                    <button class="btn-toggle" data-value="close" onclick="SurvSettings.setDetectionZone('close')" data-i18n="surveillance.det_close">Close</button>
-                                    <button class="btn-toggle active" data-value="normal" onclick="SurvSettings.setDetectionZone('normal')" data-i18n="surveillance.det_normal">Normal</button>
-                                    <button class="btn-toggle" data-value="extended" onclick="SurvSettings.setDetectionZone('extended')" data-i18n="surveillance.det_extended">Extended</button>
+                                    <button class="btn-toggle" data-value="close" onclick="SurvSettings.setDetectionZone('close')" data-i18n="surveillance.det_close">Close (~3m)</button>
+                                    <button class="btn-toggle active" data-value="normal" onclick="SurvSettings.setDetectionZone('normal')" data-i18n="surveillance.det_normal">Normal (~6m)</button>
+                                    <button class="btn-toggle" data-value="extended" onclick="SurvSettings.setDetectionZone('extended')" data-i18n="surveillance.det_extended">Extended (full frame)</button>
                                 </div>
                             </div>
                         </div>
-                        <div class="setting-hint" id="detectionZoneHint" data-i18n="surveillance.zone_hint.normal">Standard detection range (~3m around the car).</div>
+                        <div class="setting-hint" id="detectionZoneHint" data-i18n="surveillance.zone_hint.normal">Standard detection band. Roughly the bottom two-thirds of each camera's view (typically within ~6m on the rear camera). Default for everyday parking.</div>
 
                         <!-- Loitering Time -->
                         <div class="setting-row">

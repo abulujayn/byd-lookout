@@ -428,6 +428,12 @@ public final class HighResPreviewSampler {
             try { GLES20.glDeleteTextures(1, new int[]{fboTexture}, 0); } catch (Throwable ignored) {}
             fboTexture = -1;
         }
+        // Drop the readback scratch (~3.6 MB at 1280×720). Lazy ensureFbo
+        // re-creates these on the next sample; without this they survive
+        // every camera re-init for the daemon's lifetime.
+        readBuffer = null;
+        scratchRgba = null;
+        argbPixels = null;
         fboWidth = 0;
         fboHeight = 0;
     }

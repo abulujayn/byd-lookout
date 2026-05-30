@@ -88,6 +88,7 @@ public class CameraDaemon {
     private static TcpCommandServer tcpServer;
     private static HttpServer httpServer;
     private static SurveillanceIpcServer ipcServer;
+    private static com.overdrive.app.server.AacIngestServer aacIngestServer;
     private static AccMonitor accMonitor;
     
     // ==================== SURVEILLANCE ====================
@@ -353,11 +354,13 @@ public class CameraDaemon {
         tcpServer = new TcpCommandServer(TCP_PORT);
         httpServer = new HttpServer(HTTP_PORT);
         ipcServer = new SurveillanceIpcServer(19877);
+        aacIngestServer = new com.overdrive.app.server.AacIngestServer();
         accMonitor = new AccMonitor();
 
         new Thread(tcpServer::start, "TcpServer").start();
         new Thread(httpServer::start, "HttpServer").start();
         new Thread(ipcServer, "SurveillanceIPC").start();
+        new Thread(aacIngestServer, "AacIngest").start();
 
         // Init app context. This will break the app if run in a thread
         if (sharedAppContext == null) {
@@ -641,7 +644,15 @@ public class CameraDaemon {
         }
 
         log("Daemon ready on TCP:" + TCP_PORT + " HTTP:" + HTTP_PORT);
-        
+
+        // Periodic memory monitor — mirrors AccSentryDaemon.logMemoryStatus().
+        // Without this, post-mortem on a 1-2hr park silently dying tells us
+        // nothing about whether the cause was OOM (RSS climbing toward limit)
+        // or HAL-cascade (RSS flat, native FD count climbing, etc.). Cheap:
+        // one ActivityManager.getMemoryInfo() + one Runtime.totalMemory()
+        // every 5 minutes.
+        startPeriodicMemoryLogging();
+
         // RESILIENT LOOPER: BYD framework listeners (gearbox, bodywork, etc.) can throw
         // uncaught exceptions from their internal processing (e.g., learningEPB → CarSettings
         // UID mismatch). These exceptions escape through Handler.dispatchMessage and kill
@@ -872,6 +883,91 @@ public class CameraDaemon {
     }
     
     /**
+     * Periodic memory monitor. Daemon-process equivalent of
+     * {@code AccSentryDaemon.logMemoryStatus()}: emits ActivityManager
+     * memory info plus our Java heap usage every 5 minutes. The daemon
+     * runs for hours unattended during sentry mode; without this, a slow
+     * heap leak (motion-event storm under no-AI, MediaCodec slot leak
+     * across encoder reinits, etc.) is invisible in cam_daemon.log until
+     * the LMK or SIGABRT kill lands.
+     */
+    private static java.util.concurrent.ScheduledExecutorService memoryLogScheduler;
+
+    public static void startPeriodicMemoryLogging() {
+        if (memoryLogScheduler != null) return;
+        memoryLogScheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "MemoryLog");
+            t.setDaemon(true);
+            return t;
+        });
+        memoryLogScheduler.scheduleAtFixedRate(
+            CameraDaemon::logMemoryStatus,
+            1, 5, java.util.concurrent.TimeUnit.MINUTES);
+        // Piggy-back recording-cache prune onto the same scheduler. The
+        // RecordingsApiHandler.RECORDING_CACHE is invalidated synchronously
+        // when the daemon itself rotates an mp4 (HardwareEventRecorderGpu)
+        // or storage cleanup deletes one (StorageManager). External SD
+        // edits (eject + delete on a host PC, manual file-explorer delete
+        // from the app) leave phantom entries that can only be reaped here.
+        //
+        // Wrapped in a try/catch: ScheduledExecutorService.scheduleAtFixedRate
+        // permanently cancels a recurring task on the first uncaught throw.
+        // A flapping SD mount could surface a transient IOException out of
+        // File.exists(); without this guard one bad tick silently kills the
+        // prune cadence for the rest of the daemon's life.
+        memoryLogScheduler.scheduleAtFixedRate(() -> {
+            try {
+                com.overdrive.app.server.RecordingsApiHandler.pruneRecordingCache();
+            } catch (Throwable t) {
+                log("RECORDING_CACHE prune tick failed: "
+                    + t.getClass().getSimpleName() + ": " + t.getMessage());
+            }
+        }, 60, 60, java.util.concurrent.TimeUnit.MINUTES);
+        log("Periodic memory monitor started (5-minute cadence); recording cache prune armed (60-minute cadence)");
+    }
+
+    private static void logMemoryStatus() {
+        try {
+            Runtime rt = Runtime.getRuntime();
+            long heapTotalMB = rt.totalMemory() / 1024 / 1024;
+            long heapFreeMB = rt.freeMemory() / 1024 / 1024;
+            long heapUsedMB = heapTotalMB - heapFreeMB;
+            long heapMaxMB = rt.maxMemory() / 1024 / 1024;
+
+            String sysLine = "";
+            android.content.Context ctx = sharedAppContext;
+            if (ctx != null) {
+                try {
+                    android.app.ActivityManager.MemoryInfo memInfo =
+                        new android.app.ActivityManager.MemoryInfo();
+                    android.app.ActivityManager am = (android.app.ActivityManager)
+                        ctx.getSystemService(android.content.Context.ACTIVITY_SERVICE);
+                    if (am != null) {
+                        am.getMemoryInfo(memInfo);
+                        long availMB = memInfo.availMem / 1024 / 1024;
+                        long totalMB = memInfo.totalMem / 1024 / 1024;
+                        sysLine = String.format(
+                            ", sys.avail=%dMB / %dMB, lowMem=%s, threshold=%dMB",
+                            availMB, totalMB, memInfo.lowMemory,
+                            memInfo.threshold / 1024 / 1024);
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            // Native heap (direct ByteBuffers, MediaCodec internal pools, GL).
+            long nativeHeapMB = android.os.Debug.getNativeHeapAllocatedSize() / 1024 / 1024;
+            long nativeSizeMB = android.os.Debug.getNativeHeapSize() / 1024 / 1024;
+
+            log(String.format(
+                "MEM: heap=%d/%dMB (max=%d), native=%d/%dMB%s",
+                heapUsedMB, heapTotalMB, heapMaxMB,
+                nativeHeapMB, nativeSizeMB, sysLine));
+        } catch (Throwable t) {
+            log("logMemoryStatus error: " + t.getMessage());
+        }
+    }
+
+    /**
      * Sentinel file that signals the shell watchdog wrapper to NOT restart the daemon.
      * Written by shutdown() when the daemon is intentionally disabled (UI/Telegram).
      * The watchdog script checks for this file before each restart attempt.
@@ -885,6 +981,12 @@ public class CameraDaemon {
         
         // Stop AVC keep-alive immediately
         stopAvcKeepAlive();
+
+        // Stop periodic memory monitor
+        if (memoryLogScheduler != null) {
+            try { memoryLogScheduler.shutdownNow(); } catch (Exception ignored) {}
+            memoryLogScheduler = null;
+        }
         
         // Write disable sentinel FIRST — this tells the shell watchdog wrapper
         // to NOT restart the daemon after we exit. Without this, the wrapper
@@ -894,6 +996,15 @@ public class CameraDaemon {
         // Cancel PermissionGranter to stop orphaned pm grant processes
         PermissionGranter.cancel();
         
+        // Stop RecordingModeManager BEFORE the pipeline so its periodic
+        // resync ticker can't fire one more activateMode() call against a
+        // tearing-down pipeline. Idempotent w.r.t. modeActive bookkeeping;
+        // safe even if the manager's pipeline state is already half-torn.
+        if (recordingModeManager != null) {
+            try { recordingModeManager.shutdown(); }
+            catch (Exception e) { log("RecordingModeManager shutdown error: " + e.getMessage()); }
+        }
+
         // Stop cameras and GPU pipeline
         stopAllCameras();
         if (gpuPipeline != null) {
@@ -914,7 +1025,8 @@ public class CameraDaemon {
         if (tcpServer != null) tcpServer.stop();
         if (httpServer != null) httpServer.stop();
         if (ipcServer != null) ipcServer.stop();
-        
+        if (aacIngestServer != null) aacIngestServer.stop();
+
         // Shutdown StorageManager (schedulers, executors)
         try { com.overdrive.app.storage.StorageManager.getInstance().shutdown(); } catch (Exception ignored) {}
         
@@ -1191,7 +1303,10 @@ public class CameraDaemon {
                 try {
                     if (ipcServer != null) ipcServer.stop();
                 } catch (Exception e) { /* ignore */ }
-                
+                try {
+                    if (aacIngestServer != null) aacIngestServer.stop();
+                } catch (Exception e) { /* ignore */ }
+
                 // 7. Shutdown StorageManager (schedulers, executors, SD card watchdog)
                 try {
                     com.overdrive.app.storage.StorageManager.getInstance().shutdown();
@@ -1641,12 +1756,13 @@ public class CameraDaemon {
             }
             // Enable surveillance mode (motion detection)
             gpuPipeline.enableSurveillance();
-            // AVC keep-alive intentionally NOT started for the surveillance flow.
-            // The 60s `am start com.byd.avc/.MainActivity` poke appears to perturb
-            // the camera HAL and drag panoramic FPS down over time. Recording-mode
-            // and streaming flows still warm/keep-alive AVC via RecordingModeManager
-            // and StreamingApiHandler; ACC-OFF sentry runs without it for now.
-            log("Surveillance mode activated successfully (no AVC keep-alive)");
+            // AVC keep-alive: same 60s `am start com.byd.avc` poke we use on
+            // the ACC-ON / streaming / recording-mode flows. Without it, BYD
+            // reaps com.byd.avc during a multi-hour park, the AVM HAL goes
+            // cold, frames stall, and the GL watchdog drops into the restart
+            // cascade that eventually trips MAX_RETRIES on the wrapper.
+            startAvcKeepAliveIfNeeded();
+            log("Surveillance mode activated successfully (AVC keep-alive on)");
         } catch (Exception e) {
             log("ERROR: Failed to enable surveillance: " + e.getMessage());
         }
@@ -2229,10 +2345,9 @@ public class CameraDaemon {
                 }
                 gpuPipeline.setRecordingMode(
                     com.overdrive.app.surveillance.GpuPipelineConfig.RecordingMode.SENTRY);
-                // AVC keep-alive intentionally NOT started for the sentry/ACC-OFF
-                // surveillance flow — see CameraDaemon.enableSurveillance() for
-                // the full reasoning. Recording-mode and streaming flows still
-                // poke AVC; only this surveillance path runs without it.
+                // AVC keep-alive for sentry — same 60s poke we use during ACC-ON
+                // and streaming/recording-mode. See enableSurveillance() for why.
+                startAvcKeepAliveIfNeeded();
                 // Door lock gate: surveillance is armed only after doors are locked.
                 // This prevents false motion events from the owner exiting the car.
                 // Three parallel sources fire concurrently (cloud MQTT, device-SDK
@@ -2423,6 +2538,19 @@ public class CameraDaemon {
     /** True if surveillance was requested but suppressed because car is in a safe zone. */
     public static boolean isSafeZoneSuppressed() {
         return safeZoneSuppressed;
+    }
+
+    /**
+     * True while the door-lock gate has fired and surveillance is genuinely
+     * armed (owner has stepped away). Cleared on unlock or ACC ON. Used by
+     * the mode-switch restart path to distinguish "user wants surveillance
+     * generally" (UnifiedConfig.isSurveillanceEnabled) from "surveillance is
+     * actually live right now" — the latter must be true to safely re-arm
+     * after a stop+restart, otherwise an unlock-during-restart would re-arm
+     * a session the owner just walked back into.
+     */
+    public static boolean isDoorLockArmed() {
+        return doorLockListenerArmed;
     }
     
     public static void setSafeZoneSuppressed(boolean suppressed) {

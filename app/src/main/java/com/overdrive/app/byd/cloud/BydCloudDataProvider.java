@@ -384,22 +384,8 @@ public final class BydCloudDataProvider {
     }
 
     private java.io.InputStream loadBangcleTables() {
-        String path = "/data/local/tmp/bangcle_tables.bin";
-        try {
-            java.io.File f = new java.io.File(path);
-            if (f.exists() && f.length() > 0) {
-                return new java.io.FileInputStream(f);
-            }
-        } catch (Exception ignored) {}
-
-        try {
-            android.content.Context ctx = com.overdrive.app.daemon.DaemonBootstrap.getContext();
-            if (ctx != null) {
-                return ctx.getAssets().open("byd/bangcle_tables.bin");
-            }
-        } catch (Exception ignored) {}
-
-        return null;
+        return com.overdrive.app.byd.cloud.crypto.BangcleTablesFile.openStream(
+                com.overdrive.app.daemon.DaemonBootstrap.getContext());
     }
 
     // ── MQTT connection state (set by subscriber) ───────────────────────

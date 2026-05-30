@@ -137,6 +137,21 @@ public class VehicleDataMonitor {
         }
         return null;
     }
+
+    /**
+     * Drivetrain probe — true on PHEV/HEV vehicles where {@code fuelPercent}
+     * and {@code fuelRangeKm} carry real readings. Trips code uses this to
+     * decide whether to populate fuel-cost fields and whether the per-trip UI
+     * should render the petrol-leg breakdown.
+     */
+    public boolean isPhev() {
+        try {
+            BydDataCollector c = BydDataCollector.getInstance();
+            return c != null && c.isInitialized() && c.isPhevPublic();
+        } catch (Exception e) {
+            return false;
+        }
+    }
     
     /**
      * Charging state derivation — fused detector.
@@ -259,26 +274,35 @@ public class VehicleDataMonitor {
                 double nominal = soh.getNominalCapacityKwh();
                 double sohPercent = soh.hasEstimate() ? soh.getCurrentSoh() : 100.0;
                 double computedKwh = (soc / 100.0) * nominal * (sohPercent / 100.0);
-                
-                // Validate raw BMS value: if implied capacity is wildly off from nominal,
-                // the BMS is returning garbage (common on Seal, Han EV when ACC is off).
-                // Use computed value instead.
-                if (rawKwh > 0 && soc > 5) {
+
+                // Validate raw BMS value: if implied capacity is wildly off
+                // from nominal, the BMS is returning garbage. Use computed.
+                // The same gate applies to BEV and PHEV — PHEVs that suffered
+                // the SOC-as-kWh firmware bug fail this ratio check (rawKwh
+                // ≈ socPercent → impliedCap ≈ 100 vs PHEV nominal 18.3 →
+                // ratio ≈ 5.5, way outside 0.5-1.5). Validate whenever both
+                // inputs are present — a previous soc>5 floor let SOC-mimic
+                // values at very low SOC slip through unvalidated (rawKwh≈3
+                // at soc=3 on an 18.3 kWh pack would otherwise be returned
+                // as a real 3 kWh reading even though it's the bug pattern).
+                if (rawKwh > 0 && soc > 0) {
                     double impliedCap = rawKwh / (soc / 100.0);
                     double ratio = impliedCap / nominal;
                     if (ratio < 0.5 || ratio > 1.5) {
-                        // Raw value is garbage — use computed
                         return computedKwh;
                     }
                 }
-                
-                boolean isPhev = nominal < 30.0;
-                if (isPhev) {
-                    return computedKwh;
-                }
-                // BEV with valid raw value: use it
+
+                // Trust raw BMS reading on both PHEV and BEV when it passes
+                // the ratio gate. Previously PHEVs were forced down the
+                // computed-from-SOC path even when their getBatteryPowerHEV
+                // returned a healthy value — that broke per-trip kWh
+                // accounting (kwhStart-kwhEnd was just socDelta × usableKwh,
+                // discarded the BMS's actual remaining-energy measurement,
+                // and missed all engine-driven HEV charging during the trip).
                 if (rawKwh > 0) return rawKwh;
-                // BEV with no raw value: use computed
+
+                // No raw reading: synthesize from SOC × nominal × SOH.
                 return computedKwh;
             }
         } catch (Exception e) { /* fall through to raw */ }

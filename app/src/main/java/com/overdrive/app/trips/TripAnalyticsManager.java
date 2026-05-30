@@ -375,13 +375,28 @@ public class TripAnalyticsManager {
         }
 
         // Snapshot electricity rate and compute trip cost.
-        // Use SohEstimator's calibrated nominal capacity for accurate energy calculation.
+        //
+        // PHEV vs BEV cost math
+        // ─────────────────────
+        //   electric leg  = energyUsedKwh × electricityRate
+        //   fuel leg      = (Δfuel% / 100) × tankCapacityL × fuelPricePerL   (PHEV only)
+        //   tripCost      = electric leg + fuel leg
+        //
+        // Floors:
+        //   - fuel leg requires Δfuel% ≥ 1 (sensor resolution is 1%).
+        //   - fuel leg requires tankCapacityL > 0 AND fuelPricePerL > 0 from
+        //     user config; otherwise the trip simply doesn't charge a fuel
+        //     leg (UI surfaces this with a "Set tank capacity" hint).
+        //
+        // Regression-safety: BEV trips have isPhev=false and fuelPctStart/End
+        // at -1, so the entire fuel branch is skipped — behaviour is bit-for-
+        // bit identical to the pre-PHEV implementation.
         if (config != null) {
             trip.electricityRate = config.getElectricityRate();
             trip.currency = config.getCurrency();
-            
+
             double energyUsed = trip.getEnergyUsedKwh();
-            
+
             // If BMS kWh readings weren't available, estimate from SoC delta
             // using the SohEstimator's calibrated nominal capacity (from pack voltage).
             if (energyUsed <= 0 && trip.socStart > 0 && trip.socEnd > 0 && trip.socStart > trip.socEnd) {
@@ -409,16 +424,50 @@ public class TripAnalyticsManager {
                     logger.warn("SohEstimator not available for energy estimation: " + e.getMessage());
                 }
             }
-            
+
             // Store computed energy for the database (so future reads don't need to re-estimate)
             if (energyUsed > 0 && trip.distanceKm > 0) {
                 trip.energyPerKm = energyUsed / trip.distanceKm;
             }
-            
+
+            // Electric leg
+            double electricCost = 0;
             if (energyUsed > 0 && trip.electricityRate > 0) {
-                trip.tripCost = energyUsed * trip.electricityRate;
-                logger.info(String.format("Trip cost: %.2f kWh × %s%.2f = %s%.2f",
-                        energyUsed, trip.currency, trip.electricityRate, trip.currency, trip.tripCost));
+                electricCost = energyUsed * trip.electricityRate;
+            }
+            trip.electricCost = electricCost;
+
+            // Fuel leg (PHEV only). Δfuel% < 1 ⇒ below sensor resolution,
+            // floored to 0 to avoid phantom costs from integer flicker.
+            double fuelCost = 0;
+            if (trip.isPhev) {
+                double tankL = config.getTankCapacityL();
+                double pricePerL = config.getFuelPricePerL();
+                trip.fuelPricePerL = pricePerL;
+                if (trip.fuelPctStart >= 0 && trip.fuelPctEnd >= 0
+                        && trip.fuelPctStart >= trip.fuelPctEnd
+                        && (trip.fuelPctStart - trip.fuelPctEnd) >= 1.0
+                        && tankL > 0) {
+                    trip.litresUsed = ((trip.fuelPctStart - trip.fuelPctEnd) / 100.0) * tankL;
+                    if (pricePerL > 0) {
+                        fuelCost = trip.litresUsed * pricePerL;
+                    }
+                }
+            }
+            trip.fuelCost = fuelCost;
+            trip.tripCost = electricCost + fuelCost;
+
+            if (trip.tripCost > 0) {
+                if (trip.isPhev && fuelCost > 0) {
+                    logger.info(String.format(
+                            "Trip cost: electric %.2f kWh × %s%.2f = %s%.2f + petrol %.2f L × %s%.2f = %s%.2f → %s%.2f total",
+                            energyUsed, trip.currency, trip.electricityRate, trip.currency, electricCost,
+                            trip.litresUsed, trip.currency, trip.fuelPricePerL, trip.currency, fuelCost,
+                            trip.currency, trip.tripCost));
+                } else {
+                    logger.info(String.format("Trip cost: %.2f kWh × %s%.2f = %s%.2f",
+                            energyUsed, trip.currency, trip.electricityRate, trip.currency, trip.tripCost));
+                }
             }
         }
 

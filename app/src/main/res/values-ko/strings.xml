@@ -22,6 +22,7 @@
     <string name="cd_expand_collapse">확장/ 붕괴</string>
     <string name="cd_recording_status">기록 상태</string>
     <string name="cd_trip_tracking_status">여행 추적 상태</string>
+    <string name="cd_mic_status">마이크 캡처 상태</string>
     <string name="cd_video_thumbnail">비디오 줄여서</string>
     <string name="cd_play">재생</string>
     <string name="cd_back">뒤로</string>
@@ -30,6 +31,7 @@
     <string name="cd_player_next">다음 녹화</string>
     <string name="cd_player_maximize">플레이어를 극대화</string>
     <string name="cd_player_minimize">출구 풀스크린</string>
+    <string name="cd_player_mute">오디오를 변경</string>
     <string name="cd_delete">삭제</string>
     <string name="cd_expand">확장</string>
     <string name="cd_configure">구성</string>
@@ -40,6 +42,7 @@
     <string name="cd_permission_granted">허가</string>
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">트립</string>
+    <string name="overlay_mic_inactive_label">MIC</string>
     <string name="log_entry_default_timestamp">12시 34분56분</string>
     <string name="log_entry_default_tag">[ TAG]</string>
     <string name="log_entry_default_message">로그 메시지는 여기</string>
@@ -333,6 +336,7 @@
     <string name="toast_fetching_log">%1$s 로그를 가져오는...</string>
     <string name="toast_log_empty_or_missing">로그 파일은 빈 또는 발견되지 않았습니다</string>
     <string name="toast_log_empty">로그 파일은 빈</string>
+    <string name="toast_daemon_manager_unavailable">Daemon 관리자 준비되지 않습니다, 다시 한번 시도하자마자</string>
     <string name="toast_log_save_failed">로그 저장 실패: %1$s</string>
     <string name="toast_log_not_found">로그 파일이 발견되지 않거나 읽을 수 없습니다</string>
     <string name="log_share_title">%1$s 로그 - %2$s</string>
@@ -350,6 +354,12 @@
     <string name="play_with_chooser">놀아</string>
     <string name="setup_version_banner">v%1$s에 업데이트  자동 시작을 다시 확인, BYD는 모든 설치에서 그것을 지워</string>
     <string name="setup_overlay_already_granted">이미 승인 되었습니다</string>
+    <string name="setup_tips_header">팁 &amp; 문제 해결</string>
+    <string name="setup_traffic_title">BYD 트래픽 모니터를 비활성화</string>
+    <string name="setup_traffic_body">BYD 트래픽 모니터는 인터넷에 접속하는 제3자 앱을 차단합니다. 이를 비활성화하면 OverDrive 및 설치하는 다른 앱이 실제로 네트워크를 사용할 수 있습니다. 이후 하드 리부팅이 필요합니다.</string>
+    <string name="setup_traffic_button">개방형 교통 모니터</string>
+    <string name="setup_camera_fix_title">카메라가 검정색이나 틀렸나요?</string>
+    <string name="setup_camera_fix_body">진단을 열 → 카메라 탐사선, 카메라 ID를 0으로 설정하고 저장 버튼을 누르면 카메라 데이몬을 다시 시작하십시오. 피드가 여전히 잘못되면 카메라 ID 1으로 반복하십시오. 지도 섹션을 손상시키지 마십시오.</string>
     <string name="camera_current_manual">현재: 카메라 %1$d (동동)</string>
     <string name="camera_current_auto_label">현재: 자동</string>
     <string name="soh_estimation_active">추정 활동</string>

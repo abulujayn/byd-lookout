@@ -41,6 +41,9 @@ public class SohEstimator {
     private static final String PROP_NOMINAL_SOURCE = "nominal_source";
     private static final String PROP_CALIBRATION_SOH = "calibration_soh";
     private static final String PROP_CALIBRATION_TIMESTAMP = "calibration_timestamp_ms";
+    private static final String PROP_CAPACITY_AH_SOH = "capacity_ah_soh";
+    private static final String PROP_CAPACITY_AH_TIMESTAMP = "capacity_ah_timestamp_ms";
+    private static final String PROP_CAPACITY_AH_DISABLED = "capacity_ah_disabled";
     private static final String PROP_LIVE_HISTORY = "live_history";
     private static final String PROP_SCHEMA_VERSION = "schema_version";
     private static final int CURRENT_SCHEMA_VERSION = 2;
@@ -51,6 +54,32 @@ public class SohEstimator {
     private double currentSoh = -1;
     private double calibrationSoh = -1;
     private long calibrationTimestampMs = 0;
+
+    // Capacity-Ah anchor — PHEV-only secondary SOH source. The BMS reports
+    // its full-charge Ah counter directly via getBatteryCapacity(); on PHEVs
+    // this gives a parallel SOH read that's independent of the noisier
+    // remainKwh / SOC live formula. Stored as an anchor (like calibrationSoh)
+    // — never blends into currentSoh, displayed separately in /api/performance/soh.
+    //
+    // Disabled when the BMS is observed returning the static nameplate Ah
+    // for several consecutive readings (firmware not coulomb-counting).
+    private double capacityAhSoh = -1;
+    private long capacityAhTimestampMs = 0;
+    private double lastCapacityAhReading = -1;
+    private int capacityAhNameplateMatchCount = 0;
+    private boolean capacityAhDisabled = false;
+    private static final int CAPACITY_AH_NAMEPLATE_TRIPS = 5;
+    private static final double CAPACITY_AH_NAMEPLATE_TOLERANCE_AH = 0.5;
+
+    // SOC-coupling detector. If the BMS reports getBatteryCapacity() in
+    // 0.1-kWh-remaining units (older firmware semantic), the value walks with
+    // SOC instead of staying flat at the full-charge Ah counter. Track the
+    // first-seen Ah reading + SOC; if subsequent ticks show |Δah| moving with
+    // |Δsoc|, latch the source off — it's not coulomb-counting.
+    private double capacityAhFirstSocSeen = -1;
+    private double capacityAhFirstAhSeen = -1;
+    private int capacityAhSocCoupledCount = 0;
+    private static final int CAPACITY_AH_SOC_COUPLED_TRIPS = 3;
 
     // Throttling state for the SOH-rail-saturation warning. Bumped on every
     // computeLiveSoh() that hits the 60% / 110% clamp; reset when a value lands
@@ -117,6 +146,17 @@ public class SohEstimator {
                 this.currentSoh = -1;
                 this.calibrationSoh = -1;
                 this.calibrationTimestampMs = 0;
+                // Capacity-Ah anchor was computed against the old nominal Ah —
+                // carrying it forward would mismatch the new pack. Wipe along
+                // with currentSoh so the next BMS Ah read re-anchors cleanly.
+                this.capacityAhSoh = -1;
+                this.capacityAhTimestampMs = 0;
+                this.lastCapacityAhReading = -1;
+                this.capacityAhNameplateMatchCount = 0;
+                this.capacityAhDisabled = false;
+                this.capacityAhFirstSocSeen = -1;
+                this.capacityAhFirstAhSeen = -1;
+                this.capacityAhSocCoupledCount = 0;
                 this.liveHistory.clear();
                 this.saturationStreak = 0;
                 invalidateActiveTripKwhBaseline("user nominal changed " +
@@ -160,6 +200,14 @@ public class SohEstimator {
             this.currentSoh = -1;
             this.calibrationSoh = -1;
             this.calibrationTimestampMs = 0;
+            this.capacityAhSoh = -1;
+            this.capacityAhTimestampMs = 0;
+            this.lastCapacityAhReading = -1;
+            this.capacityAhNameplateMatchCount = 0;
+            this.capacityAhDisabled = false;
+            this.capacityAhFirstSocSeen = -1;
+            this.capacityAhFirstAhSeen = -1;
+            this.capacityAhSocCoupledCount = 0;
             this.liveHistory.clear();
             this.saturationStreak = 0;
             if (previous > 0) {
@@ -938,6 +986,28 @@ public class SohEstimator {
                 } catch (NumberFormatException ignored) {}
             }
 
+            String capAhStr = props.getProperty(PROP_CAPACITY_AH_SOH);
+            if (capAhStr != null) {
+                try {
+                    double cah = Double.parseDouble(capAhStr);
+                    if (cah >= 60 && cah <= 110) capacityAhSoh = cah;
+                } catch (NumberFormatException ignored) {}
+            }
+            String capAhTsStr = props.getProperty(PROP_CAPACITY_AH_TIMESTAMP);
+            if (capAhTsStr != null) {
+                try {
+                    capacityAhTimestampMs = Long.parseLong(capAhTsStr);
+                } catch (NumberFormatException ignored) {}
+            }
+            // Restore the latched-off flag so a firmware confirmed
+            // not-coulomb-counting in a previous session doesn't re-trigger
+            // the same detection cycle on every reboot.
+            String capAhDisStr = props.getProperty(PROP_CAPACITY_AH_DISABLED);
+            if ("true".equalsIgnoreCase(capAhDisStr)) {
+                capacityAhDisabled = true;
+                logger.info("Capacity-Ah anchor restored as disabled (persisted)");
+            }
+
             String liveHistStr = props.getProperty(PROP_LIVE_HISTORY);
             if (liveHistStr != null && !liveHistStr.isEmpty()) {
                 try {
@@ -1066,11 +1136,139 @@ public class SohEstimator {
         updateFromCalibration(energyEnteredBatteryKwh, socDelta, 25.0, true);
     }
 
+    /**
+     * PHEV-only capacity-Ah anchor. The BMS reports its current full-charge
+     * Ah counter via {@code BYDAutoBodyworkDevice.getBatteryCapacity()} on
+     * many firmwares; on PHEVs this is the most stable SOH read because
+     * (a) the live remainKwh / SOC formula is noisy at PHEV pack scale (1
+     * decimal place over a 9–18 kWh range), and (b) coulomb-count Ah is
+     * computed continuously by the BMS regardless of SOC range. BEVs already
+     * get reliable live SOH from their wider remainKwh range, so we deliberately
+     * gate this source to PHEV — keeping a single source of truth on BEV.
+     *
+     * <p>Behaves like {@link #updateFromCalibration}: it's an <em>anchor</em>,
+     * not a blender. Sets {@link #capacityAhSoh} for display (and as the
+     * fall-back in {@code getStatus} when the live source is unavailable),
+     * but never modifies {@link #currentSoh}. The live median window stays
+     * the source of truth for the live readout.
+     *
+     * <p>Skips when the BMS returns the nameplate Ah for {@link #CAPACITY_AH_NAMEPLATE_TRIPS}
+     * consecutive ticks — that signals a firmware that returns the static
+     * factory rating, not a live coulomb count, and would otherwise pin the
+     * anchor at 100% forever.
+     *
+     * @param bmsReportedAh BMS full-charge capacity in Ah (live coulomb count)
+     * @param cellCount Series cell count for the pack (derived from voltage)
+     * @param isPhev True when the drivetrain has been classified as PHEV.
+     *               BEV calls early-return — keep BEV behavior unchanged.
+     */
+    public void updateFromCapacityAh(double bmsReportedAh, int cellCount, boolean isPhev,
+                                     double currentSocPercent) {
+        synchronized (autoDetectLock) {
+            if (!isPhev) return;                 // BEV: live formula is enough.
+            if (capacityAhDisabled) return;
+            if (nominalCapacityKwh <= 0) return;
+            if (bmsReportedAh <= 0 || cellCount <= 0) return;
+
+            // Derive factory Ah first — needed by both the nameplate detector
+            // and the SOC-coupling detector to interpret bmsReportedAh.
+            double nominalAh = (nominalCapacityKwh * 1000.0)
+                / (cellCount * BYD_BLADE_REFERENCE_CELL_VOLTAGE);
+            if (nominalAh < 30 || nominalAh > 350) {
+                logger.debug("Capacity-Ah anchor rejected: derived nominal "
+                    + String.format("%.1f", nominalAh) + " Ah outside expected range");
+                return;
+            }
+
+            // Stuck-at-nameplate detector. Runs BEFORE dedup so a firmware
+            // that always returns the static factory rating advances the
+            // counter on every tick instead of dedup-skipping after the
+            // first one — without that ordering the source latched at the
+            // nameplate value would emit 100% on tick 1 and never disable.
+            if (Math.abs(bmsReportedAh - nominalAh) <= CAPACITY_AH_NAMEPLATE_TOLERANCE_AH) {
+                capacityAhNameplateMatchCount++;
+                if (capacityAhNameplateMatchCount >= CAPACITY_AH_NAMEPLATE_TRIPS) {
+                    capacityAhDisabled = true;
+                    persistEstimate();   // survive daemon restart
+                    logger.warn("Capacity-Ah anchor disabled: BMS Ah ("
+                        + String.format("%.1f", bmsReportedAh) + ") matches nameplate ("
+                        + String.format("%.1f", nominalAh) + ") for "
+                        + capacityAhNameplateMatchCount
+                        + " consecutive ticks — firmware not coulomb-counting");
+                }
+                return;
+            }
+            capacityAhNameplateMatchCount = 0;
+
+            // SOC-coupling detector: some PHEV firmwares return getBatteryCapacity()
+            // as 0.1-kWh-remaining (walks with SOC) instead of full-charge Ah
+            // (stays flat). Sample at first call; if subsequent ticks show the
+            // Ah reading tracking SOC, latch the source off. We require the
+            // SOC delta to be non-trivial (>5%) so a normal 1% jiggle doesn't
+            // false-positive on a healthy coulomb counter.
+            if (currentSocPercent > 0 && currentSocPercent <= 100) {
+                if (capacityAhFirstSocSeen < 0) {
+                    capacityAhFirstSocSeen = currentSocPercent;
+                    capacityAhFirstAhSeen = bmsReportedAh;
+                } else {
+                    double socDelta = Math.abs(currentSocPercent - capacityAhFirstSocSeen);
+                    if (socDelta > 5.0) {
+                        double ahDelta = Math.abs(bmsReportedAh - capacityAhFirstAhSeen);
+                        // Coulomb-count Ah varies <1% even after substantial
+                        // SOC swings (it's the FULL-charge capacity, not
+                        // remaining). If Δah > 5% of starting reading on a
+                        // >5% SOC swing, it's tracking SOC.
+                        if (ahDelta > capacityAhFirstAhSeen * 0.05) {
+                            capacityAhSocCoupledCount++;
+                            if (capacityAhSocCoupledCount >= CAPACITY_AH_SOC_COUPLED_TRIPS) {
+                                capacityAhDisabled = true;
+                                persistEstimate();   // survive daemon restart
+                                logger.warn("Capacity-Ah anchor disabled: BMS reading"
+                                    + " tracks SOC (firmware returns 0.1-kWh-remaining,"
+                                    + " not coulomb-count Ah)");
+                                return;
+                            }
+                        } else {
+                            // Decoupled — reset the streak and re-anchor the
+                            // baseline so a later coupling event has a fresh
+                            // reference.
+                            capacityAhSocCoupledCount = 0;
+                            capacityAhFirstSocSeen = currentSocPercent;
+                            capacityAhFirstAhSeen = bmsReportedAh;
+                        }
+                    }
+                }
+            }
+
+            // Skip duplicate readings — log clutter and pointless rewrites.
+            if (Math.abs(bmsReportedAh - lastCapacityAhReading) < 0.05) return;
+            lastCapacityAhReading = bmsReportedAh;
+
+            double soh = (bmsReportedAh / nominalAh) * 100.0;
+            if (soh < 60.0 || soh > 110.0) {
+                logger.debug("Capacity-Ah anchor rejected: " + String.format("%.1f", soh)
+                    + "% outside 60-110 range (reported=" + String.format("%.1f", bmsReportedAh)
+                    + " Ah, nominal=" + String.format("%.1f", nominalAh) + " Ah)");
+                return;
+            }
+
+            capacityAhSoh = soh;
+            capacityAhTimestampMs = System.currentTimeMillis();
+            persistEstimate();
+
+            logger.info("Capacity-Ah anchor: " + String.format("%.1f", soh)
+                + "% (reported=" + String.format("%.1f", bmsReportedAh) + " Ah, nominal="
+                + String.format("%.1f", nominalAh) + " Ah, " + cellCount + "s cells)");
+        }
+    }
+
     // ==================== GETTERS ====================
 
     public double getCurrentSoh() { return currentSoh; }
     public double getCalibrationSoh() { return calibrationSoh; }
     public long getCalibrationTimestampMs() { return calibrationTimestampMs; }
+    public double getCapacityAhSoh() { return capacityAhSoh; }
+    public long getCapacityAhTimestampMs() { return capacityAhTimestampMs; }
     public boolean hasEstimate() { return currentSoh > 0; }
 
     public double getEstimatedCapacityKwh() {
@@ -1086,6 +1284,14 @@ public class SohEstimator {
             currentSoh = -1;
             calibrationSoh = -1;
             calibrationTimestampMs = 0;
+            capacityAhSoh = -1;
+            capacityAhTimestampMs = 0;
+            lastCapacityAhReading = -1;
+            capacityAhNameplateMatchCount = 0;
+            capacityAhDisabled = false;
+            capacityAhFirstSocSeen = -1;
+            capacityAhFirstAhSeen = -1;
+            capacityAhSocCoupledCount = 0;
             nominalCapacityKwh = 0;
             nominalSource = "unset";
             liveHistory.clear();
@@ -1139,11 +1345,61 @@ public class SohEstimator {
             calibration.put("timestampMs", calibrationTimestampMs);
             status.put("calibration", calibration);
 
+            // Capacity-Ah anchor (PHEV-only). Always present in the response
+            // so the UI can show "—" when not available; consumers shouldn't
+            // need to know which sources are emitted per-drivetrain.
+            org.json.JSONObject capAh = new org.json.JSONObject();
+            capAh.put("soh", capacityAhSoh > 0 ? Math.round(capacityAhSoh * 10) / 10.0 : -1);
+            capAh.put("timestampMs", capacityAhTimestampMs);
+            capAh.put("disabled", capacityAhDisabled);
+            status.put("capacityAh", capAh);
+
+            // Display fallback chain.
+            //
+            // BEV: live > calibration > unavailable. capacity_ah is never
+            // computed for BEV (updateFromCapacityAh early-returns).
+            //
+            // PHEV: capacity_ah > live > calibration > unavailable. The BMS
+            // Ah counter is the most accurate SOH source on small PHEV packs
+            // because the live `remainKwh / SOC` formula sees ±1.5% per-tick
+            // noise from 1-decimal kWh resolution over a 9-18 kWh range. The
+            // capacity-Ah anchor is independent of SOC range and not subject
+            // to that quantization. We only prefer it when it has a real
+            // value AND hasn't been disabled by the nameplate-stuck or
+            // SOC-coupled detectors.
+            boolean phev = false;
+            try {
+                com.overdrive.app.byd.BydDataCollector col =
+                    com.overdrive.app.byd.BydDataCollector.getInstance();
+                if (col != null && col.isInitialized()) phev = col.isPhevPublic();
+            } catch (Throwable ignored) {}
+
             double displaySoh;
             String displaySource;
-            if (currentSoh > 0) { displaySoh = currentSoh; displaySource = "live"; }
-            else if (calibrationSoh > 0) { displaySoh = calibrationSoh; displaySource = "calibration"; }
-            else { displaySoh = -1; displaySource = "unavailable"; }
+            boolean preferCapacityAh = phev && capacityAhSoh > 0 && !capacityAhDisabled;
+            if (preferCapacityAh) {
+                displaySoh = capacityAhSoh;
+                displaySource = "capacity_ah";
+            } else if (currentSoh > 0) {
+                displaySoh = currentSoh;
+                displaySource = "live";
+            } else if (calibrationSoh > 0) {
+                displaySoh = calibrationSoh;
+                displaySource = "calibration";
+            } else if (capacityAhSoh > 0 && !capacityAhDisabled) {
+                // Final-fallback path is reached on BEV (when neither live nor
+                // calibration is set yet) AND on PHEV when the primary
+                // preferCapacityAh branch above didn't fire. Gate on !disabled
+                // here too — otherwise a once-good anchor that later got
+                // latched off by the nameplate / SOC-coupled detector would
+                // still surface as the displayed SOH after a restart, with
+                // displaySource="capacity_ah" misleading the UI.
+                displaySoh = capacityAhSoh;
+                displaySource = "capacity_ah";
+            } else {
+                displaySoh = -1;
+                displaySource = "unavailable";
+            }
             status.put("displaySoh", displaySoh > 0 ? Math.round(displaySoh * 10) / 10.0 : -1);
             status.put("displaySource", displaySource);
 
@@ -1200,6 +1456,9 @@ public class SohEstimator {
             props.remove(PROP_SOH_PERCENT);
             props.remove(PROP_CALIBRATION_SOH);
             props.remove(PROP_CALIBRATION_TIMESTAMP);
+            props.remove(PROP_CAPACITY_AH_SOH);
+            props.remove(PROP_CAPACITY_AH_TIMESTAMP);
+            props.remove(PROP_CAPACITY_AH_DISABLED);
             props.remove(PROP_LIVE_HISTORY);
             if (nominalCapacityKwh > 0) {
                 props.setProperty(PROP_NOMINAL_CAPACITY, String.valueOf(nominalCapacityKwh));
@@ -1217,7 +1476,9 @@ public class SohEstimator {
     private void persistEstimate() {
         synchronized (autoDetectLock) {
             if (currentSoh <= 0 && nominalCapacityKwh <= 0
-                    && calibrationSoh <= 0 && calibrationTimestampMs <= 0) {
+                    && calibrationSoh <= 0 && calibrationTimestampMs <= 0
+                    && capacityAhSoh <= 0 && capacityAhTimestampMs <= 0
+                    && !capacityAhDisabled) {
                 return;
             }
             try {
@@ -1236,6 +1497,15 @@ public class SohEstimator {
                 }
                 if (calibrationTimestampMs > 0) {
                     props.setProperty(PROP_CALIBRATION_TIMESTAMP, String.valueOf(calibrationTimestampMs));
+                }
+                if (capacityAhSoh > 0) {
+                    props.setProperty(PROP_CAPACITY_AH_SOH, String.valueOf(capacityAhSoh));
+                }
+                if (capacityAhTimestampMs > 0) {
+                    props.setProperty(PROP_CAPACITY_AH_TIMESTAMP, String.valueOf(capacityAhTimestampMs));
+                }
+                if (capacityAhDisabled) {
+                    props.setProperty(PROP_CAPACITY_AH_DISABLED, "true");
                 }
                 if (!liveHistory.isEmpty()) {
                     StringBuilder sb = new StringBuilder();

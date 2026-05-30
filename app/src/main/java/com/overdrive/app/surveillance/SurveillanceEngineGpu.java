@@ -97,6 +97,14 @@ public class SurveillanceEngineGpu {
     private long postRecordMs = 10000;  // 10 seconds after motion (default)
     private long recordingStopTime = 0;  // When to stop recording (motion time + post-record)
     private long lastRecordingStopTime = 0;  // When last recording stopped (for cooldown)
+    private static final long NO_AI_MIN_GAP_MS = 30_000;
+    // Absolute wall-clock time of the trigger that started the current recording.
+    // Used to enforce a hard ceiling on total recording length (3× postRecordMs)
+    // so a stuck tracker, a sustained shadow loop, or a misbehaving residual
+    // motion source cannot extend recording indefinitely. Reset to 0 when
+    // recording stops. The user's earlier 50s clip for a brief approach was
+    // diagnosed to this missing ceiling.
+    private long recordingTriggerStartMs = 0;
     
     // DETERRENT FLASH SUPPRESSION: After the deterrent fires, suppress new motion triggers
     // for a window that covers the cloud API round-trip + flash sequence + ring buffer flush.
@@ -112,6 +120,17 @@ public class SurveillanceEngineGpu {
     // to MEDIUM always, and to HIGH during the deterrent window.
     private static final long DETERRENT_SUPPRESSION_MS = 20000;
     private long deterrentFiredTime = 0;  // Timestamp when deterrent was last dispatched
+
+    // NO-AI rate limit: minimum gap between consecutive motion-triggered recordings
+    // when YOLO is unavailable (daemon-classpath OR user-disabled all classes). Without
+    // YOLO, motion-only triggering can fire continuously on wind/shadow/streetlight
+    // artifacts; each retrigger forces a fresh muxer init + pre-record flush, leaking
+    // MediaCodec slots and direct-buffer RSS until the daemon SIGABRTs or LMK takes
+    // it. 30s is empirically enough headroom that the muxer pool drains and the
+    // codec's hardware refcount returns to baseline before the next event fires,
+    // while still catching real intruders quickly (post-record covers the gap on
+    // sustained loitering, and the trigger fires immediately past the gap if motion
+    // continues). Only active when aiAvailable=false; YOLO installs are unaffected.
     
     // YOLO CONFIRMATION GATE: Track when YOLO last confirmed a real threat object.
     // For THREAT_MEDIUM: recording requires YOLO confirmation within the motion sequence
@@ -237,6 +256,11 @@ public class SurveillanceEngineGpu {
     private volatile boolean active = false;
     private boolean inActiveMode = false;
     private boolean recording = false;
+    // ACC-OFF mode: false (default) runs the V2 motion + YOLO event pipeline;
+    // true bypasses everything and writes a continuous rolling 4-cam mosaic.
+    // Latched at enable() from UnifiedConfigManager.surveillance.accOffMode so
+    // a mid-session config flip can't tear the recorder down half-way.
+    private volatile boolean continuousMode = false;
     
     // V2 Pipeline: Per-quadrant 6-stage motion detection
     private MotionPipelineV2 pipelineV2 = null;
@@ -502,6 +526,16 @@ public class SurveillanceEngineGpu {
     
     // Cached latest mosaic frame for snapshot API (640×480 RGB)
     private volatile byte[] latestMosaicFrame = null;
+    // Last wallclock time a HTTP/TCP client polled the snapshot getters.
+    // Updated by getLatestMosaicFrame / getLatestMosaicJpeg. Used by
+    // processFrame to skip the per-N-frame mosaic clone + JPEG encode
+    // when no client has asked for a snapshot in a while — that work
+    // costs ~3-5% sustained CPU on a parked car with no UI connected.
+    private volatile long lastSnapshotPollMs = 0L;
+    // 30 s grace window: any poll within the last 30 s keeps the snapshot
+    // pipeline warm. Picked to match the WebSocket idle-shutdown cadence
+    // and the typical web UI auto-refresh poll cycle (~5-10 s).
+    private static final long SNAPSHOT_POLL_GRACE_MS = 30_000L;
     // JPEG-encoded snapshot of the cached mosaic. Refresh is OFF the
     // AiLaneWorker thread — every MOSAIC_JPEG_FRAME_MODULO frames we hand a
     // snapshot of the RGB mosaic to {@link #mosaicJpegExecutor} and let it
@@ -679,7 +713,22 @@ public class SurveillanceEngineGpu {
         }
         
         logger.info("Initialized surveillance engine (buffer=" + FRAME_SIZE + " bytes)");
-        
+
+        // Sweep orphan recordings: any .mp4 without a sibling hero .jpg is
+        // either pre-fix legacy or a daemon-killed-mid-finalizer victim.
+        // Generate fallback heroes from the mp4's first keyframe so the
+        // events UI never shows a thumbnail-less card.
+        // Async — must not block init().
+        new Thread(() -> {
+            try {
+                if (eventDir != null && eventDir.isDirectory()) {
+                    sweepOrphanHeroThumbnails(eventDir);
+                }
+            } catch (Throwable t) {
+                logger.debug("Orphan hero sweep failed: " + t.getMessage());
+            }
+        }, "OverdriveOrphanHeroSweep").start();
+
         // Initialize V2 per-quadrant pipeline
         try {
             pipelineV2 = new MotionPipelineV2();
@@ -893,7 +942,18 @@ public class SurveillanceEngineGpu {
             }
             return;
         }
-        
+
+        // Continuous mode: encoder is fed by the GL→encoder surface chain
+        // independently of this method, so skip every CPU-side stage
+        // (mosaic snapshot, motion throttle, V2 pipeline, YOLO). Still
+        // recycle the borrowed buffer or the downscaler pool starves.
+        if (continuousMode) {
+            if (downscaler != null) {
+                downscaler.recycleBuffer(smallRgbFrame);
+            }
+            return;
+        }
+
         // RACE CONDITION FIX (belt-and-suspenders): If somehow active=true but ACC is ON,
         // auto-disable. This catches the case where enable() raced with ACC ON and the
         // disable path hasn't run yet.
@@ -918,8 +978,14 @@ public class SurveillanceEngineGpu {
             frameCount++;
             long now = System.currentTimeMillis();
             
-            // Cache latest frame for snapshot API (every 10th frame to reduce copies)
-            if (frameCount % 10 == 0) {
+            // Cache latest frame for snapshot API (every 10th frame). Skip
+            // the 920 KB System.arraycopy when no client has polled within
+            // the grace window — on a parked car with no UI connected,
+            // this saves ~1 MB/s of continuous memcpy. Any poll bumps
+            // lastSnapshotPollMs and re-warms the cache on the next tick.
+            boolean snapshotClientActive =
+                (now - lastSnapshotPollMs) < SNAPSHOT_POLL_GRACE_MS;
+            if (frameCount % 10 == 0 && snapshotClientActive) {
                 if (latestMosaicFrame == null || latestMosaicFrame.length != smallRgbFrame.length) {
                     latestMosaicFrame = new byte[smallRgbFrame.length];
                 }
@@ -938,7 +1004,13 @@ public class SurveillanceEngineGpu {
             // frames via System.arraycopy, which would tear the encoder's
             // pixel reads if it shared the buffer. The clone is bounded
             // (640×480×3 = 920 KB once per ~15 frames at 15 fps ≈ 1 Hz).
-            if (frameCount % MOSAIC_JPEG_FRAME_MODULO == 0 && latestMosaicFrame != null) {
+            // Same client-poll gate as the mosaic clone above: skip the
+            // 920 KB clone + 30-80 ms Bitmap.compress when no client has
+            // asked for a JPEG within the grace window. Saves ~3.5%
+            // sustained CPU on a parked car with no UI connected.
+            if (frameCount % MOSAIC_JPEG_FRAME_MODULO == 0
+                    && latestMosaicFrame != null
+                    && snapshotClientActive) {
                 final byte[] snapshot = latestMosaicFrame.clone();
                 try {
                     mosaicJpegExecutor.execute(() -> {
@@ -1337,8 +1409,64 @@ public class SurveillanceEngineGpu {
         }
         
         if (anyMotion) {
-            lastMotionTime = now;
-            
+            // GATING: only "qualifying" motion bumps lastMotionTime. The
+            // post-record stop check uses (now - lastMotionTime) ≥ postRecordMs
+            // as the gate that lets recording finally end. Bumping
+            // lastMotionTime on EVERY anyMotion frame meant residual
+            // shadow flickers, brightness blips, and out-of-zone motion
+            // (which DON'T qualify as recording-extension events under
+            // the recordingStopTime path) silently kept the post-record
+            // clock alive — turning a brief 3-second approach into a
+            // 50-second clip when shadows kept tickling the detector.
+            //
+            // Qualifying = at least one quadrant has MEDIUM+ threat AND
+            // (an in-zone motion result OR an in-zone tracker lock). This
+            // matches the same conditions that gate the recordingStopTime
+            // extension at line ~1842.
+            boolean qualifyingMotion = false;
+            if (maxThreat >= MotionPipelineV2.THREAT_MEDIUM) {
+                for (int q = 0; q < MotionPipelineV2.NUM_QUADRANTS; q++) {
+                    if (results[q].threatLevel >= MotionPipelineV2.THREAT_MEDIUM
+                            && (results[q].activeBlocks > 0 || results[q].confirmedBlocks > 0)) {
+                        // Use trackerInZone as the cheap zone proxy when a
+                        // tracker is present; otherwise fall back to the
+                        // pipeline's own zone gating (already applied via
+                        // applyQuadrantOverrides above — if threat survives
+                        // post-override, it's in-zone).
+                        qualifyingMotion = true;
+                        break;
+                    }
+                }
+            }
+            // Tracker-immunity branch: the headlight-sweep fix at line ~1240
+            // bumps `maxThreat` to MEDIUM but does NOT touch
+            // `results[q].threatLevel`, so the loop above misses cases where
+            // the only motion signal is an in-zone person tracker holding
+            // through a brightness sweep. Those frames are exactly the
+            // "real intrusion under flash" scenario the immunity branch
+            // exists for — they MUST keep lastMotionTime alive, otherwise
+            // the recording falls back to the hard ceiling instead of
+            // stopping cleanly when the person actually leaves. Mirror the
+            // same in-zone person-tracker probe used by trackerHolding
+            // below (line ~1899).
+            if (!qualifyingMotion && maxThreat >= MotionPipelineV2.THREAT_MEDIUM) {
+                for (int q = 0; q < MotionPipelineV2.NUM_QUADRANTS; q++) {
+                    try {
+                        if (NativeMotion.trackerHasActiveTrack(q)) {
+                            float[] trackBox = NativeMotion.trackerGetTrackBox(q);
+                            if (trackBox != null && (int) trackBox[5] == 0
+                                    && trackerInZone(q)) {
+                                qualifyingMotion = true;
+                                break;
+                            }
+                        }
+                    } catch (Exception ignored) {}
+                }
+            }
+            if (qualifyingMotion) {
+                lastMotionTime = now;
+            }
+
             // Track peak threat across the entire motion sequence
             if (maxThreat > peakThreatDuringSequence) {
                 peakThreatDuringSequence = maxThreat;
@@ -1461,10 +1589,22 @@ public class SurveillanceEngineGpu {
                     // (early AI init). If it hasn't confirmed in 5+ seconds of motion, the
                     // object is genuinely undetectable by YOLO and motion evidence alone
                     // must be trusted.
-                    boolean deterrentActive = deterrentFiredTime > 0 
+                    boolean deterrentActive = deterrentFiredTime > 0
                             && (now - deterrentFiredTime) < DETERRENT_SUPPRESSION_MS;
                     boolean aiRecentlyConfirmed = lastAiConfirmationTimeMs >= firstMotionTime;  // Confirmed during THIS sequence
-                    boolean aiAvailable = useObjectDetection && yoloDetector != null;
+                    // FIX: aiAvailable must also reflect the user-side gate
+                    // (classFilter empty OR aiEnabled false). Previously this
+                    // only tracked the daemon-classpath state, so a user who
+                    // turned all object classes off in the UI fell into the
+                    // "no AI" path on every loop iteration — and combined
+                    // with the missing post-stop cooldown below, every gust
+                    // of motion fired a recording. That leaked MediaCodec
+                    // slots and thumbnail-buffer allocations until the
+                    // daemon was killed by SIGABRT (codec exhaustion) or
+                    // OOM, eventually tripping wrapper retry exhaustion.
+                    boolean aiAvailable = useObjectDetection && yoloDetector != null
+                            && aiEnabled
+                            && (classFilter == null || classFilter.length > 0);
                     long timePastRequired = motionDuration - requiredDuration;  // How long past the trigger threshold
                     
                     // TIMEOUT FALLBACK: Let motion through if YOLO hasn't confirmed in time.
@@ -1513,6 +1653,34 @@ public class SurveillanceEngineGpu {
                         }
                         firstMotionTime = 0;
                         peakThreatDuringSequence = 0;
+                    }
+
+                    // NO-AI RATE LIMIT: when YOLO is off, motion-only triggers re-fire
+                    // on every wind gust / shadow / streetlight artifact. Each retrigger
+                    // forces a fresh muxer init + pre-record flush; over a multi-hour
+                    // park that storm leaks MediaCodec instance slots on the Adreno 610
+                    // and steadily inflates direct-buffer RSS until the daemon takes
+                    // SIGABRT (codec exhaustion) or SIGKILL (LMK). YOLO confirmation is
+                    // the natural rate-limit on real installs — without it, enforce a
+                    // minimum gap between consecutive recordings so a noisy parking lot
+                    // can't trigger more than once per NO_AI_MIN_GAP_MS.
+                    //
+                    // Only applies when AI is genuinely unavailable (daemon-classpath
+                    // OR user-disabled) AND we're not already recording AND the last
+                    // recording stopped recently. The post-record window (10s default)
+                    // already covers the immediate aftermath; this gate runs after that.
+                    if (!aiAvailable && !recording && lastRecordingStopTime > 0) {
+                        long sinceLastStop = now - lastRecordingStopTime;
+                        if (sinceLastStop < NO_AI_MIN_GAP_MS) {
+                            shouldSuppress = true;
+                            if (frameCount % 50 == 0) {
+                                logger.debug(String.format(
+                                    "No-AI rate limit: suppressing (last recording stopped %.1fs ago, min gap %.1fs)",
+                                    sinceLastStop / 1000.0, NO_AI_MIN_GAP_MS / 1000.0));
+                            }
+                            firstMotionTime = 0;
+                            peakThreatDuringSequence = 0;
+                        }
                     }
                     
                     if (shouldSuppress) {
@@ -1597,6 +1765,7 @@ public class SurveillanceEngineGpu {
                             proxStr));
                         
                         recordingStopTime = now + postRecordMs;
+                        recordingTriggerStartMs = now;
                         startRecording();
                         
                         try {
@@ -1748,6 +1917,7 @@ public class SurveillanceEngineGpu {
                             }
                         }
                         recordingStopTime = now + postRecordMs;
+                        recordingTriggerStartMs = now;
                         startRecording();
                         try {
                             String videoFilename = currentEventFile != null ? currentEventFile.getName() : null;
@@ -1790,6 +1960,29 @@ public class SurveillanceEngineGpu {
         // is still a valid reason to keep recording. Use a lower threshold:
         // any quadrant with confirmedBlocks > 0 counts as "activity" for post-record.
         if (recording && now >= recordingStopTime && recordingStopTime > 0) {
+            // HARD CEILING. The post-record window can be extended forever
+            // by a stuck tracker, sustained shadow loop, or out-of-zone
+            // residual motion. Cap total recording length at 3× postRecordMs
+            // (e.g. 30s for the default 10s setting) measured from the
+            // original trigger time. Beyond this, force-stop regardless of
+            // tracker state. Bounded blast radius for any future detector
+            // bug that creates an extension loop.
+            long elapsedSinceTrigger = recordingTriggerStartMs > 0
+                    ? now - recordingTriggerStartMs : 0;
+            long maxRecordingMs = postRecordMs * 3L;
+            if (recordingTriggerStartMs > 0 && elapsedSinceTrigger >= maxRecordingMs) {
+                logger.warn(String.format(
+                        "V2 post-record HARD CEILING reached (%.1fs >= %.1fs cap = 3× postRecord). "
+                        + "Force-stopping regardless of tracker/activity state.",
+                        elapsedSinceTrigger / 1000.0, maxRecordingMs / 1000.0));
+                stopRecording();
+                recordingStopTime = 0;
+                recordingTriggerStartMs = 0;
+                firstMotionTime = 0;
+                peakThreatDuringSequence = 0;
+                return;
+            }
+
             // Check if any quadrant has residual activity (even below MEDIUM threat)
             boolean anyActivity = false;
             for (int q = 0; q < MotionPipelineV2.NUM_QUADRANTS; q++) {
@@ -1837,6 +2030,7 @@ public class SurveillanceEngineGpu {
                             timeSinceLastMotion / 1000.0));
                     stopRecording();
                     recordingStopTime = 0;
+                    recordingTriggerStartMs = 0;
                     firstMotionTime = 0;
                     peakThreatDuringSequence = 0;
                 }
@@ -3722,6 +3916,129 @@ public class SurveillanceEngineGpu {
      * to the caller. The notification path treats absence of the file as
      * "text-only", which is the correct degraded behaviour.
      */
+    /**
+     * On daemon startup, sweep the surveillance directory for {@code .mp4}
+     * files whose sibling hero {@code .jpg} is missing — daemon SIGKILL
+     * between rename and finalizer would leave that pair dangling. Generate
+     * fallback heroes so the events UI never shows a thumbnail-less card.
+     *
+     * <p>Idempotent: skips files whose hero already exists. Bounded: only
+     * looks at files older than 30 seconds (anything younger is probably
+     * still being finalized by a peer daemon process). 5-second budget per
+     * file (MediaMetadataRetriever can hang on a malformed mp4).
+     */
+    private void sweepOrphanHeroThumbnails(File dir) {
+        File[] mp4s = dir.listFiles((d, name) -> name.endsWith(".mp4"));
+        if (mp4s == null || mp4s.length == 0) return;
+        long cutoff = System.currentTimeMillis() - 30_000L;
+        int generated = 0;
+        // Per-file timeout: MediaMetadataRetriever can hang indefinitely on
+        // a malformed mp4 (truncated moov, corrupt sample tables) and
+        // Future.cancel(true) only flips the interrupt flag — it does NOT
+        // abort the underlying native JNI call. So a single-thread executor
+        // would queue all subsequent files behind the stuck worker and they'd
+        // ALL time out without ever running. Spawn a fresh daemon thread per
+        // file so a hung worker leaks one thread but the sweep keeps making
+        // progress on the remaining files. 5s budget per file is generous
+        // (a healthy keyframe extract is <500 ms even on a slow SD card).
+        for (File mp4 : mp4s) {
+            if (mp4.lastModified() > cutoff) continue;
+            String name = mp4.getName();
+            String heroName = name.substring(0, name.length() - 4) + ".jpg";
+            File heroFile = new File(dir, heroName);
+            if (heroFile.exists()) continue;
+
+            final File mp4Final = mp4;
+            final File heroFinal = heroFile;
+            final Object done = new Object();
+            final boolean[] finished = { false };
+            Thread worker = new Thread(() -> {
+                try {
+                    writeFallbackHeroFromMp4(mp4Final, heroFinal);
+                } catch (Throwable t) {
+                    logger.debug("Orphan hero extract worker failed for "
+                            + name + ": " + t.getMessage());
+                } finally {
+                    synchronized (done) {
+                        finished[0] = true;
+                        done.notifyAll();
+                    }
+                }
+            }, "OverdriveOrphanHeroExtract-" + name);
+            worker.setDaemon(true);
+            worker.start();
+            synchronized (done) {
+                long deadline = System.currentTimeMillis() + 5_000L;
+                while (!finished[0]) {
+                    long remaining = deadline - System.currentTimeMillis();
+                    if (remaining <= 0) break;
+                    try { done.wait(remaining); }
+                    catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+            }
+            if (!finished[0]) {
+                worker.interrupt();
+                logger.warn("Orphan hero extract timed out for " + name
+                        + " — leaking worker thread, continuing sweep");
+            }
+            if (heroFile.exists()) generated++;
+        }
+        if (generated > 0) {
+            logger.info("Orphan hero sweep: generated " + generated
+                    + " fallback thumbnails in " + dir.getName());
+        }
+    }
+
+    /**
+     * Run {@link #writeFallbackHeroFromMp4} on a fresh daemon thread with a
+     * hard timeout. Returns when the worker finishes or {@code timeoutMs}
+     * elapses, whichever first. On timeout the worker is interrupted and
+     * abandoned — {@link android.media.MediaMetadataRetriever} runs in JNI
+     * and ignores Thread.interrupt(), so a hung worker will eventually be
+     * killed when its ANR budget exhausts or the process exits. Daemon flag
+     * means the leak doesn't block JVM shutdown.
+     */
+    private void writeFallbackHeroWithTimeout(File mp4File, File outFile, long timeoutMs) {
+        if (mp4File == null || outFile == null) return;
+        final Object done = new Object();
+        final boolean[] finished = { false };
+        Thread worker = new Thread(() -> {
+            try {
+                writeFallbackHeroFromMp4(mp4File, outFile);
+            } catch (Throwable t) {
+                logger.debug("Fallback hero worker failed for "
+                        + mp4File.getName() + ": " + t.getMessage());
+            } finally {
+                synchronized (done) {
+                    finished[0] = true;
+                    done.notifyAll();
+                }
+            }
+        }, "OverdriveFallbackHero-" + mp4File.getName());
+        worker.setDaemon(true);
+        worker.start();
+        synchronized (done) {
+            long deadline = System.currentTimeMillis() + timeoutMs;
+            while (!finished[0]) {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) break;
+                try { done.wait(remaining); }
+                catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }
+        if (!finished[0]) {
+            worker.interrupt();
+            logger.warn("Fallback hero extract timed out for " + mp4File.getName()
+                    + " — leaking worker thread, continuing publish");
+        }
+    }
+
     private void writeFallbackHeroFromMp4(File mp4File, File outFile) {
         if (mp4File == null || outFile == null) return;
         if (outFile.exists()) return;          // ThumbnailBuffer already wrote one
@@ -4043,6 +4360,118 @@ public class SurveillanceEngineGpu {
     }
 
     /**
+     * Continuous-mode entry. Bypasses motion / YOLO / baseline entirely and
+     * starts a plain rolling recording. Segment rotation @
+     * {@code SEGMENT_DURATION_MS} (2 min) still runs so a long session is
+     * split into manageable .mp4 files. Filename uses the same {@code event_}
+     * prefix as smart-mode events so recordings library / Telegram /
+     * storage-bucket plumbing handles them without separate code paths.
+     *
+     * No timeline collector, no per-segment hero JPEG, no Telegram
+     * notifications, no screen deterrent — the user opted in knowing the
+     * whole park is recorded; per-segment notifications would just spam.
+     *
+     * Stop happens at {@link #disable()} (ACC ON or owner-unlock disarm).
+     */
+    private void startContinuousRecording() {
+        if (recorder == null) {
+            logger.error("Cannot start continuous recording — recorder is null");
+            return;
+        }
+        if (recording) {
+            logger.debug("Already recording");
+            return;
+        }
+
+        // Same SD/USB mount sanity-check as startRecording(); otherwise the
+        // first segment can land on a stale path right after a card eject.
+        com.overdrive.app.storage.StorageManager storageManager;
+        try {
+            storageManager = com.overdrive.app.storage.StorageManager.getInstance();
+            com.overdrive.app.storage.StorageManager.StorageType type =
+                    storageManager.getSurveillanceStorageType();
+            if (type == com.overdrive.app.storage.StorageManager.StorageType.SD_CARD
+                    && !storageManager.isSdCardMounted()) {
+                logger.warn("SD card unmounted before continuous recording — attempting remount");
+                storageManager.ensureSdCardMounted(true);
+            } else if (type == com.overdrive.app.storage.StorageManager.StorageType.USB
+                    && !storageManager.isUsbMounted()) {
+                logger.warn("USB unmounted before continuous recording — attempting remount");
+                storageManager.ensureUsbMounted(true);
+            }
+        } catch (Exception e) {
+            logger.warn("Storage mount check failed: " + e.getMessage());
+            storageManager = null;
+        }
+        final com.overdrive.app.storage.StorageManager smRef = storageManager;
+        if (smRef != null) {
+            // Continuous mode generates much more data than smart mode; keep
+            // the periodic cleanup running and trigger an immediate prune so
+            // the first segment doesn't land on a near-full card.
+            new Thread(() -> {
+                try { smRef.ensureSurveillanceSpace(50 * 1024 * 1024); }
+                catch (Exception e) { logger.warn("Cleanup failed: " + e.getMessage()); }
+            }, "ContinuousCleanup").start();
+        }
+
+        String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date());
+        // Reuse the `event_` prefix so everything downstream (recordings
+        // library scanner, /api/recordings/<file> server, Telegram /download,
+        // StorageManager surveillance bucket, daily-prune watcher) handles
+        // continuous-mode segments without separate code paths. The mode
+        // distinction lives in the user's config, not in the filename.
+        String fileName = "event_" + timestamp + ".mp4";
+        currentEventFile = new File(eventOutputDir, fileName);
+
+        logger.info("Starting continuous recording: " + currentEventFile.getAbsolutePath());
+
+        // postRecordMs=0: the engine itself owns the stop schedule (it stops
+        // at disable()), so we don't want the recorder to schedule any
+        // automatic close. The encoder's pre-record buffer is harmless here
+        // — it just front-loads the first segment with a few seconds of
+        // pre-arm video, which is fine.
+        recorder.triggerEventRecording(currentEventFile.getAbsolutePath(), 0L);
+        recording = true;
+
+        // Segment rotation listener: just track the new segment filename so
+        // a future stop() flushes the right path. No timeline / hero work.
+        try {
+            HardwareEventRecorderGpu enc = recorder.getEncoder();
+            if (enc != null) {
+                enc.setSegmentListener((closedSegment, newSegment) -> {
+                    if (newSegment != null) {
+                        currentEventFile = newSegment;
+                    }
+                });
+            }
+        } catch (Exception e) {
+            logger.warn("Could not register continuous segment listener: " + e.getMessage());
+        }
+
+        logger.info("Continuous recording started successfully");
+    }
+
+    /**
+     * Stops a continuous-mode recording. Mirrors the close path in
+     * {@link #stopRecording()} but skips the YOLO baseline update, timeline
+     * flush, hero JPEG, and final-segment metadata sidecar — none of which
+     * apply when motion was never analyzed.
+     */
+    private void stopContinuousRecording() {
+        if (recorder == null || !recording) {
+            return;
+        }
+        logger.info("Stopping continuous recording");
+        try {
+            recorder.stopEventRecording(true, 0);
+        } catch (Throwable t) {
+            logger.warn("Continuous recorder stop error: " + t.getMessage());
+        }
+        recording = false;
+        currentEventFile = null;
+    }
+
+    /**
      * Starts recording an event with pre-record support.
      *
      * The encoder is always running and buffering frames. This method
@@ -4135,14 +4564,34 @@ public class SurveillanceEngineGpu {
                     // latency and risks the 2s waitForFinalizers timeout
                     // on multi-segment events.
                     //
-                    // Dispatch the metadata flush to segmentMetadataExecutor
-                    // so the finalizer thread returns immediately. The
-                    // metadata is written in the background, drained by
-                    // the close-path via drainSegmentMetadata().
-                    if (closedSegment != null) {
-                        scheduleSegmentMetadataFlush(closedSegment, lastActors,
-                                timelineCollector.getRecordingStartTimeMs());
+                    // Ordering matters: the engine thread's observe() may
+                    // be writing slots for segment N+1 frames concurrently
+                    // with this listener firing. Drain the buffer's slot
+                    // snapshot AS THE FIRST ACT so we minimize the window
+                    // during which N+1 observations land in the
+                    // closed-segment's snapshot. observe() and
+                    // drainSnapshotForAsync are both synchronized on the
+                    // buffer instance; whichever takes the monitor first
+                    // wins. By draining first here we shrink the window
+                    // proportional to whatever observe() calls were
+                    // already in flight when the listener fired.
+                    //
+                    // After the drain, reset currentEventFile + timeline
+                    // so subsequent observe() / timeline-collect calls
+                    // attribute to N+1.
+                    final java.util.List<ThumbnailBuffer.Slot> closedSnap;
+                    final ThumbnailBuffer buf = thumbnailBuffer;
+                    if (buf != null) {
+                        closedSnap = buf.drainSnapshotForAsync();
+                    } else {
+                        closedSnap = java.util.Collections.emptyList();
                     }
+                    // Capture closed-segment start time BEFORE the timeline
+                    // collector restarts for N+1.
+                    final long closedSegmentStartMs =
+                            timelineCollector.getRecordingStartTimeMs();
+                    final java.util.List<Actor> closedSegmentActors = lastActors;
+
                     // Update currentEventFile + reset timeline INLINE on
                     // the finalizer thread so the next segment's collector
                     // origin is correct from frame 1. This part is cheap
@@ -4150,6 +4599,18 @@ public class SurveillanceEngineGpu {
                     if (newSegment != null) {
                         currentEventFile = newSegment;
                         timelineCollector.startCollectingNoPreRing();
+                    }
+
+                    // Now hand off the closed segment's snapshot to the
+                    // metadata flush. We pre-drained, so the flush method
+                    // must not drain again — pass the snap directly via
+                    // the segment-aware overload.
+                    if (closedSegment != null) {
+                        scheduleSegmentMetadataFlushWithSnapshot(
+                                closedSegment, closedSegmentActors,
+                                closedSegmentStartMs,
+                                closedSnap,
+                                /* syncHero = */ false);
                     }
                 });
             }
@@ -4213,6 +4674,13 @@ public class SurveillanceEngineGpu {
         recorder.stopEventRecording(true, 0);
         recording = false;
         lastRecordingStopTime = System.currentTimeMillis();  // Track when we stopped
+        // Hygiene: clear the trigger-start clock on every stop path so a
+        // stale value can never leak into the next event's hard-ceiling
+        // calculation. Triggers always overwrite this with `now` before
+        // calling startRecording(), so the reset here is belt-and-braces —
+        // protects against future code that might call stopRecording without
+        // a paired trigger reset.
+        recordingTriggerStartMs = 0;
 
         // FIX (B1/H-a): bump the generation counter NOW — before the publish
         // path reads lastActors. Any aiExecutor lambda still in flight will,
@@ -4232,16 +4700,14 @@ public class SurveillanceEngineGpu {
             // Flush metadata for the FINAL segment. Earlier segments were
             // scheduled via the rotation listener and run on
             // segmentMetadataExecutor in the background.
+            //
+            // SOTA split: scheduleSegmentMetadataFlush now writes the hero
+            // synchronously on this thread (so the publish path below sees
+            // a deterministic on-disk hero file) and only schedules the
+            // per-actor JPEGs asynchronously. No drainSegmentMetadata is
+            // needed before publish — the hero is already on disk by the
+            // time flushSegmentMetadata returns.
             flushSegmentMetadata(currentEventFile);
-
-            // Wait for the hero JPEG (and any earlier segments still
-            // queued) to land on disk. The notification path below reads
-            // the hero file directly to attach it to the rich Telegram /
-            // PWA push, so we MUST block until it's there. 2s budget is
-            // ample for one segment's worth of JPEG work; if it times out
-            // we proceed with whatever's on disk (the writeFallbackHeroFromMp4
-            // path below handles a missing hero).
-            drainSegmentMetadata(2_000);
 
             // Two-stage notification: replace the "Recording in progress…"
             // banner that fired at recording start with the rich threat
@@ -4260,8 +4726,16 @@ public class SurveillanceEngineGpu {
             // recorded MP4 so Telegram and the PWA push always have an image
             // to show. Without this, the user gets a text-only "Motion
             // detected" alert with no preview, which looks broken.
+            //
+            // Wrapped in a per-call timeout: MediaMetadataRetriever can
+            // hang indefinitely on a malformed mp4 (truncated moov, corrupt
+            // sample tables — exactly what a SIGKILL boundary or SD-card
+            // unmount mid-write produces). Without the timeout, this path
+            // would block the engine thread forever, wedging stop +
+            // disable + shutdown. Same pattern as sweepOrphanHeroThumbnails
+            // (5s budget, daemon worker, accept thread leak on hang).
             if (!heroSiblingFile.exists()) {
-                writeFallbackHeroFromMp4(currentEventFile, heroSiblingFile);
+                writeFallbackHeroWithTimeout(currentEventFile, heroSiblingFile, 5_000L);
             }
 
             String heroName = heroSiblingFile.exists() ? heroSibling : null;
@@ -4314,9 +4788,57 @@ public class SurveillanceEngineGpu {
      * {@link #stopRecording}'s final-segment flush. The close path drains
      * via {@link #drainSegmentMetadata} before returning.
      */
+    /**
+     * @param syncHero  true when the caller is the publish path
+     *                  ({@link #flushSegmentMetadata} from {@link #stopRecording})
+     *                  and the hero JPEG MUST be on disk before this method
+     *                  returns. false (rotation-listener path) lets the hero
+     *                  go to {@link #segmentMetadataExecutor} so the
+     *                  GpuSegmentFinalizer thread returns immediately.
+     *                  Explicit parameter — previously a volatile flag, but
+     *                  that introduced a cross-thread race where the rotation
+     *                  listener could consume the flag intended for the
+     *                  publish path, sending the publish-segment's hero to
+     *                  the executor and re-introducing the mosaic-fallback
+     *                  symptom under multi-segment events.
+     */
     private void scheduleSegmentMetadataFlush(File segmentMp4,
                                               java.util.List<Actor> actorsAtRotation,
-                                              long segmentStartMs) {
+                                              long segmentStartMs,
+                                              boolean syncHero) {
+        // Drain on caller thread, then delegate. Used ONLY by the publish
+        // path (stopRecording → flushSegmentMetadata). By the time the
+        // publish path runs, recorder.stopEventRecording has already
+        // joined the encoder drainer, so no further frames will trigger
+        // observe() — the buffer is quiescent. Stop-during-rotation: if
+        // a rotation listener fired right before stopRecording, it has
+        // ALREADY drained on its own thread (synchronized) — by the time
+        // we get here, slots map holds whatever observe() landed during
+        // the brief window between listener-release and recorder-stop.
+        // That's the FINAL segment's authentic slot set; not a race loser.
+        java.util.List<ThumbnailBuffer.Slot> snap;
+        ThumbnailBuffer buf = thumbnailBuffer;
+        if (buf != null) {
+            snap = buf.drainSnapshotForAsync();
+        } else {
+            snap = java.util.Collections.emptyList();
+        }
+        scheduleSegmentMetadataFlushWithSnapshot(segmentMp4, actorsAtRotation,
+                segmentStartMs, snap, syncHero);
+    }
+
+    /**
+     * Variant that takes a pre-drained slot snapshot. Used by the
+     * rotation-listener path so the drain happens AS THE FIRST ACT on the
+     * finalizer thread (minimizing the window during which observe() for
+     * segment N+1 can pollute the closed segment's snapshot).
+     */
+    private void scheduleSegmentMetadataFlushWithSnapshot(
+            File segmentMp4,
+            java.util.List<Actor> actorsAtRotation,
+            long segmentStartMs,
+            java.util.List<ThumbnailBuffer.Slot> snap,
+            boolean syncHero) {
         if (segmentMp4 == null) return;
 
         // Renormalize peak times against this segment's window — same logic
@@ -4370,34 +4892,102 @@ public class SurveillanceEngineGpu {
             }
         }
 
-        // Capture the buffer reference so the async task uses what was
-        // current at dispatch time. ThumbnailBuffer.flushToDisk clears the
-        // buffer's internal slots after writing, so this snapshot wins
-        // over a subsequent rotation's clear.
-        final ThumbnailBuffer bufferAtDispatch = thumbnailBuffer;
-
-        // Hand off the slow JPEG compress to the dedicated background
-        // executor. The finalizer thread returns immediately.
-        inFlightSegmentMetadata.incrementAndGet();
-        segmentMetadataExecutor.execute(() -> {
-            try {
-                if (bufferAtDispatch != null) {
+        // SOTA split: hero is load-bearing (publish notification reads it
+        // directly), per-actor JPEGs are decorative (only the events page
+        // consumes them). Doing both in the same async task forced the
+        // notification path to block on drainSegmentMetadata(2s) waiting for
+        // ALL JPEGs to finish — under multi-actor events the drain timed
+        // out, the fallback (mp4 keyframe = 2×2 mosaic) fired, the
+        // notification went out with the wrong image, and only later did
+        // the proper YOLO hero overwrite the file. Result: users saw the
+        // mosaic in PWA / Telegram pushes despite a valid YOLO hero
+        // existing on disk seconds afterwards.
+        //
+        // The snapshot was already drained by the caller (this is the
+        // {@code WithSnapshot} variant). Ordering:
+        //   1. If syncHero=true (publish path), write the hero inline.
+        //      Otherwise (rotation listener) schedule it on the executor
+        //      so the finalizer thread returns immediately.
+        //   2. Per-actor JPEGs always go to the executor.
+        ThumbnailBuffer bufferAtDispatch = thumbnailBuffer;
+        if (bufferAtDispatch != null && snap != null) {
+            // Step 2: hero. Whether sync or async depends on the explicit
+            // syncHero parameter. The publish path passes true; the
+            // rotation listener passes false. Per-call argument means
+            // concurrent rotation+stop callers can't steal each other's
+            // signal — the previous volatile flag had exactly that race.
+            if (syncHero) {
+                File heroFile;
+                try {
+                    heroFile = bufferAtDispatch.writeHeroFromSnapshot(snap, segmentMp4);
+                } catch (Throwable t) {
+                    logger.warn("Hero thumbnail sync write failed for "
+                            + segmentMp4.getName() + ": " + t.getMessage());
+                    heroFile = null;
+                }
+                if (heroFile != null) {
+                    logger.info("Hero thumbnail (" + segmentMp4.getName() + "): "
+                            + heroFile.getName());
+                }
+            } else if (!snap.isEmpty()) {
+                // Async hero path (rotation listener — no publish blocking
+                // on this segment). Schedule on the executor so we return
+                // off the GpuSegmentFinalizer-N thread fast.
+                inFlightSegmentMetadata.incrementAndGet();
+                final ThumbnailBuffer bufFinal = bufferAtDispatch;
+                segmentMetadataExecutor.execute(() -> {
                     try {
-                        File heroFile = bufferAtDispatch.flushToDisk(segmentMp4, relMap);
+                        File heroFile = bufFinal.writeHeroFromSnapshot(snap, segmentMp4);
                         if (heroFile != null) {
-                            logger.info("Hero thumbnail (" + segmentMp4.getName() + "): " + heroFile.getName());
+                            logger.info("Hero thumbnail (" + segmentMp4.getName() + "): "
+                                    + heroFile.getName());
                         }
-                    } catch (Exception e) {
-                        logger.warn("Thumbnail flush failed for " + segmentMp4.getName() + ": " + e.getMessage());
+                    } catch (Throwable t) {
+                        logger.warn("Hero thumbnail async write failed for "
+                                + segmentMp4.getName() + ": " + t.getMessage());
+                    } finally {
+                        inFlightSegmentMetadata.decrementAndGet();
+                        synchronized (segmentMetadataDrainLock) {
+                            segmentMetadataDrainLock.notifyAll();
+                        }
                     }
-                }
-            } finally {
-                inFlightSegmentMetadata.decrementAndGet();
-                synchronized (segmentMetadataDrainLock) {
-                    segmentMetadataDrainLock.notifyAll();
-                }
+                });
             }
-        });
+
+            // Step 3: per-actor JPEGs always async.
+            if (!snap.isEmpty()) {
+                inFlightSegmentMetadata.incrementAndGet();
+                final ThumbnailBuffer bufFinal = bufferAtDispatch;
+                segmentMetadataExecutor.execute(() -> {
+                    try {
+                        File parent = segmentMp4.getParentFile();
+                        if (parent != null) {
+                            String tmpBase = segmentMp4.getName();
+                            if (tmpBase.endsWith(".mp4")) {
+                                tmpBase = tmpBase.substring(0, tmpBase.length() - 4);
+                            }
+                            for (ThumbnailBuffer.Slot s : snap) {
+                                try {
+                                    Long relBoxed = relMap.get(s.actorId);
+                                    long rel = relBoxed != null ? relBoxed : -1L;
+                                    String jpegName = "thumb_" + tmpBase + "_a" + s.actorId
+                                            + (rel >= 0 ? ("_" + rel) : "") + ".jpg";
+                                    File jpeg = new File(parent, jpegName);
+                                    bufFinal.writePerActorJpeg(s, jpeg);
+                                } catch (Exception e) {
+                                    logger.warn("Per-actor thumb write failed: " + e.getMessage());
+                                }
+                            }
+                        }
+                    } finally {
+                        inFlightSegmentMetadata.decrementAndGet();
+                        synchronized (segmentMetadataDrainLock) {
+                            segmentMetadataDrainLock.notifyAll();
+                        }
+                    }
+                });
+            }
+        }
 
         // The JSON+SRT sidecar's stopAndWrite ALREADY routes file I/O
         // through its own writeExecutor — cheap to call inline here.
@@ -4441,19 +5031,23 @@ public class SurveillanceEngineGpu {
     }
 
     /**
-     * Convenience wrapper for the FINAL-segment flush in {@link #stopRecording}.
-     * Snapshots {@code lastActors} + the timeline collector's current start
-     * time, then delegates to {@link #scheduleSegmentMetadataFlush}.
-     *
-     * <p>The async dispatch is the same as the rotation-listener path. The
-     * difference is that {@link #stopRecording} calls {@link #drainSegmentMetadata}
-     * after this so the user-facing notification path can read the hero
-     * file off disk.
+     * FINAL-segment flush in {@link #stopRecording}. Snapshots
+     * {@code lastActors} + the timeline collector's current start time, then
+     * delegates to {@link #scheduleSegmentMetadataFlush} with
+     * {@code syncHero=true} so the hero JPEG is written inline on this
+     * thread — the publish path immediately after needs the file on disk
+     * before sending notifications. The rotation-listener path passes
+     * {@code syncHero=false}; rotated segments' heroes go to the
+     * background executor so the GpuSegmentFinalizer-N thread returns fast.
      */
     private void flushSegmentMetadata(File segmentMp4) {
         if (segmentMp4 == null) return;
+        // Publish path: hero MUST be on disk before stopRecording proceeds
+        // to publishMotionFinal / sendFinalTelegramNotification, so write
+        // it inline on this thread.
         scheduleSegmentMetadataFlush(segmentMp4, lastActors,
-                timelineCollector.getRecordingStartTimeMs());
+                timelineCollector.getRecordingStartTimeMs(),
+                /* syncHero = */ true);
     }
     
     /**
@@ -4467,17 +5061,44 @@ public class SurveillanceEngineGpu {
             logger.warn(">>> Surveillance enable REJECTED at engine level — ACC is ON");
             return;
         }
-        
+
+        // Latch ACC-OFF mode from unified config. forceReload because the
+        // setter writes go through the app process; the daemon's UCM cache
+        // would otherwise see a stale value on the first enable() after a
+        // user toggle.
+        try {
+            org.json.JSONObject surv = com.overdrive.app.config.UnifiedConfigManager
+                    .forceReload().optJSONObject("surveillance");
+            String mode = (surv != null) ? surv.optString("accOffMode", "smart") : "smart";
+            continuousMode = "continuous".equals(mode);
+        } catch (Throwable t) {
+            continuousMode = false;
+        }
+
+        if (continuousMode) {
+            // Plain rolling 4-cam recording: skip motion + YOLO + baseline
+            // entirely. NativeMotion is not required, so don't gate on it.
+            logger.info("Enabling surveillance engine (CONTINUOUS — no motion, no AI)");
+            active = true;
+            try {
+                com.overdrive.app.storage.StorageManager.getInstance().setSurveillanceActive(true);
+            } catch (Exception e) {
+                logger.warn("Could not set surveillance active state: " + e.getMessage());
+            }
+            startContinuousRecording();
+            return;
+        }
+
         // Check if native library is loaded
         if (!NativeMotion.isLibraryLoaded()) {
-            logger.error(">>> Cannot enable surveillance: NativeMotion library not loaded! Error: " + 
+            logger.error(">>> Cannot enable surveillance: NativeMotion library not loaded! Error: " +
                 NativeMotion.getLoadError());
             return;
         }
-        
-        logger.info("Enabling surveillance engine (pipelineV2=" + (pipelineV2 != null) + 
+
+        logger.info("Enabling surveillance engine (pipelineV2=" + (pipelineV2 != null) +
             ", pipelineV2init=" + (pipelineV2 != null && pipelineV2.isInitialized()) + ")");
-        
+
         active = true;
         frameCount = 0;
         motionDetections = 0;
@@ -4601,6 +5222,27 @@ public class SurveillanceEngineGpu {
      * Disables surveillance (stops monitoring).
      */
     public void disable() {
+        if (continuousMode) {
+            // Continuous-mode disable: no motion / YOLO state to drain and
+            // no event-end baseline update to run. Just stop the recorder
+            // and flip flags. continuousMode itself stays true so a stale
+            // late-arriving processFrame still no-ops via active=false.
+            if (recording) {
+                stopContinuousRecording();
+            }
+            active = false;
+            inActiveMode = false;
+            try {
+                com.overdrive.app.storage.StorageManager.getInstance().setSurveillanceActive(false);
+            } catch (Exception e) {
+                logger.warn("Could not set surveillance inactive state: " + e.getMessage());
+            }
+            // Clear the latch so the next enable() reads the latest config
+            // (user may have toggled back to smart while ACC was on).
+            continuousMode = false;
+            logger.info("Surveillance disabled (continuous)");
+            return;
+        }
         if (recording) {
             stopRecording();
         }
@@ -4952,19 +5594,23 @@ public class SurveillanceEngineGpu {
     
     /**
      * Gets the latest cached mosaic frame (640×480 RGB) for snapshot API.
-     * Returns null if no frame has been cached yet.
+     * Returns null if no frame has been cached yet. Records the poll
+     * timestamp so processFrame keeps refreshing while clients are active.
      */
     public byte[] getLatestMosaicFrame() {
+        lastSnapshotPollMs = System.currentTimeMillis();
         return latestMosaicFrame;
     }
 
     /**
      * Latest JPEG-encoded mosaic snapshot (Option C side-output). Refreshed
      * every {@link #MOSAIC_JPEG_FRAME_MODULO} frames on the surveillance
-     * worker thread; readers pay one volatile read. Null until the first
-     * encode lands or when surveillance hasn't started yet.
+     * worker thread WHILE clients are polling; idle-skipped otherwise.
+     * Readers pay one volatile read + one volatile write (poll timestamp).
+     * Null until the first encode lands or when surveillance hasn't started.
      */
     public byte[] getLatestMosaicJpeg() {
+        lastSnapshotPollMs = System.currentTimeMillis();
         return latestMosaicJpeg;
     }
 

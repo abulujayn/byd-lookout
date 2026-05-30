@@ -73,6 +73,22 @@ public class GpuMosaicRecorder {
     private final Object recordingLock = new Object();
     private volatile boolean apaMode = false;  // APA mode: passthrough instead of mosaic split
     private volatile int cameraLayout = 0;  // 0=4-cam, 1=APA passthrough, 2=3-cam
+    // Set when setCameraLayout flips on a non-GL thread; consumed inside
+    // drawFrame on the encoder GL thread to push the new uniform exactly
+    // once. Per GLES2 spec, uniform values are part of the program object,
+    // so a write outside drawFrame would be lost (we don't own the GL
+    // context elsewhere). The previous code wrote glUniform1f every frame
+    // — ~30 driver-side state-dirty calls per second on Adreno 610 for a
+    // value that changes maybe twice a session.
+    //
+    // AtomicBoolean (not volatile boolean) because the consumer uses
+    // getAndSet(false): a setCameraLayout that races between the consumer's
+    // glUniform1f and its dirty-clear would otherwise be lost (volatile
+    // pair has no read-modify-write atomicity), pinning the shader to a
+    // stale layout forever. Also reset to true in init() so an EGL
+    // reinit's fresh programId picks up the layout on first drawFrame.
+    private final java.util.concurrent.atomic.AtomicBoolean apaModeUniformDirty =
+        new java.util.concurrent.atomic.AtomicBoolean(true);
     private long lastFrameTime = 0;
     private long frameCount = 0;
     
@@ -390,7 +406,19 @@ public class GpuMosaicRecorder {
             overlayTextureInitialized = false;
         }
         
-        logger.info("GpuMosaicRecorder initialized (encoder codec=" + 
+        // Set GL clear color once. GL context state, persists across
+        // drawFrame calls; the encoder EGL context is exclusive to this
+        // recorder. Saves ~one glClearColor call per frame (~30/sec at
+        // 30 fps) on the encoder GL thread.
+        GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+
+        // The shader program is fresh; its uApaMode uniform defaults to 0.0f.
+        // Force the next drawFrame to re-publish the current cameraLayout so
+        // an EGL recovery (release → init) doesn't pin the new programId at
+        // layout 0 when the field-level cameraLayout != 0.
+        apaModeUniformDirty.set(true);
+
+        logger.info("GpuMosaicRecorder initialized (encoder codec=" +
             (encoder.isHevcCodec() ? "H.265" : "H.264") + ")");
     }
     
@@ -467,8 +495,9 @@ public class GpuMosaicRecorder {
         // Set viewport to encoder resolution (profile-driven: Seal=2560x1920, Tang=2560x1440)
         GLES20.glViewport(0, 0, viewportWidth, viewportHeight);
 
-        // Clear
-        GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        // Clear. glClearColor was hoisted to init() — it's GL context state
+        // that persists; the encoder's EGL context is exclusive to this
+        // recorder so no other code path can change it under us.
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         long tAfterClearNs = System.nanoTime();
 
@@ -479,7 +508,19 @@ public class GpuMosaicRecorder {
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, cameraTextureId);
         GLES20.glUniform1i(uCameraTexLocation, 0);
-        GLES20.glUniform1f(uApaModeLocation, (float) cameraLayout);
+        // uApaMode uniform: rewrite only on layout change. Per GLES2 spec
+        // uniform values are part of the program object and persist across
+        // glUseProgram of the same program. setCameraLayout sets the dirty
+        // flag from another thread; we consume it here on the GL thread.
+        // Atomic claim of the dirty bit. If a setCameraLayout races between
+        // the load and the uniform write, getAndSet(false) ensures the
+        // racing setter's dirty=true survives (the racer sets it AFTER our
+        // getAndSet returned true, so the next drawFrame will replay).
+        // Read cameraLayout AFTER the claim so we see the latest value the
+        // racer published before flipping the dirty bit.
+        if (apaModeUniformDirty.compareAndSet(true, false)) {
+            GLES20.glUniform1f(uApaModeLocation, (float) cameraLayout);
+        }
 
         // Set up vertex attributes
         GLES20.glEnableVertexAttribArray(aPositionLocation);
@@ -899,6 +940,9 @@ public class GpuMosaicRecorder {
     public void setCameraLayout(int layout) {
         this.apaMode = (layout == 1);
         this.cameraLayout = layout;
+        // Defer the actual glUniform1f to the next drawFrame on the
+        // encoder GL thread; we don't own that context here.
+        this.apaModeUniformDirty.set(true);
         String[] names = {"4-camera mosaic", "APA passthrough", "3-camera mosaic"};
         logger.info("Camera layout: " + (layout < names.length ? names[layout] : "unknown(" + layout + ")"));
     }

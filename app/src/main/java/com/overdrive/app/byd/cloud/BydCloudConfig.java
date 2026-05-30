@@ -2,6 +2,7 @@ package com.overdrive.app.byd.cloud;
 
 import com.overdrive.app.byd.cloud.crypto.CredentialCipher;
 import com.overdrive.app.config.UnifiedConfigManager;
+import com.overdrive.app.logging.DaemonLogger;
 
 import org.json.JSONObject;
 
@@ -10,6 +11,8 @@ import org.json.JSONObject;
  * Reads credentials from the bydCloud section of UnifiedConfigManager.
  */
 public final class BydCloudConfig {
+
+    private static final DaemonLogger logger = DaemonLogger.getInstance("BydCloudConfig");
 
     private static final String BASE_URL_PREFIX = "https://dilinkappoversea-";
     private static final String BASE_URL_SUFFIX = ".byd.auto";
@@ -44,11 +47,16 @@ public final class BydCloudConfig {
         this.vin = vin;
         String normalizedRegion = BydCloudRegionCatalog.normalizeRegion(region);
         String normalizedCountryCode = BydCloudRegionCatalog.normalizeCountryCode(countryCode);
+        if (!normalizedCountryCode.isEmpty()
+                && !BydCloudRegionCatalog.isSupportedCountryCode(normalizedCountryCode)) {
+            logger.warn("Unsupported BYD countryCode=" + normalizedCountryCode
+                    + "; falling back to default for region=" + normalizedRegion);
+        }
         this.countryCode = BydCloudRegionCatalog.isSupportedCountryCode(normalizedCountryCode)
                 ? normalizedCountryCode
                 : BydCloudRegionCatalog.defaultCountryForRegion(normalizedRegion);
-        this.language = (language != null && !language.isEmpty())
-                ? language
+        this.language = (language != null && !language.trim().isEmpty())
+                ? language.trim()
                 : BydCloudRegionCatalog.languageForCountryCode(this.countryCode);
         this.region = BydCloudRegionCatalog.regionForCountryCode(this.countryCode);
         this.cloudDataMerge = cloudDataMerge;
@@ -131,7 +139,9 @@ public final class BydCloudConfig {
     }
 
     public String getBaseUrl() {
-        return BASE_URL_PREFIX + BydCloudRegionCatalog.normalizeRegion(region) + BASE_URL_SUFFIX;
+        // `region` is already normalized at construction time, so no extra
+        // normalize() needed here.
+        return BASE_URL_PREFIX + region + BASE_URL_SUFFIX;
     }
 
     public String getUserAgent() {
@@ -171,8 +181,8 @@ public final class BydCloudConfig {
             }
             String normalizedRegion = BydCloudRegionCatalog.regionForCountryCode(normalizedCountryCode);
             bydCloud.put("countryCode", normalizedCountryCode);
-            bydCloud.put("language", (language != null && !language.isEmpty())
-                    ? language
+            bydCloud.put("language", (language != null && !language.trim().isEmpty())
+                    ? language.trim()
                     : BydCloudRegionCatalog.languageForCountryCode(normalizedCountryCode));
             bydCloud.put("region", normalizedRegion);
             bydCloud.put("cloudDataMerge", cloudDataMerge);

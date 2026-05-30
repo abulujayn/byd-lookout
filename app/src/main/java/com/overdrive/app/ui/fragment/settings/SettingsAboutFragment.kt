@@ -74,16 +74,26 @@ class SettingsAboutFragment : Fragment() {
         versionView.text = AppUpdater.getDisplayVersion(requireContext())
         view.findViewById<TextView>(R.id.tvAboutBuild).text = BuildConfig.APPLICATION_ID
 
-        AppUpdater(requireContext()).fetchLatestReleaseVersion(
+        // Capture the AppUpdater so we can close() it after the async
+        // fetch completes — without close(), each fragment open allocates
+        // a fresh AppUpdater that strands its lazy AdbDaemonLauncher's
+        // executor + tunnel-poll scheduler for the life of the process.
+        val versionUpdater = AppUpdater(requireContext())
+        versionUpdater.fetchLatestReleaseVersion(
             object : AppUpdater.RemoteVersionCallback {
                 override fun onResult(version: String) {
-                    if (!isAdded) return
-                    if (version.isNotBlank()) {
-                        versionView.text = version
+                    try {
+                        if (!isAdded) return
+                        if (version.isNotBlank()) {
+                            versionView.text = version
+                        }
+                    } finally {
+                        versionUpdater.close()
                     }
                 }
                 override fun onError(error: String?) {
                     // Silent — the local fallback is already visible.
+                    versionUpdater.close()
                 }
             }
         )

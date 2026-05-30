@@ -22,6 +22,7 @@
     <string name="cd_expand_collapse">Uitbreiding/kollaps</string>
     <string name="cd_recording_status">Opnamestatus</string>
     <string name="cd_trip_tracking_status">Status van het volgen van reizen</string>
+    <string name="cd_mic_status">Microphone-opname status</string>
     <string name="cd_video_thumbnail">Miniatuur van de video\'s</string>
     <string name="cd_play">Afspelen</string>
     <string name="cd_back">Terug</string>
@@ -30,6 +31,7 @@
     <string name="cd_player_next">Volgende opname</string>
     <string name="cd_player_maximize">Maximale speler</string>
     <string name="cd_player_minimize">Uitgang fullscreen</string>
+    <string name="cd_player_mute">Tooggeluidingsgeluid</string>
     <string name="cd_delete">Verwijderen</string>
     <string name="cd_expand">Uitbreiden</string>
     <string name="cd_configure">Configuratie</string>
@@ -40,6 +42,7 @@
     <string name="cd_permission_granted">Toestemming verleend</string>
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">TRIP</string>
+    <string name="overlay_mic_inactive_label">MIC</string>
     <string name="log_entry_default_timestamp">- Ik heb geen idee.</string>
     <string name="log_entry_default_tag">Ik heb het niet gedaan.</string>
     <string name="log_entry_default_message">Log bericht hier</string>
@@ -333,6 +336,7 @@
     <string name="toast_fetching_log">%1$s log halen...</string>
     <string name="toast_log_empty_or_missing">Logbestand is leeg of niet gevonden</string>
     <string name="toast_log_empty">Logbestand is leeg</string>
+    <string name="toast_daemon_manager_unavailable">Daemon manager niet klaar, probeer het nog eens in een moment</string>
     <string name="toast_log_save_failed">Het log niet opgeslagen: %1$s</string>
     <string name="toast_log_not_found">Logbestand niet gevonden of onleesbaar</string>
     <string name="log_share_title">%1$s Log - %2$s</string>
@@ -350,6 +354,12 @@
     <string name="play_with_chooser">Speel met</string>
     <string name="setup_version_banner">Updated to v%1$s  herbevestigen autostart, BYD verwijdert het bij elke installatie</string>
     <string name="setup_overlay_already_granted">Al toegekend</string>
+    <string name="setup_tips_header">Tips &amp; probleemoplossing</string>
+    <string name="setup_traffic_title">BYD Traffic Monitor uitschakelen</string>
+    <string name="setup_traffic_body">De BYD Traffic Monitor blokkeert dat apps van derden internet bereiken. Het uitschakelen ervan stelt OverDrive en alle andere apps die u installeert in staat het netwerk daadwerkelijk te gebruiken.</string>
+    <string name="setup_traffic_button">Open verkeersmonitor</string>
+    <string name="setup_camera_fix_title">Is de camera zwart of onjuist?</string>
+    <string name="setup_camera_fix_body">Open Diagnostics → Camera probe, stel Camera ID op 0, tik op Save, en start dan de camera daemon opnieuw. Als de feeds nog steeds verkeerd zijn, herhaal met Camera ID 1. Laat het mapping-gedeelte ongerept.</string>
     <string name="camera_current_manual">Stroom: camera %1$d (handleiding)</string>
     <string name="camera_current_auto_label">Stroom: Auto</string>
     <string name="soh_estimation_active">Schatting actief</string>

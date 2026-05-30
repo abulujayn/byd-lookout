@@ -65,7 +65,23 @@ public class RecordingsApiHandler {
     private static final Pattern CAM_PATTERN = Pattern.compile("cam(\\d+)?_(\\d{8})_(\\d{6})(?:_\\d+)?\\.mp4");
     private static final Pattern EVENT_PATTERN = Pattern.compile("event_(\\d{8})_(\\d{6})(?:_\\d+)?\\.mp4");
     private static final Pattern PROXIMITY_PATTERN = Pattern.compile("proximity_(\\d{8})_(\\d{6})(?:_\\d+)?\\.mp4");
-    private static final SimpleDateFormat DATE_FORMAT = new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US);
+    // SimpleDateFormat is not thread-safe; HTTP server worker threads may
+    // invoke parseRecordingUncached concurrently (one fetch per dashboard
+    // tab, recording-write events, etc.). All formatters live in ThreadLocal
+    // — one set per worker thread, reused for the worker's lifetime. The
+    // pre-existing static DATE_FORMAT was a latent race that could return
+    // wrong timestamps or throw NumberFormatException under concurrent
+    // parses; consolidating here closes that gap too.
+    private static final ThreadLocal<SimpleDateFormat> FMT_FILENAME =
+        ThreadLocal.withInitial(() -> new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US));
+    private static final ThreadLocal<SimpleDateFormat> FMT_DATE_ISO =
+        ThreadLocal.withInitial(() -> new SimpleDateFormat("yyyy-MM-dd", Locale.US));
+    private static final ThreadLocal<SimpleDateFormat> FMT_TIME_ISO =
+        ThreadLocal.withInitial(() -> new SimpleDateFormat("HH:mm:ss", Locale.US));
+    private static final ThreadLocal<SimpleDateFormat> FMT_DATE_DISPLAY =
+        ThreadLocal.withInitial(() -> new SimpleDateFormat("MMM dd, yyyy", Locale.US));
+    private static final ThreadLocal<SimpleDateFormat> FMT_TIME_DISPLAY =
+        ThreadLocal.withInitial(() -> new SimpleDateFormat("h:mm a", Locale.US));
 
     // Per-recording cache keyed by absolute mp4 path. Validated against
     // (mp4 length + mp4 mtime + sidecar mtime); any change invalidates.
@@ -776,19 +792,19 @@ public class RecordingsApiHandler {
                 Matcher m = EVENT_PATTERN.matcher(name);
                 if (!m.matches()) return null;
                 String dateStr = m.group(1) + "_" + m.group(2);
-                timestamp = DATE_FORMAT.parse(dateStr).getTime();
+                timestamp = FMT_FILENAME.get().parse(dateStr).getTime();
             } else if (type.equals("proximity")) {
                 Matcher m = PROXIMITY_PATTERN.matcher(name);
                 if (!m.matches()) return null;
                 String dateStr = m.group(1) + "_" + m.group(2);
-                timestamp = DATE_FORMAT.parse(dateStr).getTime();
+                timestamp = FMT_FILENAME.get().parse(dateStr).getTime();
             } else {
                 Matcher m = CAM_PATTERN.matcher(name);
                 if (!m.matches()) return null;
                 String camStr = m.group(1);
                 cameraId = camStr != null ? Integer.parseInt(camStr) : 0;
                 String dateStr = m.group(2) + "_" + m.group(3);
-                timestamp = DATE_FORMAT.parse(dateStr).getTime();
+                timestamp = FMT_FILENAME.get().parse(dateStr).getTime();
             }
             
             JSONObject rec = new JSONObject();
@@ -802,10 +818,10 @@ public class RecordingsApiHandler {
             
             // Format date/time for display
             Date date = new Date(timestamp);
-            rec.put("date", new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(date));
-            rec.put("time", new SimpleDateFormat("HH:mm:ss", Locale.US).format(date));
-            rec.put("dateFormatted", new SimpleDateFormat("MMM dd, yyyy", Locale.US).format(date));
-            rec.put("timeFormatted", new SimpleDateFormat("h:mm a", Locale.US).format(date));
+            rec.put("date", FMT_DATE_ISO.get().format(date));
+            rec.put("time", FMT_TIME_ISO.get().format(date));
+            rec.put("dateFormatted", FMT_DATE_DISPLAY.get().format(date));
+            rec.put("timeFormatted", FMT_TIME_DISPLAY.get().format(date));
             
             // Video URL for playback
             rec.put("videoUrl", "/video/" + name);

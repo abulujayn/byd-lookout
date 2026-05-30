@@ -33,21 +33,25 @@ class SingboxController(
     
     override fun stop(callback: DaemonCallback) {
         callback.onStatusChanged(DaemonStatus.STOPPING, "Stopping sing-box proxy...")
-        
-        adbLauncher.executeShellCommand(
-            "killall -9 sing-box 2>/dev/null; echo done",
-            object : AdbDaemonLauncher.LaunchCallback {
-                override fun onLog(message: String) {}
-                override fun onLaunched() {
-                    restoreProxySettings()
-                    callback.onStatusChanged(DaemonStatus.STOPPED, "Sing-box proxy stopped")
-                }
-                override fun onError(error: String) {
-                    restoreProxySettings()
-                    callback.onStatusChanged(DaemonStatus.STOPPED, "Sing-box proxy stopped")
-                }
+
+        // Kill BOTH sing-box AND its GlobalProxyDaemon parent (`sentry_proxy`).
+        // start() invokes adbLauncher.launchProxyDaemon → spawns
+        // GlobalProxyDaemon under --nice-name=sentry_proxy, which in turn
+        // launches sing-box. The previous code only killed sing-box; the
+        // sentry_proxy parent stayed alive holding a wakelock + writing
+        // a log line every 60 s indefinitely. Use stopProxyDaemon which
+        // already routes through executeScript (tmpfile, no self-match)
+        // and clears the global http_proxy settings as part of its
+        // body — so we don't also need restoreProxySettings here.
+        adbLauncher.stopSentryProxy(object : AdbDaemonLauncher.LaunchCallback {
+            override fun onLog(message: String) {}
+            override fun onLaunched() {
+                callback.onStatusChanged(DaemonStatus.STOPPED, "Sing-box proxy stopped")
             }
-        )
+            override fun onError(error: String) {
+                callback.onStatusChanged(DaemonStatus.STOPPED, "Sing-box proxy stopped")
+            }
+        })
     }
     
     override fun isRunning(callback: (Boolean) -> Unit) {
@@ -66,26 +70,16 @@ class SingboxController(
     }
     
     override fun cleanup() {
-        adbLauncher.executeShellCommand(
-            "killall -9 sing-box 2>/dev/null; echo done",
-            object : AdbDaemonLauncher.LaunchCallback {
-                override fun onLog(message: String) {}
-                override fun onLaunched() {}
-                override fun onError(error: String) {}
-            }
-        )
-        restoreProxySettings()
+        // Same pattern as stop() — kill both sing-box and its sentry_proxy
+        // parent so we don't leak a zombie wrapper.
+        adbLauncher.stopSentryProxy(object : AdbDaemonLauncher.LaunchCallback {
+            override fun onLog(message: String) {}
+            override fun onLaunched() {}
+            override fun onError(error: String) {}
+        })
     }
     
-    private fun restoreProxySettings() {
-        // Clear any system proxy settings that might have been set
-        adbLauncher.executeShellCommand(
-            "settings put global http_proxy :0 2>/dev/null || true",
-            object : AdbDaemonLauncher.LaunchCallback {
-                override fun onLog(message: String) {}
-                override fun onLaunched() {}
-                override fun onError(error: String) {}
-            }
-        )
-    }
+    // restoreProxySettings() removed — stopSentryProxy already clears
+    // global_http_proxy_host/port/exclusion_list in its tmpfile script,
+    // which is correct for the GlobalProxyDaemon-managed flow.
 }

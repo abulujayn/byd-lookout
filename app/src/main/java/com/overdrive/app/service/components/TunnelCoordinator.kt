@@ -112,9 +112,14 @@ class TunnelCoordinator(private val context: Context) {
     }
     
     /**
-     * Close resources.
+     * Close resources. Releases this coordinator's per-instance executor +
+     * tunnel-poll scheduler WITHOUT touching the process-wide shared Dadb —
+     * other AdbDaemonLauncher instances (DaemonStartupManager, ViewModel,
+     * AppUpdater) keep using it. Calling closePersistentConnection here
+     * would null the shared Dadb mid-flight and surface as spurious
+     * onError on those launchers' in-flight tasks.
      */
     fun close() {
-        adbLauncher.closePersistentConnection()
+        adbLauncher.releasePerInstanceResources()
     }
 }

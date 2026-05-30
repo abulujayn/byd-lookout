@@ -70,10 +70,13 @@ public class StatusOverlayService extends Service {
     // Views
     private LinearLayout recContainer;
     private LinearLayout tripContainer;
+    private LinearLayout micContainer;
     private ImageView ivRecIcon;
     private ImageView ivTripIcon;
+    private ImageView ivMicIcon;
     private TextView tvRecLabel;
     private TextView tvTripLabel;
+    private TextView tvMicLabel;
 
     // State
     private volatile String configuredMode = "NONE";
@@ -83,6 +86,35 @@ public class StatusOverlayService extends Service {
     private volatile boolean daemonReachable = false;
     private volatile String currentGear = "P";
     private volatile boolean accOn = false;
+    // User-controlled audio toggle (recording.audioEnabled in unified config)
+    private volatile boolean audioEnabledConfig = false;
+    // The capture controller. Touched from the polling executor (reconcile)
+    // and from the main thread (onDestroy) — must be volatile so the destroy
+    // path observes any in-flight assignment from the executor.
+    //
+    // Note on idempotency: AppAudioCaptureController.stop() is synchronized
+    // and short-circuits when not running, so the onDestroy stop() and any
+    // racing reconcile stop() are safe to call independently. start() and
+    // stop() are both synchronized on the controller so they serialize.
+    private volatile com.overdrive.app.audio.AppAudioCaptureController audioController;
+
+    // Edge-trigger fast-poll: when ACC flips OFF→ON, run the poll loop at 1s
+    // for 30s so we minimize the audio-capture-start latency at trip start.
+    // Without this, ACC turning on can take up to POLL_INTERVAL_ACC_OFF_MS
+    // (10s) to detect, and a single mic-claim retry then adds another 5s of
+    // back-off — together that's a 13s gap of silent audio at the very
+    // moment the user begins driving.
+    private volatile boolean previousAccOn = false;
+    private volatile long fastPollUntilElapsedMs = 0;
+    private static final long FAST_POLL_INTERVAL_MS = 1000;
+    private static final long FAST_POLL_WINDOW_MS = 30_000;
+
+    // Track the last AppAudioCaptureController.start() that returned false so
+    // the MIC pill can paint RED with a "mic claimed / unavailable" hint.
+    // start() back-off lasts ~5s; we hold the hint for up to 30s so the user
+    // sees an explanation rather than a silent failure.
+    private volatile long lastAudioStartFailureMs = 0;
+    private static final long AUDIO_FAILURE_HINT_WINDOW_MS = 30_000;
 
     // Grace period: don't flicker the overlay on transient poll failures.
     // The daemon may be restarting, the HTTP server may be briefly busy, etc.
@@ -181,9 +213,30 @@ public class StatusOverlayService extends Service {
 
     @Override
     public void onDestroy() {
+        // Order matters here:
+        //  1. Flip running BEFORE we touch the executor or the controller.
+        //     Any in-flight reconcile that's already on the executor reads
+        //     running.get() (well, indirectly — its outer pollStatus did);
+        //     more importantly, the next reschedule sees false and stops.
+        //  2. Cancel any pending Handler callbacks so we don't enqueue
+        //     another pollStatus after we've torn down.
+        //  3. shutdownNow() interrupts the executor — but the executor may
+        //     be MID-RECONCILE on the audio controller. AppAudioCaptureController
+        //     is independently synchronized, and our onDestroy stop() below
+        //     races with reconcile's stop() through that lock; whichever
+        //     loses the race gets the early-return path inside stop().
+        //  4. Stop the controller from the main thread. We can't ship this
+        //     work to the executor because shutdownNow() drained it.
+        //     stop() is documented (in AppAudioCaptureController) as fast —
+        //     thread joins use a bounded wait inside cleanup().
         running.set(false);
         handler.removeCallbacksAndMessages(null);
         executor.shutdownNow();
+        com.overdrive.app.audio.AppAudioCaptureController ctrl = audioController;
+        audioController = null;
+        if (ctrl != null) {
+            try { ctrl.stop(); } catch (Exception ignored) {}
+        }
         removeOverlay();
         super.onDestroy();
     }
@@ -342,10 +395,13 @@ public class StatusOverlayService extends Service {
     private void bindViews() {
         recContainer = overlayView.findViewById(R.id.recContainer);
         tripContainer = overlayView.findViewById(R.id.tripContainer);
+        micContainer = overlayView.findViewById(R.id.micContainer);
         ivRecIcon = overlayView.findViewById(R.id.ivRecIcon);
         ivTripIcon = overlayView.findViewById(R.id.ivTripIcon);
+        ivMicIcon = overlayView.findViewById(R.id.ivMicIcon);
         tvRecLabel = overlayView.findViewById(R.id.tvRecLabel);
         tvTripLabel = overlayView.findViewById(R.id.tvTripLabel);
+        tvMicLabel = overlayView.findViewById(R.id.tvMicLabel);
 
         // Tap on recording item → restart recording if it should be running but isn't
         recContainer.setOnClickListener(v -> {
@@ -431,12 +487,30 @@ public class StatusOverlayService extends Service {
                     }
                     // else: keep daemonReachable as-is (grace period)
                 }
+                // Detect ACC OFF→ON edge AFTER parseStatus() — it's the most
+                // recent point at which we trust accOn. Arm fast-poll for 30s
+                // so the audio controller restart (if it back-offs after a
+                // mic claim) and the daemon's first-segment kickoff happen
+                // within ~1s rather than ~10s of the user turning the key.
+                boolean prevAcc = previousAccOn;
+                previousAccOn = accOn;
+                if (accOn && !prevAcc) {
+                    fastPollUntilElapsedMs =
+                        android.os.SystemClock.elapsedRealtime() + FAST_POLL_WINDOW_MS;
+                    Log.i(TAG, "ACC OFF→ON edge — fast-polling for "
+                            + FAST_POLL_WINDOW_MS + "ms");
+                }
+                refreshAudioConfig();
+                reconcileAudioCapture();
                 handler.post(this::updateUI);
             } catch (Exception e) {
                 consecutivePollFailures++;
                 if (consecutivePollFailures >= UNREACHABLE_THRESHOLD) {
                     daemonReachable = false;
                 }
+                // Even on poll failure, run reconcile so a stale capture
+                // gets torn down when the daemon goes away.
+                reconcileAudioCapture();
                 handler.post(this::updateUI);
             }
 
@@ -447,7 +521,16 @@ public class StatusOverlayService extends Service {
                 // RecordingModeManager) lags SCREEN_ON, so the first poll
                 // after wake saw accOn=false and stranded us. Slow-poll
                 // loopback to the in-process daemon HTTP is negligible.
-                long interval = accOn ? POLL_INTERVAL_MS : POLL_INTERVAL_ACC_OFF_MS;
+                //
+                // Fast-poll window: when armed by an ACC edge, run at 1s for
+                // FAST_POLL_WINDOW_MS to catch the daemon-startup race tight.
+                long now = android.os.SystemClock.elapsedRealtime();
+                long interval;
+                if (fastPollUntilElapsedMs > now) {
+                    interval = FAST_POLL_INTERVAL_MS;
+                } else {
+                    interval = accOn ? POLL_INTERVAL_MS : POLL_INTERVAL_ACC_OFF_MS;
+                }
                 handler.postDelayed(this::pollStatus, interval);
             }
         });
@@ -474,6 +557,113 @@ public class StatusOverlayService extends Service {
         return null;
     }
 
+    /**
+     * Decide whether audio capture should be running right now and start /
+     * stop AppAudioCaptureController accordingly.
+     *
+     * Capture is gated to ACC-on recording modes only:
+     *   - audioEnabledConfig must be true
+     *   - daemonReachable, accOn must be true
+     *   - configuredMode in {CONTINUOUS, DRIVE_MODE, PROXIMITY_GUARD}
+     *   - shouldRecordingBeActive() must be true (ie current gear matches)
+     *
+     * Surveillance mode (ACC OFF, sentry) deliberately does NOT enable
+     * audio capture. That's a privacy-significant separation: audio
+     * recording in the cabin while parked + driver gone is a much spicier
+     * legal posture than audio while driving.
+     *
+     * Run on the polling executor (IO thread) — start() opens AudioRecord +
+     * MediaCodec + a TCP socket which together can take 30-100 ms.
+     */
+    /**
+     * Refresh audioEnabledConfig from UnifiedConfigManager. Read fresh on
+     * every poll so the user toggling the recording.html switch reflects
+     * within ~3s without a service restart.
+     *
+     * Defaults to false on read failure — better to silently NOT capture
+     * audio than to silently DO capture audio when we can't confirm consent.
+     */
+    private void refreshAudioConfig() {
+        try {
+            // forceReload() rather than loadConfig() — the daemon (different
+            // UID from the app) may have just rewritten the config file.
+            // loadConfig()'s mtime cache is per-process; without the explicit
+            // reload, the app-side cached snapshot can stay stale even after
+            // the file has been replaced. forceReload drops the cache and
+            // re-reads from disk.
+            org.json.JSONObject recCfg =
+                com.overdrive.app.config.UnifiedConfigManager.forceReload()
+                    .optJSONObject("recording");
+            audioEnabledConfig = recCfg != null
+                && recCfg.optBoolean("audioEnabled", false);
+        } catch (Exception e) {
+            audioEnabledConfig = false;
+        }
+    }
+
+    private void reconcileAudioCapture() {
+        // "Trip is in progress" semantics — we keep the audio controller
+        // alive across P↔D gear changes within a single ACC-on session.
+        // Tearing down on each gear change (which the old shouldRecordingBeActive()
+        // gate did) caused ~5s of silent audio at every D resume in city
+        // traffic, because each restart hits AudioRecord open + a TCP
+        // reconnect and the BYD voice asst can grab the mic during the gap.
+        //
+        // The daemon decides whether incoming AAC frames are muxed into the
+        // current segment (it drops them when isWritingToFile == false), so
+        // capturing while not-recording costs only the loopback TCP traffic
+        // (~8 KB/s of AAC the daemon discards). This is what makes the
+        // pre-record buffer feature work — the controller MUST be live so
+        // there's audio history available when the daemon decides to record.
+        boolean shouldCapture = audioEnabledConfig
+            && daemonReachable
+            && accOn
+            && (configuredMode.equals("CONTINUOUS")
+                || configuredMode.equals("DRIVE_MODE")
+                || configuredMode.equals("PROXIMITY_GUARD"));
+
+        // Source of truth for "is capture happening" is the controller
+        // itself. We used to mirror it in an audioActive boolean, which
+        // desynced after fast user toggles (off-poll calls stop, the next
+        // on-poll's start hits back-off and returns false, but our flag
+        // was already cleared) — losing the back-off-retry signal entirely.
+        com.overdrive.app.audio.AppAudioCaptureController ctrl = audioController;
+        boolean isCapturing = ctrl != null && ctrl.isRunning();
+
+        if (shouldCapture && !isCapturing) {
+            // Tear down any dead-but-not-stopped controller before
+            // creating a new one. A worker thread that self-exited (drain
+            // socket reset, encoder error, etc.) leaves running=false but
+            // the controller's internal `started` CAS gate is still true,
+            // so subsequent start() calls would silently reject. Calling
+            // stop() resets that gate and releases the half-allocated
+            // resources. stop() is idempotent + cheap when state is
+            // already clean.
+            if (ctrl != null) {
+                ctrl.stop();
+            }
+            ctrl = new com.overdrive.app.audio.AppAudioCaptureController();
+            audioController = ctrl;
+            boolean ok = ctrl.start();
+            if (ok) {
+                Log.i(TAG, "Audio capture enabled (mode=" + configuredMode + ")");
+                // Clear any stale failure hint so the MIC pill recovers
+                // from RED to GREEN as soon as we get back in.
+                lastAudioStartFailureMs = 0;
+            } else {
+                lastAudioStartFailureMs = android.os.SystemClock.elapsedRealtime();
+                Log.w(TAG, "Audio capture start failed — will retry on next poll");
+            }
+        } else if (!shouldCapture && isCapturing) {
+            // ctrl is non-null when isCapturing is true.
+            ctrl.stop();
+            Log.i(TAG, "Audio capture disabled");
+        }
+        // No third "self-stopped" branch needed: isRunning() is now the
+        // source of truth, so the next poll naturally retries via the
+        // shouldCapture && !isCapturing branch.
+    }
+
     private void parseStatus(JSONObject status) {
         try {
             // New fields (from updated daemon)
@@ -491,22 +681,17 @@ public class StatusOverlayService extends Service {
                 isRecording = recArray != null && recArray.length() > 0;
                 accOn = status.optBoolean("acc", false);
                 
-                // Read configured mode from UnifiedConfigManager config file
-                // (both app and daemon can read this file)
+                // Read configured mode from UnifiedConfigManager.
+                // forceReload() rather than loadConfig() — the daemon
+                // (different UID from the app) writes this file; the
+                // app-side mtime cache is per-process and can stay stale
+                // across UID boundaries (see feedback_unified_config_force_reload).
                 try {
-                    java.io.File configFile = new java.io.File("/data/local/tmp/overdrive_config.json");
-                    if (configFile.exists()) {
-                        java.io.BufferedReader cfgReader = new java.io.BufferedReader(
-                                new java.io.FileReader(configFile));
-                        StringBuilder cfgSb = new StringBuilder();
-                        String cfgLine;
-                        while ((cfgLine = cfgReader.readLine()) != null) cfgSb.append(cfgLine);
-                        cfgReader.close();
-                        JSONObject config = new JSONObject(cfgSb.toString());
-                        JSONObject recording = config.optJSONObject("recording");
-                        if (recording != null) {
-                            configuredMode = recording.optString("mode", "NONE");
-                        }
+                    JSONObject recording =
+                        com.overdrive.app.config.UnifiedConfigManager.forceReload()
+                            .optJSONObject("recording");
+                    if (recording != null) {
+                        configuredMode = recording.optString("mode", "NONE");
                     }
                 } catch (Exception configErr) {
                     Log.w(TAG, "Config read fallback failed: " + configErr.getMessage());
@@ -522,21 +707,17 @@ public class StatusOverlayService extends Service {
                 tripEnabled = tripStatus.optBoolean("enabled", false);
                 tripActive = tripStatus.optBoolean("tripActive", false);
             } else {
-                // Fallback: read trip config from file
+                // Fallback: read trip config from UnifiedConfigManager.
+                // forceReload() rather than loadConfig() — the daemon (different
+                // UID) writes this file; the app-side mtime cache is per-process
+                // and can stay stale across UID boundaries
+                // (see feedback_unified_config_force_reload).
                 try {
-                    java.io.File configFile = new java.io.File("/data/local/tmp/overdrive_config.json");
-                    if (configFile.exists()) {
-                        java.io.BufferedReader cfgReader = new java.io.BufferedReader(
-                                new java.io.FileReader(configFile));
-                        StringBuilder cfgSb = new StringBuilder();
-                        String cfgLine;
-                        while ((cfgLine = cfgReader.readLine()) != null) cfgSb.append(cfgLine);
-                        cfgReader.close();
-                        JSONObject config = new JSONObject(cfgSb.toString());
-                        JSONObject tripCfg = config.optJSONObject("tripAnalytics");
-                        if (tripCfg != null) {
-                            tripEnabled = tripCfg.optBoolean("enabled", false);
-                        }
+                    JSONObject tripCfg =
+                        com.overdrive.app.config.UnifiedConfigManager.forceReload()
+                            .optJSONObject("tripAnalytics");
+                    if (tripCfg != null) {
+                        tripEnabled = tripCfg.optBoolean("enabled", false);
                     }
                 } catch (Exception configErr) {
                     Log.w(TAG, "Trip config read fallback failed: " + configErr.getMessage());
@@ -561,8 +742,13 @@ public class StatusOverlayService extends Service {
         boolean cameraOverlayEnabled = true;
         boolean tripOverlayEnabled = true;
         try {
+            // forceReload() rather than loadConfig() — these toggles flip
+            // from the web UI / Settings (daemon UID) and the app-side
+            // mtime cache is per-process; without the explicit reload we
+            // can keep showing/hiding chips based on a stale snapshot
+            // (see feedback_unified_config_force_reload).
             JSONObject statusOverlayCfg =
-                com.overdrive.app.config.UnifiedConfigManager.loadConfig()
+                com.overdrive.app.config.UnifiedConfigManager.forceReload()
                     .optJSONObject("statusOverlay");
             if (statusOverlayCfg != null) {
                 cameraOverlayEnabled = statusOverlayCfg.optBoolean("cameraVisible", true);
@@ -622,8 +808,15 @@ public class StatusOverlayService extends Service {
         boolean shouldShowRec = recConfigured && cameraOverlayEnabled
                 && (isRecording || shouldRecordingBeActive() || isProximityMode);
         boolean shouldShowTrip = tripEnabled && tripOverlayEnabled;
-        
-        if (!shouldShowRec && !shouldShowTrip) {
+        // Mic visibility piggybacks on REC visibility. Show whenever audio
+        // is armed (configured + recording mode set) so the "armed/idle"
+        // amber state remains visible during P-gear standby — the user
+        // wants to know audio capture is poised to fire even when REC
+        // isn't currently recording. When mic is armed but REC is in
+        // standby, we keep the overlay visible specifically for the mic.
+        boolean shouldShowMic = audioEnabledConfig && recConfigured && cameraOverlayEnabled;
+
+        if (!shouldShowRec && !shouldShowTrip && !shouldShowMic) {
             // Configured but conditions don't require display (e.g., drive mode in P)
             if (overlayView != null) overlayView.setVisibility(View.GONE);
             return;
@@ -696,6 +889,62 @@ public class StatusOverlayService extends Service {
             recContainer.setVisibility(View.GONE);
         }
 
+        // Mic: show only when audio recording is configured AND a recording
+        // mode that consumes audio is configured. Visible together with the
+        // REC pill so the user can tell at a glance "video AND audio are
+        // being captured" vs "video only". Tri-state color logic uses
+        // BOTH the live audio capture state and the daemon's isRecording
+        // flag so users distinguish capturing-but-not-muxing from off:
+        //   - status_success (green): audio is being captured AND the
+        //     daemon is currently muxing it into a segment.
+        //   - status_warning (amber): audio is being captured but the
+        //     daemon isn't muxing yet — pre-record buffer is filling /
+        //     PROXIMITY_GUARD is armed waiting for a trigger / segment
+        //     rotation in flight. Privacy-significant: this is the state
+        //     where the cabin mic is open but no clip is being saved.
+        //   - status_danger (red): we WANT to be capturing but the
+        //     controller failed (mic claimed by BT/voice asst, etc).
+        //     Held for AUDIO_FAILURE_HINT_WINDOW_MS so the user sees the
+        //     reason their clip is silent rather than a flickering RED.
+        boolean micVisibleByConfig = audioEnabledConfig && recConfigured && cameraOverlayEnabled;
+        if (micVisibleByConfig) {
+            micContainer.setVisibility(View.VISIBLE);
+            // Read the live controller state directly — the polling thread
+            // and the UI thread both see the volatile reference, and
+            // isRunning() is itself thread-safe (AtomicBoolean.get).
+            com.overdrive.app.audio.AppAudioCaptureController ctrl = audioController;
+            boolean isCapturing = ctrl != null && ctrl.isRunning();
+            // Mode says we should be capturing right now (see reconcileAudioCapture).
+            boolean wantCapture = audioEnabledConfig && daemonReachable && accOn
+                && (configuredMode.equals("CONTINUOUS")
+                    || configuredMode.equals("DRIVE_MODE")
+                    || configuredMode.equals("PROXIMITY_GUARD"));
+            long now = android.os.SystemClock.elapsedRealtime();
+            boolean recentFailure = lastAudioStartFailureMs > 0
+                && (now - lastAudioStartFailureMs) < AUDIO_FAILURE_HINT_WINDOW_MS;
+            if (isCapturing && isRecording) {
+                ivMicIcon.setImageResource(R.drawable.ic_overlay_mic_active);
+                tvMicLabel.setText(R.string.overlay_mic_inactive_label);
+                tvMicLabel.setTextColor(getColor(R.color.status_success));
+            } else if (wantCapture && !isCapturing && recentFailure) {
+                // Mic claimed / capture failure recently. RED so the user
+                // knows their clip is silent and the app didn't just
+                // forget to record.
+                ivMicIcon.setImageResource(R.drawable.ic_overlay_mic_inactive);
+                tvMicLabel.setText(R.string.overlay_mic_inactive_label);
+                tvMicLabel.setTextColor(getColor(R.color.status_danger));
+            } else {
+                // Capturing but daemon isn't muxing yet, OR not capturing
+                // because mode/conditions don't require it (PROX armed in
+                // P, fresh ACC-on, segment rotation). Amber for "armed".
+                ivMicIcon.setImageResource(R.drawable.ic_overlay_mic_inactive);
+                tvMicLabel.setText(R.string.overlay_mic_inactive_label);
+                tvMicLabel.setTextColor(getColor(R.color.status_warning));
+            }
+        } else {
+            micContainer.setVisibility(View.GONE);
+        }
+
         // Trip: show only if enabled in config AND user hasn't toggled the
         // trip segment off in Settings → Status overlay.
         if (tripEnabled && tripOverlayEnabled) {
@@ -713,12 +962,26 @@ public class StatusOverlayService extends Service {
             tripContainer.setVisibility(View.GONE);
         }
 
-        // Show/hide separator between items
+        // Show/hide the two separators based on which segments are visible.
+        // Layout order: REC | sep1 | MIC | sep2 | TRIP. A separator is
+        // visible iff there is at least one visible segment on each side.
+        View separatorRecMic = overlayView.findViewById(R.id.separatorRecMic);
         View separator = overlayView.findViewById(R.id.separator);
         boolean recVisible = recContainer.getVisibility() == View.VISIBLE;
+        boolean micVisible = micContainer.getVisibility() == View.VISIBLE;
         boolean tripVisible = tripContainer.getVisibility() == View.VISIBLE;
+        if (separatorRecMic != null) {
+            // sep1 sits between REC and MIC — visible only when both sides
+            // have something to show.
+            separatorRecMic.setVisibility(
+                recVisible && micVisible ? View.VISIBLE : View.GONE);
+        }
         if (separator != null) {
-            separator.setVisibility(recVisible && tripVisible ? View.VISIBLE : View.GONE);
+            // sep2 sits between (REC|MIC) and TRIP — visible iff trip is
+            // visible AND at least one of REC/MIC is visible.
+            boolean leftSideVisible = recVisible || micVisible;
+            separator.setVisibility(
+                leftSideVisible && tripVisible ? View.VISIBLE : View.GONE);
         }
     }
 

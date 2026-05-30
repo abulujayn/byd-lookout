@@ -40,16 +40,24 @@ public final class BydDeviceHelper {
 
     /**
      * Call a no-arg getter method on a device. Returns null on failure.
+     *
+     * Uses a per-(Class, methodName) Method cache keyed on the device's
+     * runtime Class — proxy classes (e.g. BYDAuto*Device$Stub$Proxy) are
+     * process-stable, so a cached Method survives binder service restarts
+     * that swap the underlying instance.
      */
     public static Object callGetter(Object device, String methodName) {
         if (device == null) return null;
-        try {
-            Method m = device.getClass().getMethod(methodName);
-            return m.invoke(device);
-        } catch (NoSuchMethodException e) {
+        Method m = lookupPublicMethodCached(device.getClass(), methodName,
+                publicNoArgMethodCache, NO_PARAMS);
+        if (m == null) {
+            // getMethod missed — try the declared-method walk (private/package
+            // visibility on the proxy or its supertypes).
             return callGetterDeclared(device, methodName);
+        }
+        try {
+            return m.invoke(device);
         } catch (java.lang.reflect.InvocationTargetException e) {
-            // The method itself threw — log the root cause
             Throwable cause = e.getCause();
             logger.debug("Getter " + methodName + " threw: " + (cause != null ? cause.getClass().getSimpleName() + ": " + cause.getMessage() : "unknown"));
         } catch (Exception e) {
@@ -63,12 +71,14 @@ public final class BydDeviceHelper {
      */
     public static Object callGetter(Object device, String methodName, int param) {
         if (device == null) return null;
+        Method m = lookupPublicMethodCached(device.getClass(), methodName,
+                publicIntMethodCache, INT_PARAMS);
+        if (m == null) return null;
         try {
-            Method m = device.getClass().getMethod(methodName, int.class);
             return m.invoke(device, param);
         } catch (java.lang.reflect.InvocationTargetException e) {
             Throwable cause = e.getCause();
-            logger.debug("Getter " + methodName + "(" + param + ") threw: " + 
+            logger.debug("Getter " + methodName + "(" + param + ") threw: " +
                 (cause != null ? cause.getClass().getSimpleName() + ": " + cause.getMessage() : "unknown"));
         } catch (Exception e) {
             logger.debug("Getter " + methodName + "(" + param + ") failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
@@ -82,8 +92,10 @@ public final class BydDeviceHelper {
      */
     public static Object callMethod(Object device, String methodName, int param1) {
         if (device == null) return null;
+        Method m = lookupPublicMethodCached(device.getClass(), methodName,
+                publicIntMethodCache, INT_PARAMS);
+        if (m == null) return null;
         try {
-            Method m = device.getClass().getMethod(methodName, int.class);
             return m.invoke(device, param1);
         } catch (java.lang.reflect.InvocationTargetException e) {
             Throwable cause = e.getCause();
@@ -102,8 +114,10 @@ public final class BydDeviceHelper {
      */
     public static Object callMethod(Object device, String methodName, int param1, int param2) {
         if (device == null) return null;
+        Method m = lookupPublicMethodCached(device.getClass(), methodName,
+                publicIntIntMethodCache, INT_INT_PARAMS);
+        if (m == null) return null;
         try {
-            Method m = device.getClass().getMethod(methodName, int.class, int.class);
             return m.invoke(device, param1, param2);
         } catch (java.lang.reflect.InvocationTargetException e) {
             Throwable cause = e.getCause();
@@ -122,8 +136,10 @@ public final class BydDeviceHelper {
      */
     public static Object callMethod(Object device, String methodName, int p1, int p2, int p3, int p4) {
         if (device == null) return null;
+        Method m = lookupPublicMethodCached(device.getClass(), methodName,
+                publicInt4MethodCache, INT4_PARAMS);
+        if (m == null) return null;
         try {
-            Method m = device.getClass().getMethod(methodName, int.class, int.class, int.class, int.class);
             return m.invoke(device, p1, p2, p3, p4);
         } catch (java.lang.reflect.InvocationTargetException e) {
             Throwable cause = e.getCause();
@@ -137,22 +153,16 @@ public final class BydDeviceHelper {
 
     private static Object callGetterDeclared(Object device, String methodName) {
         Class<?> cls = device.getClass();
-        while (cls != null && cls != Object.class) {
-            try {
-                Method m = cls.getDeclaredMethod(methodName);
-                m.setAccessible(true);
-                return m.invoke(device);
-            } catch (NoSuchMethodException e) {
-                cls = cls.getSuperclass();
-            } catch (java.lang.reflect.InvocationTargetException e) {
-                Throwable cause = e.getCause();
-                logger.debug("DeclaredGetter " + methodName + " threw: " + 
-                    (cause != null ? cause.getClass().getSimpleName() + ": " + cause.getMessage() : "unknown"));
-                return null;
-            } catch (Exception e) {
-                logger.debug("DeclaredGetter " + methodName + " failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
-                return null;
-            }
+        Method m = lookupDeclaredNoArgCached(cls, methodName);
+        if (m == null) return null;
+        try {
+            return m.invoke(device);
+        } catch (java.lang.reflect.InvocationTargetException e) {
+            Throwable cause = e.getCause();
+            logger.debug("DeclaredGetter " + methodName + " threw: " +
+                (cause != null ? cause.getClass().getSimpleName() + ": " + cause.getMessage() : "unknown"));
+        } catch (Exception e) {
+            logger.debug("DeclaredGetter " + methodName + " failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
         }
         return null;
     }
@@ -950,6 +960,106 @@ public final class BydDeviceHelper {
     private static final java.util.Map<Class<?>, Method> setBatchMethodCache = new java.util.HashMap<>();
     private static final java.util.Map<Class<?>, Method> setBufferMethodCache = new java.util.HashMap<>();
     private static final java.util.Map<Class<?>, Integer> deviceTypeCache = new java.util.HashMap<>();
+
+    // ----- per-name reflection caches for callGetter / callMethod -----
+    //
+    // The existing per-Class caches above are each dedicated to a single
+    // (methodName, paramTypes) tuple. callGetter / callMethod take the
+    // methodName as a parameter, so they need a (Class, methodName) key.
+    // One cache per paramType signature lets us drop methodName-on-key only
+    // (paramTypes are implicit per cache).
+    //
+    // ConcurrentHashMap because these are hit from many threads at high
+    // frequency (BydDataCollector polls every 5s while ACC ON, plus
+    // setter calls from web/Telegram threads). ConcurrentHashMap forbids
+    // null values, so we use NEGATIVE_CACHE_SENTINEL for "method not found".
+    private static final Method NEGATIVE_CACHE_SENTINEL;
+    static {
+        Method sentinel = null;
+        try {
+            // Any well-known no-arg Method works as an identity sentinel.
+            sentinel = Object.class.getDeclaredMethod("hashCode");
+        } catch (NoSuchMethodException ignored) {
+            // Object.hashCode is guaranteed to exist; this branch is unreachable.
+        }
+        NEGATIVE_CACHE_SENTINEL = sentinel;
+    }
+
+    private static final Class<?>[] NO_PARAMS = new Class<?>[0];
+    private static final Class<?>[] INT_PARAMS = new Class<?>[]{int.class};
+    private static final Class<?>[] INT_INT_PARAMS = new Class<?>[]{int.class, int.class};
+    private static final Class<?>[] INT4_PARAMS = new Class<?>[]{int.class, int.class, int.class, int.class};
+
+    private static final java.util.concurrent.ConcurrentMap<Class<?>, java.util.concurrent.ConcurrentMap<String, Method>>
+            publicNoArgMethodCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentMap<Class<?>, java.util.concurrent.ConcurrentMap<String, Method>>
+            publicIntMethodCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentMap<Class<?>, java.util.concurrent.ConcurrentMap<String, Method>>
+            publicIntIntMethodCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentMap<Class<?>, java.util.concurrent.ConcurrentMap<String, Method>>
+            publicInt4MethodCache = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentMap<Class<?>, java.util.concurrent.ConcurrentMap<String, Method>>
+            declaredNoArgMethodCache = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Cached Class.getMethod(name, paramTypes) lookup.
+     * Returns null when the method doesn't exist (cached negatively via sentinel).
+     */
+    private static Method lookupPublicMethodCached(Class<?> cls, String methodName,
+            java.util.concurrent.ConcurrentMap<Class<?>, java.util.concurrent.ConcurrentMap<String, Method>> cache,
+            Class<?>[] paramTypes) {
+        java.util.concurrent.ConcurrentMap<String, Method> perClass = cache.get(cls);
+        if (perClass == null) {
+            perClass = cache.computeIfAbsent(cls, k -> new java.util.concurrent.ConcurrentHashMap<>());
+        }
+        Method cached = perClass.get(methodName);
+        if (cached != null) {
+            return cached == NEGATIVE_CACHE_SENTINEL ? null : cached;
+        }
+        try {
+            Method m = cls.getMethod(methodName, paramTypes);
+            perClass.put(methodName, m);
+            return m;
+        } catch (NoSuchMethodException e) {
+            perClass.put(methodName, NEGATIVE_CACHE_SENTINEL);
+            return null;
+        } catch (Exception e) {
+            // SecurityException etc. — don't poison the cache; just return null.
+            return null;
+        }
+    }
+
+    /**
+     * Cached Class.getDeclaredMethod(name) walk up the class hierarchy.
+     * Returns null when no class in the hierarchy declares the method
+     * (cached negatively via sentinel).
+     */
+    private static Method lookupDeclaredNoArgCached(Class<?> cls, String methodName) {
+        java.util.concurrent.ConcurrentMap<String, Method> perClass = declaredNoArgMethodCache.get(cls);
+        if (perClass == null) {
+            perClass = declaredNoArgMethodCache.computeIfAbsent(cls, k -> new java.util.concurrent.ConcurrentHashMap<>());
+        }
+        Method cached = perClass.get(methodName);
+        if (cached != null) {
+            return cached == NEGATIVE_CACHE_SENTINEL ? null : cached;
+        }
+        Class<?> walk = cls;
+        while (walk != null && walk != Object.class) {
+            try {
+                Method m = walk.getDeclaredMethod(methodName);
+                m.setAccessible(true);
+                perClass.put(methodName, m);
+                return m;
+            } catch (NoSuchMethodException ignored) {
+                walk = walk.getSuperclass();
+            } catch (Exception e) {
+                // SecurityException — don't poison the cache.
+                return null;
+            }
+        }
+        perClass.put(methodName, NEGATIVE_CACHE_SENTINEL);
+        return null;
+    }
 
     private static Method findGetMethod(Object device) {
         Class<?> cls = device.getClass();

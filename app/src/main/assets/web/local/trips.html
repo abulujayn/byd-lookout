@@ -1402,6 +1402,7 @@
                             <div class="summary-stat"><div class="summary-stat-value" id="summaryEfficiency">--</div><div class="summary-stat-label" data-i18n="trip.summary.avg_score">Avg Score</div></div>
                             <div class="summary-stat"><div class="summary-stat-value" id="summaryEnergy">--</div><div class="summary-stat-label" data-i18n="trip.summary.kwh">kWh</div></div>
                             <div class="summary-stat"><div class="summary-stat-value" id="summaryConsumption" style="color:var(--brand-primary);">--</div><div class="summary-stat-label" id="summaryConsumptionLabel">kWh/100km</div></div>
+                            <div class="summary-stat phev-only" id="summaryFuelTile" style="display:none;"><div class="summary-stat-value" id="summaryFuel" style="color:var(--warning);">--</div><div class="summary-stat-label" id="summaryFuelLabel" data-i18n="trip.summary.litres">Petrol</div></div>
                             <div class="summary-stat"><div class="summary-stat-value" id="summaryCost">--</div><div class="summary-stat-label" data-i18n="trip.summary.cost">Cost</div></div>
                         </div>
                     </div>
@@ -1450,6 +1451,7 @@
                                         </optgroup>
                                         <optgroup label="Asia / Pacific">
                                             <option value="₹">₹ INR</option>
+                                            <option value="रू">रू NPR</option>
                                             <option value="CN¥">CN¥ CNY</option>
                                             <option value="HK$">HK$ HKD</option>
                                             <option value="NT$">NT$ TWD</option>
@@ -1491,6 +1493,30 @@
                                     </select>
                                     <input type="number" id="rateInput" placeholder="0.00" step="0.01" min="0" onchange="TRIPS.showApplyNeeded()" style="width:80px;padding:8px 10px;background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:13px;font-family:'JetBrains Mono',monospace;">
                                     <span style="font-size:11px;color:var(--text-muted);">/kWh</span>
+                                </div>
+                            </div>
+                            <!-- Fuel settings (PHEV only — TRIPS.applyPhevVisibility toggles #phevTankRow + #phevFuelPriceRow) -->
+                            <div class="setting-row phev-only" id="phevTankRow" style="display:none;">
+                                <div class="setting-info">
+                                    <div class="setting-name" data-i18n="trip.settings.tank_capacity_label">Tank Capacity</div>
+                                    <div class="setting-desc" data-i18n="trip.settings.tank_capacity_help">Fuel tank size — needed to compute litres burned from BYD's % reading</div>
+                                </div>
+                                <div class="setting-control" style="display:flex;gap:8px;align-items:center;">
+                                    <input type="number" id="tankCapacityInput" placeholder="0.0" step="0.1" min="0" onchange="TRIPS.showApplyNeeded()" style="width:80px;padding:8px 10px;background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:13px;font-family:'JetBrains Mono',monospace;">
+                                    <div class="btn-group">
+                                        <button class="btn-toggle active" id="fuelUnitL" onclick="TRIPS.setFuelUnit('L')" data-i18n="trip.settings.fuel_unit_l">L</button>
+                                        <button class="btn-toggle" id="fuelUnitGal" onclick="TRIPS.setFuelUnit('gal')" data-i18n="trip.settings.fuel_unit_gal">gal</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="setting-row phev-only" id="phevFuelPriceRow" style="display:none;">
+                                <div class="setting-info">
+                                    <div class="setting-name" data-i18n="trip.settings.fuel_price_label">Fuel Price</div>
+                                    <div class="setting-desc" data-i18n="trip.settings.fuel_price_help">Price per litre (or gallon) for petrol cost calculation</div>
+                                </div>
+                                <div class="setting-control" style="display:flex;gap:8px;align-items:center;">
+                                    <input type="number" id="fuelPriceInput" placeholder="0.00" step="0.01" min="0" onchange="TRIPS.showApplyNeeded()" style="width:80px;padding:8px 10px;background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);color:var(--text-primary);font-size:13px;font-family:'JetBrains Mono',monospace;">
+                                    <span id="fuelPriceUnitLabel" style="font-size:11px;color:var(--text-muted);">/L</span>
                                 </div>
                             </div>
                             <!-- Distance Unit -->
@@ -1685,6 +1711,9 @@
                             <div class="detail-stat"><div class="detail-stat-value" id="detailAvgSpeed">--</div><div class="detail-stat-label" id="detailAvgSpeedLabel" data-i18n="trip.detail.avg_kmh">Avg km/h</div></div>
                             <div class="detail-stat"><div class="detail-stat-value" id="detailMaxSpeed">--</div><div class="detail-stat-label" id="detailMaxSpeedLabel" data-i18n="trip.detail.max_kmh">Max km/h</div></div>
                             <div class="detail-stat"><div class="detail-stat-value" id="detailSocStart">--</div><div class="detail-stat-label" data-i18n="trip.detail.start_soc">Start SoC</div></div>
+                            <div class="detail-stat phev-only" id="detailFuelStartTile" style="display:none;"><div class="detail-stat-value" id="detailFuelStart" style="color:var(--warning);">--</div><div class="detail-stat-label" data-i18n="trip.detail.start_fuel">Start Fuel</div></div>
+                            <div class="detail-stat phev-only" id="detailFuelEndTile" style="display:none;"><div class="detail-stat-value" id="detailFuelEnd" style="color:var(--warning);">--</div><div class="detail-stat-label" data-i18n="trip.detail.end_fuel">End Fuel</div></div>
+                            <div class="detail-stat phev-only" id="detailLitresUsedTile" style="display:none;"><div class="detail-stat-value" id="detailLitresUsed" style="color:var(--warning);">--</div><div class="detail-stat-label" data-i18n="trip.detail.litres_used">Petrol Used</div></div>
                             <div class="detail-stat"><div class="detail-stat-value" id="detailTemp">--</div><div class="detail-stat-label" data-i18n="trip.detail.temp_c">Temp °C</div></div>
                             <div class="detail-stat"><div class="detail-stat-value" id="detailCost" style="color:var(--warning);">--</div><div class="detail-stat-label" data-i18n="trip.detail.cost">Cost</div></div>
                             <div class="detail-stat"><div class="detail-stat-value" id="detailElevGain" style="color:var(--success);">--</div><div class="detail-stat-label" data-i18n="trip.detail.elev_up">Elev ↑</div></div>

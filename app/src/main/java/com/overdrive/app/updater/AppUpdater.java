@@ -48,6 +48,21 @@ public class AppUpdater {
     public static final String VERSION_FILE = "/data/local/tmp/overdrive_version";
     // Sentinels for the post-update handshake (see UpdateLifecycle).
     private static final String UPDATE_IN_PROGRESS_FILE = UpdateLifecycle.UPDATE_IN_PROGRESS_FILE;
+
+    /**
+     * Build a ps+awk+kill snippet that kills processes whose argv contains
+     * {@code pattern}, excluding the calling shell's own PID. Replaces
+     * every {@code pkill -9 -f '<pattern>'} that used to live in shell
+     * payloads — pkill -f matches against /proc/&lt;pid&gt;/cmdline, so the
+     * calling sh -c wrapper (whose cmdline contains the literal pattern)
+     * self-matches and gets SIGKILLed before subsequent commands run.
+     * ps+awk+kill keys on PID instead, with a {@code $$} guard.
+     */
+    private static String psAwkKillLine(String pattern) {
+        return "MY_PID=$$; ps -A -o PID,ARGS | grep -F '" + pattern + "' | grep -v grep "
+            + "| awk '{print $1}' | while read pid; do "
+            + "if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done\n";
+    }
     private static final String POST_UPDATE_FILE = UpdateLifecycle.POST_UPDATE_FILE;
 
     private final Context context;
@@ -187,6 +202,39 @@ public class AppUpdater {
     }
 
     /**
+     * Release per-instance ADB executor + tunnel-poll scheduler that this
+     * AppUpdater lazily allocated. AppUpdater is NOT a process singleton
+     * — it's `new`'d at every call site (MainActivity manual-check, the
+     * 6h periodic check, UpdateApiHandler, SettingsAboutFragment,
+     * SurveillanceIpcServer). Without this method, each instance that
+     * touched the ADB-tunnel path stranded one non-daemon executor
+     * thread + one tunnel-poll scheduler thread for the life of the
+     * process. After a week of parking that's ~50+ zombie threads in
+     * /proc/self/status.
+     *
+     * Callers SHOULD invoke close() in a finally block once they're done
+     * with the AppUpdater instance. Idempotent.
+     *
+     * Uses releasePerInstanceResources (NOT closePersistentConnection)
+     * so we don't null the process-wide shared Dadb that other launchers
+     * are using.
+     */
+    public void close() {
+        try {
+            if (adbLauncher != null) {
+                adbLauncher.releasePerInstanceResources();
+                adbLauncher = null;
+            }
+        } catch (Exception ignored) {}
+        try {
+            if (adb != null) {
+                adb.shutdown();
+                adb = null;
+            }
+        } catch (Exception ignored) {}
+    }
+
+    /**
      * Run a shell command, picking the right executor for the current process.
      *
      * The app process (UID 10xxx) needs to elevate to UID 2000 to write
@@ -250,6 +298,58 @@ public class AppUpdater {
             }
         } catch (Exception e) {
             callback.onError("Execution failed: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Execute a multi-command shell payload via a temp script file. Use this
+     * for any payload containing `pkill -f '<pattern>'` whose pattern also
+     * appears as a literal substring in earlier commands of the same payload
+     * — `sh -c "<payload>"` puts the whole payload in argv[2], and toybox
+     * `pkill -f` would match the calling shell itself, SIGKILLing it before
+     * later commands run.
+     *
+     * Routes through ADB or direct exec depending on the canonical
+     * /data/local/tmp writability check used by runShell.
+     */
+    private void runShellScript(String scriptBody,
+                                com.overdrive.app.launcher.AdbDaemonLauncher.LaunchCallback callback) {
+        if (!canWriteLocalTmp()) {
+            getAdbLauncher().executeShellScript(scriptBody, callback);
+            return;
+        }
+        // Direct path — write the script to a tmp file ourselves and exec it.
+        // Same self-match defense as the ADB path: the running shell's argv
+        // is just `sh <path>`, no daemon pattern visible to pkill.
+        String scriptPath = "/data/local/tmp/.appupdater_script_" + System.nanoTime() + ".sh";
+        try {
+            java.io.File scriptFile = new java.io.File(scriptPath);
+            try (java.io.FileWriter fw = new java.io.FileWriter(scriptFile)) {
+                fw.write(scriptBody);
+            }
+            scriptFile.setExecutable(true, false);
+
+            Process p = Runtime.getRuntime().exec(new String[]{"sh", scriptPath});
+            StringBuilder out = new StringBuilder();
+            java.io.BufferedReader stdout = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(p.getInputStream()));
+            java.io.BufferedReader stderr = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(p.getErrorStream()));
+            String line;
+            while ((line = stdout.readLine()) != null) out.append(line).append('\n');
+            while ((line = stderr.readLine()) != null) out.append(line).append('\n');
+            int exit = p.waitFor();
+            String combined = out.toString().trim();
+            if (!combined.isEmpty()) callback.onLog(combined);
+            if (exit == 0) {
+                callback.onLaunched();
+            } else {
+                callback.onError("Exit " + exit + ": " + combined);
+            }
+        } catch (Exception e) {
+            callback.onError("Script execution failed: " + e.getMessage());
+        } finally {
+            try { new java.io.File(scriptPath).delete(); } catch (Exception ignored) {}
         }
     }
 
@@ -576,6 +676,15 @@ public class AppUpdater {
                 // process — if we're running inside it — is about to die, and the
                 // app process gets killed by `pm install -r`; either way the
                 // SharedPreferences write must happen first).
+                //
+                // Snapshot the prior timestamp so we can roll back on
+                // install failure. Without rollback, a failed install
+                // permanently advances PREF_LAST_UPDATE_TIME to the failed
+                // remote version, and the next checkForUpdate sees
+                // "lastInstalled == latest" → reports no update available
+                // until GitHub re-uploads the asset. The user is silently
+                // stuck on the old build.
+                final String priorUpdateTimestamp = getLastUpdateTimestamp();
                 context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                         .edit()
                         .putBoolean(PREF_JUST_UPDATED, true)
@@ -600,7 +709,7 @@ public class AppUpdater {
                 //   on its own; our death is fine.
                 if (canWriteLocalTmp()) {
                     postProgress(callback, "Stopping daemons & installing...");
-                    runDetachedInstall(callback);
+                    runDetachedInstall(callback, priorUpdateTimestamp);
                     return;
                 }
 
@@ -640,10 +749,15 @@ public class AppUpdater {
                 // If we reach here, install may have failed (process should be dead on success)
                 String output = result[0] != null ? result[0] : "";
                 if (!output.toLowerCase().contains("success")) {
+                    // Roll back the prefs we set pre-install. Critically,
+                    // restore PREF_LAST_UPDATE_TIME — without this, a
+                    // failed install silently advances the baseline and
+                    // checkForUpdate would report "no update" forever.
                     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                             .edit()
                             .putBoolean(PREF_JUST_UPDATED, false)
                             .remove(PREF_UPDATED_VERSION)
+                            .putString(PREF_LAST_UPDATE_TIME, priorUpdateTimestamp)
                             .commit();
                     // Wipe the post-update sentinels — install never landed, so
                     // there's nothing for the next launch to recover from.
@@ -845,7 +959,7 @@ public class AppUpdater {
      * back online; the SharedPreferences `PREF_JUST_UPDATED` flag we wrote
      * in step 3 is what the new MainActivity reads to confirm.
      */
-    private void runDetachedInstall(InstallCallback callback) {
+    private void runDetachedInstall(InstallCallback callback, String priorUpdateTimestamp) {
         String scriptPath = "/data/local/tmp/overdrive_install.sh";
         String logPath = "/data/local/tmp/overdrive_install.log";
 
@@ -863,23 +977,39 @@ public class AppUpdater {
         // out watchdog + daemon together — no kill-order race, no sleep
         // window for one to respawn the other. Each `2>/dev/null` so a
         // "no such process" exit doesn't abort the script.
-        script.append("echo 'disabled for update at '$(date) > /data/local/tmp/camera_daemon.disabled\n");
-        script.append("pkill -9 -f 'cam_daemon' 2>/dev/null\n");
-        script.append("pkill -9 -f 'acc_sentry' 2>/dev/null\n");
+        script.append("echo \"disabled for update at $(date)\" > /data/local/tmp/camera_daemon.disabled\n");
+        script.append("chmod 666 /data/local/tmp/camera_daemon.disabled 2>/dev/null\n");
+        // Plant zrok + acc-sentry sentinels so their shell watchdogs
+        // (start_zrok.sh, start_acc_sentry.sh) bail out on their next
+        // iteration if our pkill misses a respawn race. Cleared below
+        // alongside camera_daemon.disabled. World-readable so the watchdogs
+        // (UID 2000) can stat the file when it was written by the install
+        // script (running as the app UID).
+        script.append("echo \"disabled for update at $(date)\" > /data/local/tmp/zrok.disabled\n");
+        script.append("chmod 666 /data/local/tmp/zrok.disabled 2>/dev/null\n");
+        script.append("echo \"disabled for update at $(date)\" > /data/local/tmp/acc_sentry_daemon.disabled\n");
+        script.append("chmod 666 /data/local/tmp/acc_sentry_daemon.disabled 2>/dev/null\n");
+        script.append("echo \"disabled for update at $(date)\" > /data/local/tmp/telegram_bot_daemon.disabled\n");
+        script.append("chmod 666 /data/local/tmp/telegram_bot_daemon.disabled 2>/dev/null\n");
+        script.append(psAwkKillLine("cam_daemon"));
+        script.append(psAwkKillLine("acc_sentry"));
+        script.append(psAwkKillLine("start_telegram"));
         script.append("killall -9 byd_cam_daemon 2>/dev/null\n");
-        script.append("pkill -9 -f 'sentry_daemon' 2>/dev/null\n");
-        script.append("pkill -9 -f 'telegram_bot_daemon' 2>/dev/null\n");
-        script.append("pkill -9 -f 'sentry_proxy' 2>/dev/null\n");
-        script.append("pkill -9 -f 'cloudflared' 2>/dev/null\n");
+        script.append(psAwkKillLine("sentry_daemon"));
+        script.append(psAwkKillLine("telegram_bot_daemon"));
+        script.append(psAwkKillLine("sentry_proxy"));
+        script.append(psAwkKillLine("cloudflared"));
         script.append("killall -9 cloudflared 2>/dev/null\n");
-        script.append("pkill -9 -f 'zrok' 2>/dev/null\n");
+        script.append(psAwkKillLine("zrok"));
         script.append("killall -9 zrok 2>/dev/null\n");
-        script.append("pkill -9 -f 'sing-box' 2>/dev/null\n");
+        script.append(psAwkKillLine("sing-box"));
         script.append("killall -9 sing-box 2>/dev/null\n");
-        script.append("pkill -9 -f 'tailscaled' 2>/dev/null\n");
+        script.append(psAwkKillLine("tailscaled"));
         script.append("killall -9 tailscaled 2>/dev/null\n");
         script.append("rm -f /data/local/tmp/start_cam_daemon.sh /data/local/tmp/cam_watchdog.pid 2>/dev/null\n");
         script.append("rm -f /data/local/tmp/start_acc_sentry.sh /data/local/tmp/acc_sentry_daemon.lock 2>/dev/null\n");
+        script.append("rm -f /data/local/tmp/start_zrok.sh 2>/dev/null\n");
+        script.append("rm -f /data/local/tmp/start_telegram.sh 2>/dev/null\n");
 
         // Per-daemon lock files (mirrors DaemonLauncher's killDaemonViaAdb
         // cleanup) so the relaunched MainActivity's daemon supervisor doesn't
@@ -889,12 +1019,15 @@ public class AppUpdater {
         script.append("rm -f /data/local/tmp/telegram_bot_daemon.lock 2>/dev/null\n");
         script.append("rm -f /data/local/tmp/*_daemon.lock 2>/dev/null\n");
         script.append("rm -f /data/local/tmp/cam_watchdog.pid 2>/dev/null\n");
-        // Clear the camera disable sentinel — we needed it set above so
-        // any surviving watchdog exits, but the new MainActivity must not
-        // see it on startup or it'll leave the camera daemon disabled.
-        // POST_UPDATE_FILE / UPDATE_IN_PROGRESS_FILE stay in place; the new
-        // process consumes them via UpdateLifecycle.
+        // Clear the cam + zrok + acc-sentry disable sentinels — we needed
+        // them set above so any surviving watchdog exits, but the new
+        // MainActivity must not see them on startup or it'll leave those
+        // daemons disabled. POST_UPDATE_FILE / UPDATE_IN_PROGRESS_FILE
+        // stay in place; the new process consumes them via UpdateLifecycle.
         script.append("rm -f /data/local/tmp/camera_daemon.disabled 2>/dev/null\n");
+        script.append("rm -f /data/local/tmp/zrok.disabled 2>/dev/null\n");
+        script.append("rm -f /data/local/tmp/acc_sentry_daemon.disabled 2>/dev/null\n");
+        script.append("rm -f /data/local/tmp/telegram_bot_daemon.disabled 2>/dev/null\n");
         script.append("sleep 2\n");
         // Step 4: install. `pm install -r -d` allows downgrades (-d) so a
         // bad release doesn't strand the user, and replaces the existing app
@@ -928,8 +1061,19 @@ public class AppUpdater {
         script.append("  PM_ESC=$(printf %s \"$PM_OUT\" | tr -d '\\000-\\037' | ");
         script.append("sed 's/\\\\/\\\\\\\\/g;s/\"/\\\\\"/g')\n");
         script.append("  TS=$(($(date +%s) * 1000))\n");
+        // Embed the prior PREF_LAST_UPDATE_TIME so consumeFailedUpdateError
+        // can roll it back. Without rollback, a failed install permanently
+        // advances the baseline timestamp and the next checkForUpdate
+        // reports "no update available" — user is silently stuck on the
+        // old version until the GitHub asset is re-uploaded.
+        // priorTs comes from a Java-side String; we URL-escape minimally
+        // (it's already an ISO timestamp like 2026-05-29T10:00:00Z, no
+        // backslashes/quotes/control chars) so direct interpolation is safe.
         script.append("  printf '{\"phase\":\"error\",\"percent\":-1,");
-        script.append("\"message\":\"Install failed\",\"error\":\"%s\",\"ts\":%s}' ");
+        script.append("\"message\":\"Install failed\",\"error\":\"%s\",");
+        script.append("\"priorUpdateTs\":\"")
+              .append(priorUpdateTimestamp != null ? priorUpdateTimestamp : "")
+              .append("\",\"ts\":%s}' ");
         script.append("\"$PM_ESC\" \"$TS\" > /data/local/tmp/overdrive_update_progress.json\n");
         script.append("  echo \"[install] FAILED rc=$INSTALL_RC\"\n");
         // Clear the in-progress sentinel so the new MainActivity doesn't run a
@@ -1050,21 +1194,31 @@ public class AppUpdater {
         } catch (InterruptedException ignored) {}
 
         // Step 1: Hard-kill the cam_daemon and acc_sentry families in one
-        // syscall each — broad pkill -f matches both watchdog and daemon
+        // sweep — broad pkill -f matches both watchdog and daemon
         // simultaneously so neither survives to respawn the other. Plant the
         // camera disable sentinel first so any straggler watchdog exits on
         // its next iteration.
+        //
+        // CRITICAL: must use runShellScript (tmpfile-backed) rather than
+        // runShell (`sh -c "<body>"`). With runShell, the calling shell's
+        // argv contains the literal patterns 'cam_daemon' and 'acc_sentry',
+        // so the very first `pkill -9 -f 'cam_daemon'` SIGKILLs the calling
+        // shell — every command after the first pkill is silently dropped
+        // (acc_sentry kill, lock rms, the echo done). Phase-3 sweep at
+        // line 1242 below already used runShellScript for the same reason;
+        // step-1 was the last `sh -c` survivor of the self-match family of
+        // bugs.
         Log.i(TAG, "Killing daemons and watchdogs...");
         String killWatchdogsCmd =
-                "echo 'disabled for update at $(date)' > /data/local/tmp/camera_daemon.disabled; " +
-                "pkill -9 -f 'cam_daemon' 2>/dev/null; " +
-                "pkill -9 -f 'acc_sentry' 2>/dev/null; " +
-                "rm -f /data/local/tmp/start_cam_daemon.sh /data/local/tmp/cam_watchdog.pid /data/local/tmp/camera_daemon.lock 2>/dev/null; " +
-                "rm -f /data/local/tmp/start_acc_sentry.sh /data/local/tmp/acc_sentry_daemon.lock 2>/dev/null; " +
-                "echo done";
-        
+                "echo 'disabled for update at $(date)' > /data/local/tmp/camera_daemon.disabled\n" +
+                psAwkKillLine("cam_daemon") +
+                psAwkKillLine("acc_sentry") +
+                "rm -f /data/local/tmp/start_cam_daemon.sh /data/local/tmp/cam_watchdog.pid /data/local/tmp/camera_daemon.lock 2>/dev/null\n" +
+                "rm -f /data/local/tmp/start_acc_sentry.sh /data/local/tmp/acc_sentry_daemon.lock 2>/dev/null\n" +
+                "echo done\n";
+
         final boolean[] wdDone = {false};
-        runShell(killWatchdogsCmd, new com.overdrive.app.launcher.AdbDaemonLauncher.LaunchCallback() {
+        runShellScript(killWatchdogsCmd, new com.overdrive.app.launcher.AdbDaemonLauncher.LaunchCallback() {
             @Override public void onLog(String m) {}
             @Override public void onLaunched() {
                 Log.i(TAG, "Watchdog scripts killed");
@@ -1121,36 +1275,55 @@ public class AppUpdater {
         // NOTE: we keep UPDATE_IN_PROGRESS_FILE / POST_UPDATE_FILE in place;
         // the new process clears them after its own hard-reset pass.
         Log.i(TAG, "Final sweep for remaining processes...");
-        String finalSweepCmd =
-                "pkill -9 -f 'cam_daemon' 2>/dev/null; " +
-                "pkill -9 -f 'acc_sentry' 2>/dev/null; " +
-                "pkill -9 -f 'sentry_daemon' 2>/dev/null; " +
-                "pkill -9 -f 'telegram_bot_daemon' 2>/dev/null; " +
-                "pkill -9 -f 'sentry_proxy' 2>/dev/null; " +
-                "pkill -9 -f 'cloudflared' 2>/dev/null; " +
-                "pkill -9 -f 'zrok' 2>/dev/null; " +
-                "pkill -9 -f 'sing-box' 2>/dev/null; " +
-                "pkill -9 -f 'tailscaled' 2>/dev/null; " +
-                "killall -9 cloudflared 2>/dev/null; " +
-                "killall -9 zrok 2>/dev/null; " +
-                "killall -9 tailscaled 2>/dev/null; " +
-                "killall -9 sing-box 2>/dev/null; " +
-                "rm -f /data/local/tmp/*_daemon.lock 2>/dev/null; " +
-                "rm -f /data/local/tmp/cam_watchdog.pid 2>/dev/null; " +
-                "rm -f /data/local/tmp/start_cam_daemon.sh /data/local/tmp/start_acc_sentry.sh 2>/dev/null; " +
-                // Clear camera_daemon.disabled but keep the post-update sentinels
-                // so the new process can detect and act on them.
-                "rm -f /data/local/tmp/camera_daemon.disabled 2>/dev/null; " +
-                "echo done";
-        
+        // Single script-via-tmp-file invocation — `executeShellScript` writes
+        // the body to a temp file and `sh <path>`s it. Calling shell's argv
+        // is just `sh <path>`, so toybox `pkill -f 'cam_daemon'` cannot
+        // match the calling shell. This replaces the earlier 2-phase split
+        // that was needed to defend against pkill self-suicide.
+        //
+        // Order: sentinels → rm scripts → pkill cascade → settle → rm locks.
+        // Lock-rm is AFTER pkill (not before) to prevent the lockfile
+        // resurrection race: a still-alive daemon can rewrite its PID into
+        // the lock between rm and pkill.
+        //
+        // Per-daemon disable sentinels remain set after this returns; the
+        // subsequent install script (buildInstallScript) clears them right
+        // before `am start`.
+        String sweepScript =
+                "echo \"disabled by stopAllDaemons sweep at $(date)\" > /data/local/tmp/zrok.disabled\n" +
+                "chmod 666 /data/local/tmp/zrok.disabled 2>/dev/null\n" +
+                "echo \"disabled by stopAllDaemons sweep at $(date)\" > /data/local/tmp/acc_sentry_daemon.disabled\n" +
+                "chmod 666 /data/local/tmp/acc_sentry_daemon.disabled 2>/dev/null\n" +
+                "echo \"disabled by stopAllDaemons sweep at $(date)\" > /data/local/tmp/telegram_bot_daemon.disabled\n" +
+                "chmod 666 /data/local/tmp/telegram_bot_daemon.disabled 2>/dev/null\n" +
+                "rm -f /data/local/tmp/cam_watchdog.pid 2>/dev/null\n" +
+                "rm -f /data/local/tmp/start_cam_daemon.sh /data/local/tmp/start_acc_sentry.sh /data/local/tmp/start_zrok.sh /data/local/tmp/start_telegram.sh 2>/dev/null\n" +
+                psAwkKillLine("cam_daemon") +
+                psAwkKillLine("acc_sentry") +
+                psAwkKillLine("sentry_daemon") +
+                psAwkKillLine("telegram_bot_daemon") +
+                psAwkKillLine("sentry_proxy") +
+                psAwkKillLine("cloudflared") +
+                psAwkKillLine("zrok") +
+                psAwkKillLine("sing-box") +
+                psAwkKillLine("tailscaled") +
+                "killall -9 cloudflared 2>/dev/null\n" +
+                "killall -9 zrok 2>/dev/null\n" +
+                "killall -9 tailscaled 2>/dev/null\n" +
+                "killall -9 sing-box 2>/dev/null\n" +
+                "sleep 1\n" +
+                "rm -f /data/local/tmp/*_daemon.lock 2>/dev/null\n" +
+                "echo done\n";
+
         final boolean[] sweepDone = {false};
-        runShell(finalSweepCmd, new com.overdrive.app.launcher.AdbDaemonLauncher.LaunchCallback() {
+        runShellScript(sweepScript, new com.overdrive.app.launcher.AdbDaemonLauncher.LaunchCallback() {
             @Override public void onLog(String m) {}
             @Override public void onLaunched() {
                 sweepDone[0] = true;
                 synchronized (sweepDone) { sweepDone.notify(); }
             }
             @Override public void onError(String e) {
+                Log.w(TAG, "stopAllDaemons sweep error: " + e);
                 sweepDone[0] = true;
                 synchronized (sweepDone) { sweepDone.notify(); }
             }
@@ -1160,7 +1333,7 @@ public class AppUpdater {
                 if (!sweepDone[0]) sweepDone.wait(5000);
             }
         } catch (InterruptedException ignored) {}
-        
+
         Log.i(TAG, "All daemons and watchdogs stopped");
     }
 
@@ -1317,6 +1490,7 @@ public class AppUpdater {
     public static String consumeFailedUpdateError(Context context) {
         if (!hasFailedUpdateMarker()) return null;
         String err = null;
+        String priorUpdateTs = null;
         try {
             java.io.File f = new java.io.File("/data/local/tmp/overdrive_update_progress.json");
             StringBuilder sb = new StringBuilder();
@@ -1328,16 +1502,32 @@ public class AppUpdater {
             JSONObject j = new JSONObject(sb.toString());
             err = j.optString("error", null);
             if (err == null || err.isEmpty()) err = j.optString("message", "Install failed");
+            priorUpdateTs = j.optString("priorUpdateTs", null);
         } catch (Exception ignored) {}
         // One-shot: clear the just-updated flag AND delete the progress file
         // and post-update sentinel so the next launch is clean. The retry
         // will write a fresh record.
+        //
+        // Roll back PREF_LAST_UPDATE_TIME so the failed-install retry path
+        // sees the correct baseline. Without this, the daemon-process
+        // detached install advances the baseline before pm install runs;
+        // on failure the baseline is still pointing at the version that
+        // didn't land, and checkForUpdate reports "no update available"
+        // — user is silently stuck.
         try {
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            android.content.SharedPreferences.Editor e =
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .edit()
                     .putBoolean(PREF_JUST_UPDATED, false)
-                    .remove(PREF_UPDATED_VERSION)
-                    .apply();
+                    .remove(PREF_UPDATED_VERSION);
+            // Empty string is the legitimate "no prior install" sentinel
+            // (saveLastUpdateTimestamp always writes a value after first
+            // success). Restore even if empty so the field reverts to the
+            // exact pre-attempt state.
+            if (priorUpdateTs != null) {
+                e.putString(PREF_LAST_UPDATE_TIME, priorUpdateTs);
+            }
+            e.apply();
         } catch (Exception ignored) {}
         try { new java.io.File("/data/local/tmp/overdrive_update_progress.json").delete(); } catch (Exception ignored) {}
         try { new java.io.File(POST_UPDATE_FILE).delete(); } catch (Exception ignored) {}

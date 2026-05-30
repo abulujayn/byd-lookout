@@ -432,10 +432,20 @@ class DaemonsFragment : Fragment() {
         val daemonName = type.displayName.replace(" ", "_").lowercase()
         val localizedName = type.localizedName(ctx)
 
+        // Reuse the shared adbLauncher; allocating a fresh AdbDaemonLauncher
+        // here would leak its non-daemon executor + tunnel-poll scheduler
+        // thread every time the user views a log. If the manager isn't
+        // attached yet (Activity recreate window: Fragment.onViewCreated
+        // can fire before MainActivity.onCreate's setStartupManager call),
+        // bail out with a clear toast rather than allocate a leaked fallback.
+        val adb = daemonsViewModel.daemonStartupManager?.adbLauncher
+        if (adb == null) {
+            Toast.makeText(ctx, getString(R.string.toast_daemon_manager_unavailable), Toast.LENGTH_SHORT).show()
+            return
+        }
         Toast.makeText(ctx, getString(R.string.toast_fetching_log, localizedName), Toast.LENGTH_SHORT).show()
-        
-        // Use tail to limit output — 10000 lines is ~1-2MB which is safe for ADB + String
-        val adb = com.overdrive.app.launcher.AdbDaemonLauncher(ctx)
+
+        // Use tail to limit output — 10000 lines is ~1-2MB which is safe for ADB + String.
         adb.executeShellCommand(
             "wc -l < $logPath 2>/dev/null; echo '---SEPARATOR---'; tail -10000 $logPath 2>/dev/null",
             object : com.overdrive.app.launcher.AdbDaemonLauncher.LaunchCallback {

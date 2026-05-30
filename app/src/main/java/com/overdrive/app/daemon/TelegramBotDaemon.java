@@ -129,22 +129,92 @@ public class TelegramBotDaemon {
         
         try {
             if (!loadConfig()) {
-                log("FATAL: No bot token configured");
-                return;
+                // No token configured. Don't exit — that triggers the
+                // watchdog's clean-exit branch, which has a hardcoded 10s
+                // sleep with no exponential backoff. At ~360 starts/hour,
+                // each one forking app_process + JVM init + class load,
+                // that's a real CPU/disk drain on a parked car.
+                //
+                // Instead, park the daemon and poll for a token. When the
+                // user pastes one into the web UI, refreshConfigFromUnified
+                // picks it up and we proceed normally. This keeps the JVM
+                // alive (cheap) and avoids the watchdog spawn churn.
+                //
+                // We still want IPC + greeting once the token arrives, so
+                // we hand control to a token-wait loop and re-enter the
+                // normal path on success.
+                if (!waitForBotTokenAndReload()) {
+                    // Looper was interrupted or daemon-shutdown signaled —
+                    // exit cleanly so the watchdog respawns us. This is
+                    // not the spam path; this is "user explicitly cleared
+                    // token AND wants daemon disabled" which the watchdog
+                    // sentinel handshake covers.
+                    log("Token wait aborted; exiting");
+                    return;
+                }
+                log("Bot token now available; proceeding with startup");
             }
-            
+
             initHttpClient();
             initCommandRouter();
             startIpcServer();  // Start IPC server for app notifications
             startPolling();
-            
+
             log("Daemon running, polling for updates...");
             Looper.loop();
-            
+
         } catch (Exception e) {
             log("FATAL: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Sit in the daemon waiting for a bot token to be configured. Polls
+     * UnifiedConfigManager every 30s. Returns true once a token is present
+     * (so main() can proceed with normal startup), false if interrupted.
+     *
+     * Stays inside the same JVM so we don't trigger the watchdog clean-exit
+     * spawn-burn loop. 30s poll is cheap — just a forceReload + getter
+     * call, no IPC.
+     */
+    private static boolean waitForBotTokenAndReload() {
+        log("Bot token not configured — parking daemon (will poll every 30s)");
+        long startMs = System.currentTimeMillis();
+        long lastLogMs = startMs;
+        while (running) {
+            try {
+                Thread.sleep(30_000L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+
+            try {
+                com.overdrive.app.config.UnifiedConfigManager.forceReload();
+                String tok = com.overdrive.app.telegram.config.UnifiedTelegramConfig.getBotToken();
+                if (tok != null && !tok.isEmpty()) {
+                    botToken = tok;
+                    ownerChatId = com.overdrive.app.telegram.config.UnifiedTelegramConfig.getOwnerChatId();
+                    videoUploadsEnabled = com.overdrive.app.telegram.config.UnifiedTelegramConfig.isVideoUploads();
+                    criticalAlertsEnabled = com.overdrive.app.telegram.config.UnifiedTelegramConfig.isCriticalAlerts();
+                    connectivityAlertsEnabled = com.overdrive.app.telegram.config.UnifiedTelegramConfig.isConnectivity();
+                    motionTextEnabled = com.overdrive.app.telegram.config.UnifiedTelegramConfig.isMotionText();
+                    log("Token-wait: token detected after " + ((System.currentTimeMillis() - startMs) / 1000) + "s");
+                    return true;
+                }
+            } catch (Exception e) {
+                // Don't log per-iteration — config may not exist yet on a
+                // very fresh install and that's expected. Surface every
+                // 5 minutes so a permanent failure (filesystem error) is
+                // visible.
+                if (System.currentTimeMillis() - lastLogMs > 300_000L) {
+                    log("Token-wait: config read error: " + e.getMessage());
+                    lastLogMs = System.currentTimeMillis();
+                }
+            }
+        }
+        return false;
     }
     
     // ==================== DUPLICATE INSTANCE CLEANUP ====================
@@ -177,35 +247,129 @@ public class TelegramBotDaemon {
     
     /**
      * Acquire a file lock to ensure only one daemon instance runs at a time.
-     * Same pattern as CameraDaemon / AccSentryDaemon.
+     * Mirrors the CameraDaemon pattern with PID-cmdline validation:
+     *   - empty / corrupt PID file       → stale, clean up + retry
+     *   - holder PID is our own PID      → stale, clean up + retry
+     *   - /proc/PID gone                 → dead PID, stale, retry
+     *   - /proc/PID/cmdline NOT us       → recycled PID, stale, retry
+     *   - /proc/PID/cmdline IS us        → real conflict, refuse
+     *   - /proc/PID/cmdline UNREADABLE   → assume conflict (don't steal lock
+     *                                      from a legit daemon under
+     *                                      different UID / hidepid=2)
+     *
+     * The previous version was a single tryLock+exit-on-failure, which on
+     * a clean SIGKILL of the prior incarnation could race the kernel's
+     * lock-release: killOldInstances did kill -9 + 500ms sleep, but a
+     * D-state I/O hang on slow flash can hold the inode lock past that.
+     * Result: every subsequent retry succeeded, but the first 1–N retries
+     * after a kill burned 3–60s of watchdog backoff per instance.
+     * The retry-after-stale-cleanup loop here collapses that to a single
+     * start.
      */
     private static boolean acquireSingletonLock() {
         try {
             java.io.File lockFileObj = new java.io.File(LOCK_FILE);
             lockFileHandle = new java.io.RandomAccessFile(lockFileObj, "rw");
             java.nio.channels.FileChannel channel = lockFileHandle.getChannel();
-            
-            // Try to acquire exclusive lock (non-blocking)
+
             fileLock = channel.tryLock();
-            
+
             if (fileLock == null) {
-                lockFileHandle.close();
-                return false;
+                boolean stale = false;
+                String reason = null;
+                try {
+                    lockFileHandle.seek(0);
+                    String pidStr = lockFileHandle.readLine();
+                    int myPid = android.os.Process.myPid();
+                    if (pidStr == null || pidStr.trim().isEmpty()) {
+                        stale = true;
+                        reason = "empty lock file";
+                    } else {
+                        int pid = Integer.parseInt(pidStr.trim());
+                        if (pid == myPid) {
+                            stale = true;
+                            reason = "lock held by our own PID (previous crash)";
+                        } else if (!new java.io.File("/proc/" + pid).exists()) {
+                            stale = true;
+                            reason = "dead PID " + pid;
+                        } else {
+                            CmdlineMatch match = classifyCmdline(pid);
+                            if (match == CmdlineMatch.MATCH) {
+                                log("Singleton: live daemon PID " + pid
+                                        + " holds the lock (cmdline="
+                                        + readProcCmdline(pid) + ")");
+                                try { lockFileHandle.close(); } catch (Exception ignored) {}
+                                return false;
+                            }
+                            if (match == CmdlineMatch.UNKNOWN) {
+                                // Different UID / hidepid=2 — refuse to
+                                // steal. Watchdog backoff handles the retry.
+                                log("Singleton: PID " + pid + " holds the lock"
+                                        + " but cmdline is unreadable — refusing");
+                                try { lockFileHandle.close(); } catch (Exception ignored) {}
+                                return false;
+                            }
+                            stale = true;
+                            reason = "PID " + pid + " is alive but not a TelegramBotDaemon"
+                                    + " (cmdline=" + readProcCmdline(pid) + ")";
+                        }
+                    }
+                } catch (NumberFormatException nfe) {
+                    stale = true;
+                    reason = "corrupt PID in lock file";
+                } catch (Exception e) {
+                    log("Singleton: lock-file inspection failed: " + e.getMessage());
+                    try { lockFileHandle.close(); } catch (Exception ignored) {}
+                    return false;
+                }
+
+                if (stale) {
+                    log("Singleton: stale lock (" + reason + ") — cleaning up");
+                    try { lockFileHandle.close(); } catch (Exception ignored) {}
+                    lockFileObj.delete();
+
+                    // Bounded retry loop. The kernel may not have released
+                    // the inode-level lock the instant the holder process
+                    // dies — D-state I/O hangs on slow flash can hold it
+                    // for up to a few hundred ms past SIGKILL. Try 5 times
+                    // with 200ms backoff before giving up.
+                    boolean acquired = false;
+                    for (int attempt = 0; attempt < 5; attempt++) {
+                        try { Thread.sleep(200); } catch (InterruptedException ignored) {}
+                        try {
+                            lockFileHandle = new java.io.RandomAccessFile(lockFileObj, "rw");
+                            channel = lockFileHandle.getChannel();
+                            fileLock = channel.tryLock();
+                            if (fileLock != null) {
+                                acquired = true;
+                                break;
+                            }
+                            try { lockFileHandle.close(); } catch (Exception ignored) {}
+                        } catch (Exception e) {
+                            // Filesystem error / lock-on-deleted-inode race —
+                            // try again. On exhausting attempts we return false
+                            // and let the watchdog back off.
+                        }
+                    }
+                    if (!acquired) {
+                        log("Singleton: retry-after-stale-cleanup exhausted (5x 200ms)");
+                        return false;
+                    }
+                }
             }
-            
-            // Write our PID to the lock file for debugging
+
+            lockFileHandle.seek(0);
             lockFileHandle.setLength(0);
             lockFileHandle.writeBytes(String.valueOf(android.os.Process.myPid()));
-            
+
             log("Acquired singleton lock (PID: " + android.os.Process.myPid() + ")");
-            
-            // Register shutdown hook to release lock on process termination
+
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 releaseSingletonLock();
             }));
-            
+
             return true;
-            
+
         } catch (java.nio.channels.OverlappingFileLockException e) {
             log("Lock already held by this process");
             return false;
@@ -213,6 +377,62 @@ public class TelegramBotDaemon {
             log("Failed to acquire singleton lock: " + e.getMessage());
             return false;
         }
+    }
+
+    private enum CmdlineMatch { MATCH, NO_MATCH, UNKNOWN }
+
+    /**
+     * Classify a PID's /proc/<pid>/cmdline. Distinguishes "definitely not
+     * us" (recycled PID) from "we can't tell" (different UID / hidepid=2).
+     * The distinction matters because we MUST NOT steal a lock from a
+     * legitimately-running daemon under a different UID.
+     */
+    private static CmdlineMatch classifyCmdline(int pid) {
+        java.io.File f = new java.io.File("/proc/" + pid + "/cmdline");
+        if (!f.exists()) return CmdlineMatch.NO_MATCH; // PID gone
+        if (!f.canRead()) return CmdlineMatch.UNKNOWN; // hidepid / EACCES
+        String cmdline = readProcCmdline(pid);
+        if (cmdline.isEmpty()) return CmdlineMatch.NO_MATCH; // kernel thread / race
+        return isTelegramDaemonCmdline(cmdline) ? CmdlineMatch.MATCH : CmdlineMatch.NO_MATCH;
+    }
+
+    /**
+     * Read /proc/<pid>/cmdline streaming-to-EOF. /proc/.../cmdline reports
+     * stat()-size=0 on most kernels even when populated, so size-hinted
+     * reads short-read. NUL bytes are turned into spaces.
+     */
+    private static String readProcCmdline(int pid) {
+        java.io.File f = new java.io.File("/proc/" + pid + "/cmdline");
+        if (!f.exists()) return "";
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(f)) {
+            byte[] buf = new byte[4096];
+            int total = 0;
+            int n;
+            while (total < buf.length && (n = fis.read(buf, total, buf.length - total)) > 0) {
+                total += n;
+            }
+            if (total == 0) return "";
+            StringBuilder sb = new StringBuilder(total);
+            for (int i = 0; i < total; i++) {
+                byte b = buf[i];
+                sb.append(b == 0 ? ' ' : (char) (b & 0xff));
+            }
+            return sb.toString().trim();
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    /**
+     * Anchored cmdline match. The legitimate ways this daemon shows up:
+     *   - argv[0] after kernel applies nice-name: "telegram_bot_daemon"
+     *   - app_process invocation: "...--nice-name=telegram_bot_daemon..."
+     *   - some launchers append the FQCN as entry-point arg
+     */
+    private static boolean isTelegramDaemonCmdline(String cmdline) {
+        if (cmdline == null || cmdline.isEmpty()) return false;
+        return cmdline.contains("telegram_bot_daemon")
+                || cmdline.contains("com.overdrive.app.daemon.TelegramBotDaemon");
     }
     
     /**
@@ -658,37 +878,78 @@ public class TelegramBotDaemon {
                     boolean isNew = cmd.optBoolean("isNew", true);
                     log("IPC notifyTunnel: url=" + url + ", isNew=" + isNew);
                     if (!url.isEmpty() && ownerChatId > 0) {
-                        // Save URL to file for /url command
-                        saveTunnelUrl(url);
-
-                        // Check the post-update hint file. If present, the new
-                        // URL was caused by an app update — frame the message
-                        // accordingly and consume the hint so subsequent tunnel
-                        // restarts go back to the generic copy. Hint contents:
-                        // the new version string (e.g. "alpha-v11.4").
-                        String postUpdateVersion = consumePostUpdateHint();
-
-                        String msg;
-                        if (postUpdateVersion != null) {
-                            // Cloudflared free quick-tunnels rotate their URL on
-                            // every restart (*.trycloudflare.com); zrok/tailscale/
-                            // named cloudflared tunnels keep the same URL. Only
-                            // call out the rotation when it actually happened.
-                            boolean rotates = url.contains(".trycloudflare.com");
-                            msg = "🔄 *Overdrive updated to " + postUpdateVersion + "*\n" +
-                                  (rotates ? "New tunnel URL:\n" : "Tunnel back online:\n") + url;
-                            if (rotates) {
-                                msg += "\n\n_The cloudflared link rotates after every install._";
+                        // Critical section: serialize peek→throttle→consume→
+                        // send→stamp so two parallel IPC workers cannot both
+                        // bypass the post-update throttle and double-send.
+                        // See TUNNEL_NOTIFY_LOCK comment for rationale.
+                        synchronized (TUNNEL_NOTIFY_LOCK) {
+                            // Throttle: when cloudflared health-check is in a
+                            // restart loop (process keeps dying — bad network,
+                            // edge issue, OOM), each respawn rotates the
+                            // trycloudflare.com hostname → new IPC notify →
+                            // would otherwise be one Telegram message per
+                            // restart cycle (worst case ~120/hour). Skip if
+                            // we sent a tunnel-URL message in the last 10 min,
+                            // UNLESS this is the post-update rotation (user
+                            // genuinely wants the "URL changed because of
+                            // update" explanation NOW, not delayed by 10 min).
+                            // Peek the hint file FIRST so we can decide whether
+                            // to bypass; consume only on actual send so a
+                            // throttle-suppressed call doesn't silently swallow
+                            // the hint and deny the next legit notify its
+                            // post-update framing.
+                            boolean postUpdatePresent = new File(
+                                    "/data/local/tmp/overdrive_post_update_pending_telegram"
+                                ).exists();
+                            if (!postUpdatePresent
+                                    && shouldThrottleTunnelNotify()) {
+                                log("notifyTunnel throttled (URL-rotation loop suppression): "
+                                        + url);
+                                // Still update tunnel_url.txt so /url command
+                                // returns the current URL even when throttled.
+                                saveTunnelUrl(url);
+                                response.put("status", "skipped");
+                                response.put("message", "throttled");
+                                break;
                             }
-                        } else if (isNew) {
-                            msg = "🌐 *Tunnel URL*\n" + url;
-                        } else {
-                            msg = "🔄 *Tunnel URL Changed*\n" + url;
+
+                            // Save URL to file for /url command
+                            saveTunnelUrl(url);
+
+                            // Now consume the hint (if present). After
+                            // consumption, the hint is gone and subsequent
+                            // tunnel restarts go back to the generic copy.
+                            String postUpdateVersion = consumePostUpdateHint();
+
+                            String msg;
+                            if (postUpdateVersion != null) {
+                                // Cloudflared free quick-tunnels rotate their URL on
+                                // every restart (*.trycloudflare.com); zrok/tailscale/
+                                // named cloudflared tunnels keep the same URL. Only
+                                // call out the rotation when it actually happened.
+                                boolean rotates = url.contains(".trycloudflare.com");
+                                msg = "🔄 *Overdrive updated to " + postUpdateVersion + "*\n" +
+                                      (rotates ? "New tunnel URL:\n" : "Tunnel back online:\n") + url;
+                                if (rotates) {
+                                    msg += "\n\n_The cloudflared link rotates after every install._";
+                                }
+                            } else if (isNew) {
+                                msg = "🌐 *Tunnel URL*\n" + url;
+                            } else {
+                                msg = "🔄 *Tunnel URL Changed*\n" + url;
+                            }
+                            boolean ok = sendMessage(ownerChatId, msg);
+                            log("notifyTunnel message sent: " + ok +
+                                    (postUpdateVersion != null ? " (post-update)" : ""));
+                            if (ok) {
+                                // Stamp only on send success; failed delivery
+                                // (network blip) shouldn't consume the throttle
+                                // window and silently drop the next legitimate
+                                // notify.
+                                stampTunnelNotify();
+                            }
+                            response.put("status", ok ? "ok" : "error");
                         }
-                        boolean ok = sendMessage(ownerChatId, msg);
-                        log("notifyTunnel message sent: " + ok +
-                                (postUpdateVersion != null ? " (post-update)" : ""));
-                        response.put("status", ok ? "ok" : "error");
                     } else {
                         response.put("status", "error");
                         response.put("message", "No URL or owner not set");
@@ -859,25 +1120,222 @@ public class TelegramBotDaemon {
     
     /**
      * Send a startup greeting message to the owner.
+     *
+     * Throttled across daemon restarts via a persisted timestamp file. Without
+     * this, every fresh process — watchdog crash-loop respawn, lock-collision
+     * retry after zombie holder dies, lmkd reap, post-update hardReset double-
+     * fire — would emit one greeting. Worst case (clean-exit branch in
+     * start_telegram.sh: 10s sleep) is ~360/hour. The throttle window matches
+     * "user genuinely cares about a bot-online ping" — once per hour is
+     * generous for actual uptime feedback while collapsing crash-loop noise
+     * to a single message.
      */
+    private static final String GREETING_STAMP_FILE = "/data/local/tmp/.tg_last_greeted";
+    private static final long GREETING_THROTTLE_MS = 60L * 60L * 1000L; // 1 hour
+
+    /**
+     * Read the kernel boot_id, a UUID that changes on every boot. Used to
+     * detect "stamp file was written under a previous boot" so we can
+     * bypass the greeting throttle after a hard reboot. /data/local/tmp/
+     * lives on persistent storage (ext4 on /data partition), so a plain
+     * mtime stamp would survive reboot and incorrectly suppress the
+     * "back online" greeting if the user rebooted within the throttle
+     * window. boot_id changes on every kernel boot, so the comparison
+     * captures the reboot signal cleanly.
+     *
+     * Returns "" if the file isn't readable (unusual but not impossible
+     * on hardened devices). On "" we fall back to mtime-only behavior —
+     * one extra greeting after reboot is preferable to silently dropping.
+     */
+    private static String readBootId() {
+        try (java.io.BufferedReader r = new java.io.BufferedReader(
+                new java.io.InputStreamReader(new java.io.FileInputStream(
+                        "/proc/sys/kernel/random/boot_id")))) {
+            String line = r.readLine();
+            return line != null ? line.trim() : "";
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
+    // Tunnel-URL notification throttle. Lives on the daemon side because
+    // the app UID (10xxx) cannot create files in /data/local/tmp/ — only
+    // the daemon UID (2000 / shell) can. The cloudflared free tier
+    // rotates its *.trycloudflare.com URL on every restart, so every
+    // health-check restart loop produces a "URL changed" Telegram message
+    // unless throttled. 10 min window matches "user-meaningful URL
+    // change" — anything more frequent IS the loop, not real change.
+    private static final String TUNNEL_NOTIFY_STAMP_FILE = "/data/local/tmp/.tunnel_last_notified";
+    private static final long TUNNEL_NOTIFY_THROTTLE_MS = 10L * 60L * 1000L; // 10 min
+
+    // Serializes the notifyTunnel IPC critical section. IPC_WORKERS is a
+    // 2-thread pool so two notifyTunnel calls can race in the post-update
+    // window: both peek the hint file present, both bypass the throttle,
+    // both consume the hint via consumePostUpdateHint() (which delete()s
+    // the file). First call sends the "Overdrive updated to vX.Y" message,
+    // second call sees postUpdateVersion=null and sends a generic "URL
+    // changed" — TWO user-facing notifications instead of one. Locking the
+    // peek+throttle+consume+send+stamp sequence under one mutex makes the
+    // second IPC observe the first's stamp file and throttle correctly.
+    // The critical section is dominated by the Telegram sendMessage HTTP
+    // call (~200-1000ms), which is acceptable: notifyTunnel is bursty
+    // (one per tunnel start) not high-frequency.
+    private static final Object TUNNEL_NOTIFY_LOCK = new Object();
+
+    private static boolean shouldThrottleTunnelNotify() {
+        try {
+            File stamp = new File(TUNNEL_NOTIFY_STAMP_FILE);
+            if (!stamp.exists()) return false;
+            long age = System.currentTimeMillis() - stamp.lastModified();
+            if (age < 0 || age >= TUNNEL_NOTIFY_THROTTLE_MS) return false;
+
+            // Boot-id check: same rationale as the greeting throttle.
+            // /data is ext4 (persistent) — a reboot within 10min would
+            // otherwise eat the legit "tunnel back online" notification.
+            String currentBootId = readBootId();
+            String stampedBootId = "";
+            try (java.io.BufferedReader r = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(new java.io.FileInputStream(stamp)))) {
+                String line = r.readLine();
+                if (line != null) stampedBootId = line.trim();
+            } catch (Exception ignored) {}
+
+            if (currentBootId.isEmpty()
+                    || stampedBootId.isEmpty()
+                    || !currentBootId.equals(stampedBootId)) {
+                // Different boot or unreadable boot_id — let the notify
+                // through. The send path will rewrite the stamp with
+                // the current boot_id.
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            // Fail-open — never silently drop a notification on stat error.
+            return false;
+        }
+    }
+
+    private static void stampTunnelNotify() {
+        try {
+            File stamp = new File(TUNNEL_NOTIFY_STAMP_FILE);
+            String body = readBootId();
+            try (java.io.FileWriter fw = new java.io.FileWriter(stamp)) {
+                fw.write(body);
+            }
+            // chmod 666 so the app process (UID 10xxx) can stat the
+            // file for diagnostics. The throttle write itself is
+            // daemon-only; this is just for observability.
+            try { stamp.setReadable(true, false); } catch (Exception ignored) {}
+            try { stamp.setWritable(true, false); } catch (Exception ignored) {}
+        } catch (Exception e) {
+            // Worst case: one extra notification on the next event.
+            log("Tunnel stamp write error: " + e.getMessage());
+        }
+    }
+
     private static void sendStartupGreeting() {
         if (ownerChatId <= 0) {
             log("No owner paired, skipping startup greeting");
             return;
         }
-        
+
+        // Bypass throttle when this restart was caused by an app update —
+        // the user just installed a new version and DOES want the
+        // bot-online confirmation, even if a prior greeting fired within
+        // the throttle window. The hint file is consumed elsewhere (by
+        // notifyTunnel for the post-update tunnel-URL message); we only
+        // peek here so both flows can read it independently.
+        boolean postUpdateBypass = new File(
+                "/data/local/tmp/overdrive_post_update_pending_telegram").exists();
+
+        // Cross-process throttle: skip if we greeted within the last hour
+        // AND under the same kernel boot_id. File lives in /data/local/tmp
+        // (writable by UID 2000 shell that runs this daemon) so it survives
+        // SIGKILL, lock-collision exit(1), and watchdog clean/error
+        // respawns. /data is ext4 (persistent), so it ALSO survives reboot
+        // — we compare the stamped boot_id against the current one to
+        // detect that case and bypass.
+        //
+        // User-initiated stop clears the stamp via DaemonLauncher
+        // .stopTelegramDaemon, so toggle-off-then-on also bypasses without
+        // needing a special signal here.
+        String currentBootId = readBootId();
+        if (!postUpdateBypass) {
+            try {
+                File stamp = new File(GREETING_STAMP_FILE);
+                if (stamp.exists()) {
+                    long age = System.currentTimeMillis() - stamp.lastModified();
+                    if (age >= 0 && age < GREETING_THROTTLE_MS) {
+                        // Read stamped boot_id from the file. Empty/missing
+                        // content = pre-boot_id-aware stamp, treat as
+                        // "different boot" and bypass (one extra greeting
+                        // on upgrade-day, then steady state).
+                        String stampedBootId = "";
+                        try (java.io.BufferedReader r = new java.io.BufferedReader(
+                                new java.io.InputStreamReader(new java.io.FileInputStream(stamp)))) {
+                            String line = r.readLine();
+                            if (line != null) stampedBootId = line.trim();
+                        } catch (Exception ignored) {}
+
+                        if (!currentBootId.isEmpty()
+                                && !stampedBootId.isEmpty()
+                                && currentBootId.equals(stampedBootId)) {
+                            log("Startup greeting throttled (last sent " + (age / 1000) + "s ago, same boot)");
+                            return;
+                        }
+                        // boot_id mismatch (or unreadable) → reboot
+                        // happened or stamp is from before this feature
+                        // shipped — let the greeting fire.
+                        log("Greeting throttle bypassed (reboot detected: stamped="
+                                + (stampedBootId.isEmpty() ? "<empty>" : stampedBootId)
+                                + ", current=" + (currentBootId.isEmpty() ? "<empty>" : currentBootId) + ")");
+                    }
+                }
+            } catch (Exception e) {
+                // Fail-open: a stat blip shouldn't suppress the greeting.
+                log("Greeting throttle check error: " + e.getMessage());
+            }
+        } else {
+            log("Greeting throttle bypassed (post-update)");
+        }
+
         try {
             String greeting = "🤖 *Surveillance Bot Online*\n\n" +
                     "Bot daemon started and ready.\n" +
                     "Use /help for available commands.";
-            
+
             String[][][] buttons = {
                 {{"📊 Status", "cmd:/status"}, {"🤖 Daemons", "cmd:/daemons"}},
                 {{"📹 Events", "cmd:/events"}, {"🌐 Tunnel URL", "cmd:/url"}}
             };
-            
+
             boolean sent = sendMessageWithButtons(ownerChatId, greeting, buttons);
             log("Startup greeting sent: " + sent);
+
+            if (sent) {
+                // Only stamp on success — if delivery failed (network blip),
+                // we want the next restart to retry, not silently swallow.
+                // Write current boot_id into the file body so a post-reboot
+                // throttle check can detect the boot transition. Using
+                // FileWriter (not FileOutputStream + write(0)) so the body
+                // is the actual boot_id, not a sentinel byte.
+                try {
+                    File stamp = new File(GREETING_STAMP_FILE);
+                    String body = currentBootId.isEmpty() ? "" : currentBootId;
+                    try (java.io.FileWriter fw = new java.io.FileWriter(stamp)) {
+                        fw.write(body);
+                    }
+                    // First-write chmod 666 so the app-side process can
+                    // stat for diagnostics (read-only). Idempotent on
+                    // subsequent rewrites.
+                    try { stamp.setReadable(true, false); } catch (Exception ignored) {}
+                    try { stamp.setWritable(true, false); } catch (Exception ignored) {}
+                } catch (Exception e) {
+                    // Worst case here is one extra greeting on the next
+                    // restart — not worth surfacing as an error.
+                    log("Greeting stamp write error: " + e.getMessage());
+                }
+            }
         } catch (Exception e) {
             log("Startup greeting error: " + e.getMessage());
         }

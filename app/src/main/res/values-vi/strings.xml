@@ -22,6 +22,7 @@
     <string name="cd_expand_collapse">Sự mở rộng/sự sụp đổ</string>
     <string name="cd_recording_status">Tình trạng ghi âm</string>
     <string name="cd_trip_tracking_status">Tình trạng theo dõi chuyến đi</string>
+    <string name="cd_mic_status">Tình trạng chụp micrô</string>
     <string name="cd_video_thumbnail">Hình ảnh nhỏ video</string>
     <string name="cd_play">Phát</string>
     <string name="cd_back">Quay lại</string>
@@ -30,6 +31,7 @@
     <string name="cd_player_next">Bản ghi kế tiếp</string>
     <string name="cd_player_maximize">Tăng tối đa người chơi</string>
     <string name="cd_player_minimize">Chiếc màn hình đầy đủ xuất hiện</string>
+    <string name="cd_player_mute">Đổi âm thanh</string>
     <string name="cd_delete">Xoá</string>
     <string name="cd_expand">Tăng cường</string>
     <string name="cd_configure">Thiết lập</string>
@@ -40,6 +42,7 @@
     <string name="cd_permission_granted">Giấy phép được cấp</string>
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">TRIP</string>
+    <string name="overlay_mic_inactive_label">MIC</string>
     <string name="log_entry_default_timestamp">12:34:56</string>
     <string name="log_entry_default_tag">[THAG]</string>
     <string name="log_entry_default_message">Thông báo đăng ký ở đây</string>
@@ -333,6 +336,7 @@
     <string name="toast_fetching_log">Mang theo nhật ký %1$s...</string>
     <string name="toast_log_empty_or_missing">Dữ liệu nhật ký trống hoặc không tìm thấy</string>
     <string name="toast_log_empty">Dữ liệu nhật ký trống</string>
+    <string name="toast_daemon_manager_unavailable">Người quản lý Daemon không sẵn sàng, hãy thử lại ngay.</string>
     <string name="toast_log_save_failed">Không lưu nhật ký: %1$s</string>
     <string name="toast_log_not_found">Tệp nhật ký không tìm thấy hoặc không thể đọc được</string>
     <string name="log_share_title">%1$s Log - %2$s</string>
@@ -350,6 +354,12 @@
     <string name="play_with_chooser">Chơi với</string>
     <string name="setup_version_banner">Cập nhật v%1$s  xác nhận lại tự động khởi động, BYD xóa nó trên mỗi cài đặt</string>
     <string name="setup_overlay_already_granted">Đã được cấp</string>
+    <string name="setup_tips_header">Mẹo &amp; giải quyết các vấn đề</string>
+    <string name="setup_traffic_title">Thiết lập màn hình giao thông BYD</string>
+    <string name="setup_traffic_body">BYD Traffic Monitor ngăn chặn các ứng dụng bên thứ ba tiếp cận internet. Khóa nó cho phép OverDrive và bất kỳ ứng dụng nào bạn cài đặt thực sự sử dụng mạng. Một khởi động lại cứng là cần thiết sau đó.</string>
+    <string name="setup_traffic_button">Kiểm tra giao thông mở</string>
+    <string name="setup_camera_fix_title">Máy ảnh đưa màu đen hay không đúng?</string>
+    <string name="setup_camera_fix_body">Open Diagnostics → Camera probe, đặt Camera ID lên 0, nhấn Save, sau đó khởi động lại camera daemon. Nếu nguồn cấp dữ liệu vẫn sai, lặp lại với Camera ID 1. Để phần bản đồ không bị ảnh hưởng.</string>
     <string name="camera_current_manual">Hiện tại: Camera %1$d (Hướng dẫn)</string>
     <string name="camera_current_auto_label">Hiện tại: tự động</string>
     <string name="soh_estimation_active">Đánh giá hoạt động</string>

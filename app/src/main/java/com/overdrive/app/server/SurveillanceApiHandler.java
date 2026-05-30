@@ -432,6 +432,9 @@ public class SurveillanceApiHandler {
         config.put("screenDeterrentEnabled", survConfig.optBoolean("screenDeterrentEnabled", false));
         config.put("screenDeterrentDurationSeconds", survConfig.optInt("screenDeterrentDurationSeconds", 8));
         config.put("screenDeterrentMessage", survConfig.optString("screenDeterrentMessage", ""));
+        // ACC-OFF mode: "smart" (motion + YOLO) | "continuous" (plain rolling).
+        // Branched at SurveillanceEngineGpu.enable(). Default smart.
+        config.put("accOffMode", survConfig.optString("accOffMode", "smart"));
         // Verify the file actually exists before claiming hasImage=true.
         // Without this check, a stale UCM pointer (file deleted out-of-band)
         // makes the UI show a broken preview spinner forever.
@@ -849,6 +852,132 @@ public class SurveillanceApiHandler {
                 if (msg.length() > 120) msg = msg.substring(0, 120);
                 com.overdrive.app.config.UnifiedConfigManager.updateValues(
                         "surveillance", java.util.Collections.singletonMap("screenDeterrentMessage", msg));
+            }
+
+            // ACC-OFF mode: only "smart" or "continuous" are valid; anything
+            // else is rejected silently (the engine falls back to "smart"
+            // anyway, but logging the bad value here makes debugging easier).
+            if (configJson.has("accOffMode")) {
+                String mode = configJson.optString("accOffMode", "smart");
+                if ("smart".equals(mode) || "continuous".equals(mode)) {
+                    String prevMode = com.overdrive.app.config.UnifiedConfigManager
+                            .getSurveillance().optString("accOffMode", "smart");
+                    boolean persisted = com.overdrive.app.config.UnifiedConfigManager.updateValues(
+                            "surveillance", java.util.Collections.singletonMap("accOffMode", mode));
+                    if (!persisted) {
+                        // UCM write failed (typically EACCES on app-UID writes
+                        // to /data/local/tmp). Without this guard the engine
+                        // would still flip — but since enable() forceReloads
+                        // and reads the OLD value from disk, the engine ends
+                        // up back in the previous mode while the JS layer
+                        // shows a "saved" toast. Surface the failure so the
+                        // UI revert path runs.
+                        CameraDaemon.log("Failed to persist accOffMode=" + mode);
+                        HttpResponse.sendJsonError(out, "Failed to save ACC-OFF mode");
+                        return;
+                    }
+                    CameraDaemon.log("ACC-OFF mode set to: " + mode);
+
+                    // Mid-session honor: if surveillance is currently armed
+                    // (ACC OFF + door-lock arm fired) AND the mode actually
+                    // flipped, restart the engine. disableSurveillance()
+                    // closes the in-flight recording cleanly and clears the
+                    // engine's latch; enableSurveillance() re-runs sentry.enable(),
+                    // which forceReloads UnifiedConfig and picks up the new mode.
+                    // Skip when ACC is ON — the change just sits in config and
+                    // takes effect on the next ACC OFF cycle.
+                    boolean modeChanged = !mode.equals(prevMode);
+                    boolean accOff = !com.overdrive.app.monitor.AccMonitor.isAccOn();
+                    // Genuinely armed = user wants surveillance AND the engine
+                    // is actually live. Safe-zone-suppressed sessions have
+                    // surveillanceEnabled=true (intent flag) but the engine
+                    // never started, so a disable+enable roundtrip is wasted
+                    // work that bounces the safeZoneSuppressed flag. The next
+                    // time the car leaves the safe zone, the cloud-MQTT zone-
+                    // exit handler will arm surveillance fresh and sentry.enable()
+                    // will read the latest mode from UCM at that point.
+                    boolean armed = CameraDaemon.isSurveillanceEnabled()
+                            && !CameraDaemon.isSafeZoneSuppressed();
+                    if (modeChanged && accOff && armed) {
+                        CameraDaemon.log("Mid-session mode switch (" + prevMode + "→" + mode
+                                + ") — restarting surveillance engine");
+                        // Restart on a worker so the HTTP response thread isn't
+                        // tied up by the brief stop+restart. The engine's
+                        // disable() drains in-flight inferences (~50 ms) and
+                        // closeEventRecording flushes the muxer; enable() then
+                        // re-allocates the pipeline state and triggers the
+                        // first segment of the new mode.
+                        //
+                        // Edge cases the post-sleep recheck guards against:
+                        //  - ACC turns ON during the 300 ms gap → enableSurveillance()
+                        //    has its own ACC-ON guard, so the recheck is belt-and-
+                        //    braces but cheap.
+                        //  - Owner unlocks the car during the gap → applyLockEvent
+                        //    fires disableSurveillance() and clears surveillanceEnabled.
+                        //    Without this recheck we'd silently re-arm a session the
+                        //    user just disarmed by walking up to the car.
+                        //  - Concurrent mode flips → the LATER worker's disable wins
+                        //    because both sleep then re-check; whichever observes
+                        //    surveillanceEnabled=false (from the other's disable)
+                        //    skips its enable. The remaining flip stays armed in
+                        //    the latest mode persisted to UCM.
+                        new Thread(() -> {
+                            try {
+                                CameraDaemon.disableSurveillance();
+                                Thread.sleep(300);
+                                if (com.overdrive.app.monitor.AccMonitor.isAccOn()) {
+                                    CameraDaemon.log("Mode-switch: ACC turned ON during restart — skipping re-arm");
+                                    return;
+                                }
+                                // Re-arm only if the door-lock gate is still
+                                // armed (owner hasn't returned). UnifiedConfig's
+                                // isSurveillanceEnabled is the user's general
+                                // preference and stays true even after an
+                                // owner-unlock disarm — it would falsely re-arm
+                                // a session the owner just walked into. The
+                                // door-lock arm flag is the runtime truth and
+                                // is independent of disableSurveillance() so it
+                                // survives our stop call.
+                                if (!CameraDaemon.isDoorLockArmed()) {
+                                    CameraDaemon.log("Mode-switch: lock gate disarmed during restart — skipping re-arm");
+                                    return;
+                                }
+                                // Schedule check: if the user has a time-window
+                                // schedule and we fall outside it during the gap,
+                                // the schedule checker would have disabled
+                                // surveillance — we must respect that. Without
+                                // this re-check the schedule-checker's tick at
+                                // the window edge can race our re-arm and the
+                                // engine ends up running outside the user's
+                                // configured surveillance window.
+                                try {
+                                    com.overdrive.app.surveillance.SurveillanceSchedule sch =
+                                        com.overdrive.app.config.UnifiedConfigManager.getSurveillanceSchedule();
+                                    if (sch != null && sch.isEnabled() && !sch.isActiveNow()) {
+                                        CameraDaemon.log("Mode-switch: outside schedule window — skipping re-arm");
+                                        return;
+                                    }
+                                } catch (Throwable ignored) {}
+                                // If a peer (schedule checker, lock-event source)
+                                // re-armed the engine during our gap, the engine
+                                // is already running in the new mode — re-calling
+                                // enableSurveillance() would re-init pipelineV2,
+                                // reset baselines, and clobber the in-flight
+                                // recording. SurveillanceEngineGpu.enable() has
+                                // no idempotency guard. Skip if already armed.
+                                if (CameraDaemon.isSurveillanceEnabled()) {
+                                    CameraDaemon.log("Mode-switch: peer re-armed during gap — skipping redundant enable");
+                                    return;
+                                }
+                                CameraDaemon.enableSurveillance();
+                            } catch (Throwable t) {
+                                CameraDaemon.log("Mode-switch restart error: " + t.getMessage());
+                            }
+                        }, "AccOffModeSwitch").start();
+                    }
+                } else {
+                    CameraDaemon.log("Rejected accOffMode: " + mode);
+                }
             }
 
             if (configJson.has("clearScreenDeterrentImage") && configJson.optBoolean("clearScreenDeterrentImage", false)) {

@@ -101,9 +101,18 @@ class TailscaleController(
     }
 
     override fun cleanup() {
-        // Use pkill -f for more reliable process killing (matches full command line)
+        // ps+awk+kill instead of pkill -f. executeShellCommand wraps in
+        // `sh -c "<cmd>"`; the wrapper's argv contains the literal
+        // "tailscaled" → toybox pkill -f would SIGKILL the calling shell
+        // before `echo done` runs, so the callback only fires via
+        // onError after AdbShellExecutor's read-side times out.
+        // ps+awk+kill filters by PID list and excludes the calling
+        // shell's PID via $$.
         adbLauncher.executeShellCommand(
-            "pkill -9 -f 'tailscaled'; echo done",
+            "MY_PID=\$\$; ps -A -o PID,ARGS | grep -F tailscaled | grep -v grep " +
+                "| awk '{print \$1}' | while read pid; do " +
+                "if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done; " +
+                "echo done",
             object : AdbDaemonLauncher.LaunchCallback {
                 override fun onLog(message: String) {}
                 override fun onLaunched() {}

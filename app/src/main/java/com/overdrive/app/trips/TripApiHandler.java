@@ -426,6 +426,35 @@ public class TripApiHandler {
                 response.put("range", JSONObject.NULL);
                 response.put("message", "Not enough data");
             }
+
+            // PHEV — petrol leg. Computed only if vehicle is currently
+            // PHEV-classified, fuel% is readable, AND user has set tank
+            // capacity. Each precondition fails silently and the JSON key
+            // is simply absent on BEVs / PHEVs without enough config.
+            try {
+                com.overdrive.app.monitor.VehicleDataMonitor vdm =
+                        com.overdrive.app.monitor.VehicleDataMonitor.getInstance();
+                if (vdm.isPhev()) {
+                    com.overdrive.app.monitor.DrivingRangeData rangeData = vdm.getDrivingRange();
+                    TripConfig cfg = manager.getConfig();
+                    if (rangeData != null && rangeData.hasFuelPercent()
+                            && cfg != null && cfg.getTankCapacityL() > 0) {
+                        RangeEstimate fuelEst = estimator.estimateFuelRange(
+                                rangeData.fuelPercent, cfg.getTankCapacityL(),
+                                currentSpeed, extTemp, dnaOverall);
+                        if (fuelEst != null) {
+                            fuelEst.builtInRangeKm = rangeData.fuelRangeKm;
+                            response.put("fuelRange", fuelEst.toJson());
+                            // Combined headline number for the UI.
+                            double total = (estimate != null ? estimate.predictedRangeKm : 0)
+                                    + fuelEst.predictedRangeKm;
+                            response.put("totalRangeKm", total);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                logger.debug("Fuel range estimate skipped: " + e.getMessage());
+            }
             return response;
 
         } catch (Exception e) {
@@ -474,6 +503,15 @@ public class TripApiHandler {
             } catch (Throwable t) {
                 logger.debug("nominalKwh enrichment skipped: " + t.getMessage());
             }
+            // Drivetrain probe — gates PHEV-only UI rows (tank capacity,
+            // fuel price, l/100 km capsule on trip cards). Cached for 60 s
+            // so this is effectively free on every config refresh.
+            try {
+                configJson.put("isPhev",
+                        com.overdrive.app.monitor.VehicleDataMonitor.getInstance().isPhev());
+            } catch (Throwable t) {
+                logger.debug("isPhev probe skipped: " + t.getMessage());
+            }
             response.put("config", configJson);
         } catch (Exception e) {
             logger.error("Error building config response", e);
@@ -502,6 +540,15 @@ public class TripApiHandler {
                 }
                 if (bodyJson.has("currency")) {
                     config.setCurrency(bodyJson.getString("currency"));
+                }
+                if (bodyJson.has("tankCapacityL")) {
+                    config.setTankCapacityL(bodyJson.getDouble("tankCapacityL"));
+                }
+                if (bodyJson.has("fuelPricePerL")) {
+                    config.setFuelPricePerL(bodyJson.getDouble("fuelPricePerL"));
+                }
+                if (bodyJson.has("fuelUnit")) {
+                    config.setFuelUnit(bodyJson.getString("fuelUnit"));
                 }
                 if (bodyJson.has("distanceUnit")) {
                     String unit = bodyJson.getString("distanceUnit");
@@ -838,40 +885,90 @@ public class TripApiHandler {
      * This ensures old trips without kWh readings still show cost in the UI.
      */
     private void enrichTripEnergy(TripRecord trip) {
-        // Already has energy data — nothing to do
-        if (trip.getEnergyUsedKwh() > 0) return;
-        
-        // Need SoC delta to estimate
-        if (trip.socStart <= 0 || trip.socEnd <= 0 || trip.socStart <= trip.socEnd) return;
-        
-        try {
-            com.overdrive.app.abrp.SohEstimator soh = 
-                com.overdrive.app.monitor.SocHistoryDatabase.getInstance().getSohEstimator();
-            if (soh != null && soh.getNominalCapacityKwh() > 0) {
-                double nominal = soh.getNominalCapacityKwh();
-                double sohPercent = soh.hasEstimate() ? soh.getCurrentSoh() : 100.0;
-                double usableKwh = nominal * (sohPercent / 100.0);
-                double socDelta = trip.socStart - trip.socEnd;
-                double estimatedEnergy = (socDelta / 100.0) * usableKwh;
-                
-                // Update the in-memory record (not persisted to DB — just for API response)
-                trip.kwhStart = (trip.socStart / 100.0) * usableKwh;
-                trip.kwhEnd = (trip.socEnd / 100.0) * usableKwh;
-                
-                // Compute cost if rate is available
-                TripConfig config = manager.getConfig();
-                if (config != null && config.getElectricityRate() > 0 && trip.tripCost <= 0) {
-                    trip.electricityRate = config.getElectricityRate();
-                    trip.currency = config.getCurrency();
-                    trip.tripCost = estimatedEnergy * trip.electricityRate;
+        TripConfig config = manager.getConfig();
+        boolean costNeedsRecompute = false;
+
+        // Electric leg back-fill: estimate energy from SoC delta when BMS
+        // kWh wasn't available at the time. Only persists to in-memory record
+        // so the API response shows a useful value; DB stays untouched.
+        if (trip.getEnergyUsedKwh() <= 0
+                && trip.socStart > 0 && trip.socEnd > 0 && trip.socStart > trip.socEnd) {
+            try {
+                com.overdrive.app.abrp.SohEstimator soh =
+                    com.overdrive.app.monitor.SocHistoryDatabase.getInstance().getSohEstimator();
+                if (soh != null && soh.getNominalCapacityKwh() > 0) {
+                    double nominal = soh.getNominalCapacityKwh();
+                    double sohPercent = soh.hasEstimate() ? soh.getCurrentSoh() : 100.0;
+                    double usableKwh = nominal * (sohPercent / 100.0);
+                    double socDelta = trip.socStart - trip.socEnd;
+                    double estimatedEnergy = (socDelta / 100.0) * usableKwh;
+
+                    trip.kwhStart = (trip.socStart / 100.0) * usableKwh;
+                    trip.kwhEnd = (trip.socEnd / 100.0) * usableKwh;
+                    if (trip.distanceKm > 0) {
+                        trip.energyPerKm = estimatedEnergy / trip.distanceKm;
+                    }
+                    if (config != null && config.getElectricityRate() > 0) {
+                        // Only fill rate/currency snapshot when the trip has
+                        // none stored — preserves the rate at-time-of-trip
+                        // for already-priced trips (audit MEDIUM #4).
+                        if (trip.electricityRate <= 0) {
+                            trip.electricityRate = config.getElectricityRate();
+                        }
+                        if (trip.currency == null || trip.currency.isEmpty()) {
+                            trip.currency = config.getCurrency();
+                        }
+                        trip.electricCost = estimatedEnergy * trip.electricityRate;
+                        costNeedsRecompute = true;
+                    }
                 }
-                
-                if (trip.distanceKm > 0) {
-                    trip.energyPerKm = estimatedEnergy / trip.distanceKm;
+            } catch (Exception e) {
+                // SohEstimator not available — leave as-is
+            }
+        } else if (trip.electricCost <= 0 && trip.electricityRate > 0) {
+            // Trip has BMS kWh but no electricCost field stored (pre-PHEV-build
+            // trip). Fill from existing energy + rate.
+            trip.electricCost = trip.getEnergyUsedKwh() * trip.electricityRate;
+            costNeedsRecompute = true;
+        }
+
+        // Fuel leg back-fill for PHEV trips. Recomputes when the user has set
+        // tankCapacityL/fuelPricePerL after the trip was logged (or changed
+        // them since). Only the in-memory copy is updated; persisted trip
+        // record reflects what the values were at trip end.
+        //
+        // Invariant: trip.fuelCost is never mutated to zero by this method.
+        // The DB load path preserves any previously-stored fuelCost via
+        // readTripFromResultSet, and the `trip.fuelCost <= 0` guard below
+        // means we only fill from current config when the field is empty.
+        if (trip.isPhev && config != null
+                && trip.fuelPctStart >= 0 && trip.fuelPctEnd >= 0
+                && trip.fuelPctStart >= trip.fuelPctEnd
+                && (trip.fuelPctStart - trip.fuelPctEnd) >= 1.0) {
+            double tankL = config.getTankCapacityL();
+            double pricePerL = config.getFuelPricePerL();
+            if (tankL > 0) {
+                double litres = ((trip.fuelPctStart - trip.fuelPctEnd) / 100.0) * tankL;
+                if (trip.litresUsed <= 0) trip.litresUsed = litres;
+                if (pricePerL > 0 && trip.fuelCost <= 0) {
+                    // Preserve the at-trip-end snapshot if one was stored,
+                    // only fill from current config when missing.
+                    if (trip.fuelPricePerL <= 0) trip.fuelPricePerL = pricePerL;
+                    trip.fuelCost = litres * trip.fuelPricePerL;
+                    costNeedsRecompute = true;
                 }
             }
-        } catch (Exception e) {
-            // SohEstimator not available — leave as-is
+        }
+
+        if (costNeedsRecompute) {
+            // Preserve a non-zero pre-PHEV stored tripCost when the new
+            // electric+fuel sum is itself zero (e.g. config was wiped) —
+            // otherwise the recompute would silently zero out a previously
+            // valid display value on legacy rows.
+            double recomputed = trip.electricCost + trip.fuelCost;
+            if (recomputed > 0 || trip.tripCost <= 0) {
+                trip.tripCost = recomputed;
+            }
         }
     }
 

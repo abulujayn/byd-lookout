@@ -53,7 +53,11 @@ BYD.surveillance = {
         // match: NOTICE off (background noise), ALERT + CRITICAL on.
         telegramNotices: false,
         telegramAlerts: true,
-        telegramCritical: true
+        telegramCritical: true,
+        // ACC-OFF mode: 'smart' (motion + AI events, default) | 'continuous'
+        // (plain rolling 4-cam recording, no motion, no AI). Backward-compat:
+        // installs that pre-date this key see the smart default.
+        accOffMode: 'smart'
     },
     storageInfo: {
         sdCardAvailable: false,
@@ -1001,6 +1005,95 @@ BYD.surveillance = {
     v2EnvPresetHint(preset) { return BYD.i18n.t('surveillance.env_hint.' + preset); },
     v2DetectionZoneHint(zone) { return BYD.i18n.t('surveillance.zone_hint.' + zone); },
 
+    /**
+     * ACC-OFF mode toggle. Persists immediately (no Apply step) because the
+     * choice flips a different recording subsystem and waiting until the
+     * user re-finds the Apply button on a different tab is awkward. Mirrors
+     * the immediate-save pattern used for Telegram tier toggles.
+     *
+     * Side effect: dim/disable the detection / side-cam / ROI cards when
+     * Continuous is selected — those settings are inert in continuous mode
+     * (no motion analysis runs), so showing them as live is misleading.
+     */
+    setAccOffMode(mode) {
+        if (mode !== 'smart' && mode !== 'continuous') return;
+        const prev = this.config.accOffMode || 'smart';
+        if (prev === mode) return;
+
+        this.config.accOffMode = mode;
+        // Reflect button state immediately so the click feels responsive
+        // before the network round-trip resolves.
+        document.querySelectorAll('#accOffModeBtns .btn-toggle').forEach(btn =>
+            btn.classList.toggle('active', btn.dataset.value === mode));
+        this.applyAccOffModeUI();
+
+        const self = this;
+        fetch('/api/surveillance/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ accOffMode: mode })
+        }).then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+          .then(() => {
+              if (self.savedConfig) self.savedConfig.accOffMode = mode;
+              self.markChanged();
+              if (BYD.utils && BYD.utils.toast) {
+                  const k = mode === 'continuous'
+                      ? 'surveillance.accoff_saved_continuous'
+                      : 'surveillance.accoff_saved_smart';
+                  const fallback = mode === 'continuous'
+                      ? 'Continuous recording enabled'
+                      : 'Smart event recording enabled';
+                  const localized = BYD.i18n && BYD.i18n.t ? BYD.i18n.t(k) : null;
+                  BYD.utils.toast(localized || fallback, 'success');
+              }
+          })
+          .catch(() => {
+              // Revert in-memory + UI on failure so the displayed state
+              // matches the server.
+              self.config.accOffMode = prev;
+              document.querySelectorAll('#accOffModeBtns .btn-toggle').forEach(btn =>
+                  btn.classList.toggle('active', btn.dataset.value === prev));
+              self.applyAccOffModeUI();
+              if (BYD.utils && BYD.utils.toast) {
+                  const localized = BYD.i18n && BYD.i18n.t
+                      ? BYD.i18n.t('surveillance.accoff_save_failed') : null;
+                  BYD.utils.toast(localized || 'Could not save mode', 'error');
+              }
+          });
+    },
+
+    /**
+     * Update the hint paragraph + dim/restore detection-related cards based
+     * on the current accOffMode. Called from setAccOffMode() and from the
+     * load path (updateV2UI). No save side-effect — purely cosmetic.
+     */
+    applyAccOffModeUI() {
+        const mode = this.config.accOffMode || 'smart';
+        const hintKey = mode === 'continuous'
+            ? 'surveillance.accoff_hint_continuous'
+            : 'surveillance.accoff_hint_smart';
+        const hintEl = document.getElementById('accOffModeHint');
+        if (hintEl) {
+            hintEl.setAttribute('data-i18n', hintKey);
+            hintEl.textContent = (BYD.i18n && BYD.i18n.t)
+                ? (BYD.i18n.t(hintKey) || hintEl.textContent)
+                : hintEl.textContent;
+        }
+        // Dim the cards whose contents don't apply in continuous mode:
+        // motion/AI detection cards (sensitivity, env preset, side-cam
+        // boost, ROI) all live on data-tab="detection". We deliberately
+        // don't dim the Recording tab — codec / bitrate / fps still apply
+        // for continuous output. Safe Locations also stays live (the
+        // gating still works) and we skip the mode-toggle card itself.
+        const dim = (mode === 'continuous');
+        document.querySelectorAll('.card[data-tab="detection"]').forEach(card => {
+            if (card.querySelector('#safeLocEnabled')) return;
+            if (card.querySelector('#accOffModeBtns')) return;
+            card.style.opacity = dim ? '0.45' : '';
+            card.style.pointerEvents = dim ? 'none' : '';
+        });
+    },
+
     setEnvironmentPreset(preset) {
         this.config.environmentPreset = preset;
         document.querySelectorAll('#envPresetBtns .btn-toggle').forEach(btn =>
@@ -1644,6 +1737,14 @@ BYD.surveillance = {
     },
 
     updateV2UI() {
+        // ACC-OFF mode — reflect the loaded value on the toggle group and
+        // refresh the dim state of dependent cards. Default to 'smart' if
+        // the server omitted the field (older daemon build).
+        const accOffMode = this.config.accOffMode || 'smart';
+        document.querySelectorAll('#accOffModeBtns .btn-toggle').forEach(btn =>
+            btn.classList.toggle('active', btn.dataset.value === accOffMode));
+        this.applyAccOffModeUI();
+
         // Environment preset — check if current values match the saved preset
         // If user customized sliders after selecting a preset, don't highlight any preset
         const savedPreset = this.config.environmentPreset;
@@ -2500,23 +2601,28 @@ window.SurvSettings = BYD.surveillance;
 
 window.BydCloud = {
     isConfigured: false,
+    // Region key → existing surveillance.byd_region_* i18n key. The "no" entry
+    // is BYD's own region key for Middle East / Africa (legacy from when the
+    // region first launched on the -no.byd.auto host); it is NOT Norway, which
+    // maps to the "eu" node. The english fallback labels here are only used
+    // before the i18n catalog has loaded.
     regionLabels: {
-        eu: 'Europe',
-        sg: 'Singapore / APAC',
-        au: 'Australia',
-        br: 'Brazil',
-        jp: 'Japan',
-        uz: 'Uzbekistan',
-        no: 'Middle East / Africa',
-        mx: 'Mexico / Latin America',
-        id: 'Indonesia',
-        tr: 'Turkey',
-        kr: 'Korea',
-        in: 'India',
-        vn: 'Vietnam',
-        sa: 'Saudi Arabia',
-        om: 'Oman',
-        kz: 'Kazakhstan'
+        eu:   { i18n: 'surveillance.byd_region_eu',   en: 'Europe' },
+        sg:   { i18n: 'surveillance.byd_region_sg',   en: 'Singapore / APAC' },
+        au:   { i18n: 'surveillance.byd_region_au',   en: 'Australia' },
+        br:   { i18n: 'surveillance.byd_region_br',   en: 'Brazil' },
+        jp:   { i18n: 'surveillance.byd_region_jp',   en: 'Japan' },
+        uz:   { i18n: 'surveillance.byd_region_uz',   en: 'Uzbekistan' },
+        no:   { i18n: 'surveillance.byd_region_mena', en: 'Middle East / Africa' },
+        mx:   { i18n: 'surveillance.byd_region_mx',   en: 'Mexico / Latin America' },
+        id:   { i18n: 'surveillance.byd_region_id',   en: 'Indonesia' },
+        tr:   { i18n: 'surveillance.byd_region_tr',   en: 'Turkey' },
+        kr:   { i18n: 'surveillance.byd_region_kr',   en: 'Korea' },
+        in:   { i18n: 'surveillance.byd_region_in',   en: 'India' },
+        vn:   { i18n: 'surveillance.byd_region_vn',   en: 'Vietnam' },
+        sa:   { i18n: 'surveillance.byd_region_sa',   en: 'Saudi Arabia' },
+        om:   { i18n: 'surveillance.byd_region_om',   en: 'Oman' },
+        kz:   { i18n: 'surveillance.byd_region_kz',   en: 'Kazakhstan' }
     },
     defaultCountriesByRegion: {
         eu: 'GB', sg: 'SG', au: 'AU', br: 'BR', jp: 'JP', uz: 'UZ',
@@ -2665,12 +2771,33 @@ window.BydCloud = {
         const summary = document.getElementById('bydRegionDerived');
         if (regionSelect) regionSelect.value = normalized;
         if (summary) {
-            var label = this.regionLabels[normalized] || normalized.toUpperCase();
-            summary.textContent = 'Country code ' + (countryCode || 'GB') + ' uses the ' + label + ' BYD server.';
+            var entry = this.regionLabels[normalized];
+            var label;
+            if (entry && BYD && BYD.i18n) {
+                label = BYD.i18n.t(entry.i18n) || entry.en;
+            } else {
+                label = (entry && entry.en) || normalized.toUpperCase();
+            }
+            var ctry = countryCode || 'GB';
+            if (BYD && BYD.i18n) {
+                summary.textContent = BYD.i18n.t('byd_cloud.region_derived', {
+                    country: ctry, region: label
+                });
+            } else {
+                summary.textContent = 'Country code ' + ctry + ' uses the ' + label + ' BYD server.';
+            }
         }
     },
 
     applyCountrySelection(countryCode, region) {
+        // Bail early on pages that don't render the BYD account UI (e.g. the
+        // surveillance/status pages call loadStatus to fetch the configured
+        // state but don't include the country/region selects).
+        if (!document.getElementById('bydCountryCode')
+                && !document.getElementById('bydRegion')
+                && !document.getElementById('bydRegionDerived')) {
+            return;
+        }
         this.ensureCountryOptions();
         var meta = this.getCountryMeta(countryCode);
         if (!meta) {

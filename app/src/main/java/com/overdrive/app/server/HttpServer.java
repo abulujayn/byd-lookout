@@ -94,23 +94,17 @@ public class HttpServer {
             // Extract overlay icons for telemetry overlay
             extractAssetDir(assetManager, "overlay", new File("/data/local/tmp/overlay"));
             
-            // Extract BYD cloud crypto tables
+            // Extract BYD cloud crypto tables — re-extract whenever the cache
+            // is missing or fails magic/size validation, so a stale or
+            // truncated /data/local/tmp file from a prior build can't poison
+            // every reader with "Bad magic: expected BGTB".
             try {
-                String bydAsset = "byd/bangcle_tables.bin";
-                String[] bydFiles = assetManager.list("byd");
-                if (bydFiles != null && bydFiles.length > 0) {
-                    File bydTablesFile = new File("/data/local/tmp/bangcle_tables.bin");
-                    if (!bydTablesFile.exists() || bydTablesFile.length() == 0) {
-                        try (InputStream in = assetManager.open(bydAsset);
-                             java.io.FileOutputStream fos = new java.io.FileOutputStream(bydTablesFile)) {
-                            byte[] buf = new byte[8192];
-                            int n;
-                            while ((n = in.read(buf)) != -1) {
-                                fos.write(buf, 0, n);
-                            }
-                        }
-                        bydTablesFile.setReadable(true, false);
+                File bydTablesFile = new File(com.overdrive.app.byd.cloud.crypto.BangcleTablesFile.CACHE_PATH);
+                if (!com.overdrive.app.byd.cloud.crypto.BangcleTablesFile.isValid(bydTablesFile)) {
+                    if (com.overdrive.app.byd.cloud.crypto.BangcleTablesFile.extractFromAssets(assetManager, bydTablesFile)) {
                         CameraDaemon.log("Extracted BYD Bangcle tables to " + bydTablesFile.getAbsolutePath() + " (" + bydTablesFile.length() + " bytes)");
+                    } else {
+                        CameraDaemon.log("WARN: failed to extract BYD Bangcle tables; cache=" + com.overdrive.app.byd.cloud.crypto.BangcleTablesFile.describeCache());
                     }
                 }
             } catch (Exception e) {

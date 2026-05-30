@@ -5,9 +5,6 @@ import com.overdrive.app.logging.DaemonLogger;
 
 import org.json.JSONObject;
 
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
 import java.io.InputStream;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -53,10 +50,6 @@ public final class BydCloudDeterrent {
     private final AtomicBoolean commandInFlight = new AtomicBoolean(false);
     private volatile BydCloudClient client;
     private volatile String resolvedVin;
-
-    // Path to Bangcle tables (daemon-accessible location)
-    private static final String TABLES_PATH = "/data/local/tmp/bangcle_tables.bin";
-    private static final String TABLES_ASSET = "byd/bangcle_tables.bin";
 
     private BydCloudDeterrent() {}
 
@@ -255,68 +248,8 @@ public final class BydCloudDeterrent {
         commandInFlight.set(false);
     }
 
-    /**
-     * Get an InputStream for the Bangcle tables.
-     * 
-     * Strategy:
-     * 1. Check /data/local/tmp/bangcle_tables.bin (pre-extracted)
-     * 2. Try to extract from APK assets via DaemonBootstrap context
-     * 3. Return null if unavailable
-     */
     private InputStream getTablesStream() {
-        // Strategy 1: Already extracted to daemon-accessible path
-        File tablesFile = new File(TABLES_PATH);
-        if (tablesFile.exists() && tablesFile.length() > 0) {
-            try {
-                return new FileInputStream(tablesFile);
-            } catch (Exception e) {
-                logger.debug("Could not read tables from " + TABLES_PATH + ": " + e.getMessage());
-            }
-        }
-
-        // Strategy 2: Extract from APK assets via DaemonBootstrap context
-        try {
-            android.content.Context ctx = com.overdrive.app.daemon.DaemonBootstrap.getContext();
-            if (ctx != null) {
-                android.content.res.AssetManager am = ctx.getAssets();
-                if (am != null) {
-                    InputStream assetStream = am.open(TABLES_ASSET);
-                    // Copy to /data/local/tmp/ for future use
-                    try {
-                        copyStreamToFile(assetStream, tablesFile);
-                        assetStream.close();
-                        // Re-open from the extracted file
-                        return new FileInputStream(tablesFile);
-                    } catch (Exception e) {
-                        logger.debug("Could not extract tables to " + TABLES_PATH + ": " + e.getMessage());
-                        // Fall back to reading directly from asset stream
-                        return am.open(TABLES_ASSET);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            logger.debug("Could not load tables from assets: " + e.getMessage());
-        }
-
-        return null;
-    }
-
-    private static void copyStreamToFile(InputStream in, File out) throws IOException {
-        File parent = out.getParentFile();
-        if (parent != null && !parent.exists()) {
-            parent.mkdirs();
-        }
-        java.io.FileOutputStream fos = new java.io.FileOutputStream(out);
-        try {
-            byte[] buf = new byte[8192];
-            int n;
-            while ((n = in.read(buf)) != -1) {
-                fos.write(buf, 0, n);
-            }
-        } finally {
-            fos.close();
-        }
-        // Make world-readable for cross-UID access
-        out.setReadable(true, false);
+        return com.overdrive.app.byd.cloud.crypto.BangcleTablesFile.openStream(
+                com.overdrive.app.daemon.DaemonBootstrap.getContext());
     }
 }

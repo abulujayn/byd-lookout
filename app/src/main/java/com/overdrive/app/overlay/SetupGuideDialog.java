@@ -123,6 +123,20 @@ public class SetupGuideDialog {
             }
         });
 
+        // Tip: open the BYD Traffic Monitor enable/disable dialog. The handler
+        // lives on MainActivity (it shares the ADB pm-disable plumbing with the
+        // Diagnostics tile), so this is a no-op when the dialog is shown from
+        // some other host context — the second tip below is instructional-only
+        // and remains useful regardless.
+        TextView btnTrafficMonitor = view.findViewById(R.id.btnOpenTrafficMonitor);
+        if (btnTrafficMonitor != null) {
+            btnTrafficMonitor.setOnClickListener(v -> {
+                if (context instanceof com.overdrive.app.ui.MainActivity) {
+                    ((com.overdrive.app.ui.MainActivity) context).invokeTrafficMonitorAction();
+                }
+            });
+        }
+
         AlertDialog dialog = new com.google.android.material.dialog.MaterialAlertDialogBuilder(context, R.style.Theme_Overdrive_M3_Dialog)
                 .setView(view)
                 .setCancelable(true)

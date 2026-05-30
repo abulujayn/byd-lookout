@@ -87,9 +87,17 @@ class CloudflaredController(
     }
     
     override fun cleanup() {
-        // Use pkill directly - simpler and more reliable
+        // ps+awk+kill instead of pkill -f. The latter would self-match
+        // because executeShellCommand wraps the body in `sh -c "<cmd>"`
+        // and the wrapper's argv contains the literal "cloudflared" —
+        // pkill would SIGKILL the calling shell before `echo done` runs,
+        // so the callback never fires `onLaunched`. ps+awk+kill filters
+        // by PID list and excludes the calling shell's PID via $$.
         adbLauncher.executeShellCommand(
-            "pkill -9 -f 'cloudflared'; echo done",
+            "MY_PID=\$\$; ps -A -o PID,ARGS | grep -F cloudflared | grep -v grep " +
+                "| awk '{print \$1}' | while read pid; do " +
+                "if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done; " +
+                "echo done",
             object : AdbDaemonLauncher.LaunchCallback {
                 override fun onLog(message: String) {}
                 override fun onLaunched() {}

@@ -1511,6 +1511,10 @@ public class SurveillanceIpcServer implements Runnable {
         } catch (InterruptedException ignored) {
             Thread.currentThread().interrupt();
         }
+        // Release the updater's per-instance executor + tunnel-poll scheduler.
+        // Without close() each /api/update/check via IPC stranded one
+        // non-daemon thread for the JVM lifetime. Idempotent.
+        try { updater.close(); } catch (Exception ignored) {}
         if (resultRef[0] == null) {
             response.put("success", false);
             response.put("error", "Update check timed out");
@@ -1590,11 +1594,13 @@ public class SurveillanceIpcServer implements Runnable {
             Thread.currentThread().interrupt();
         }
         if (err[0] != null) {
+            try { updater.close(); } catch (Exception ignored) {}
             response.put("success", false);
             response.put("error", "Pre-install check failed: " + err[0]);
             return;
         }
         if (!available[0]) {
+            try { updater.close(); } catch (Exception ignored) {}
             response.put("success", false);
             response.put("error", "No update available");
             return;
@@ -1654,13 +1660,19 @@ public class SurveillanceIpcServer implements Runnable {
                     private long dlLastAt = 0;
                     @Override public void onSuccess() {
                         writeInstallProgress("installing", 100, "Update installed, restarting…", null);
+                        // pm install kills the process so leak doesn't materialize, but
+                        // close() is idempotent and cheap — defensive.
+                        try { updater.close(); } catch (Exception ignored) {}
                     }
                     @Override public void onError(String error) {
                         writeInstallProgress("error", -1, "Install failed", error);
+                        // Install failed; release per-instance executor.
+                        try { updater.close(); } catch (Exception ignored) {}
                     }
                 });
             } catch (Exception e) {
                 writeInstallProgress("error", -1, "Install crashed", e.getMessage());
+                try { updater.close(); } catch (Exception ignored) {}
             }
         }, "TelegramUpdate-Install").start();
 

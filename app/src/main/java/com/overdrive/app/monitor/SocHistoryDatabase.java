@@ -451,6 +451,27 @@ public class SocHistoryDatabase {
                             sohEst.updateFromEnergy(rawRemainKwh, soc, highCellV, atRest);
                         }
                     }
+
+                    // PHEV-only secondary anchor from the BMS Ah counter.
+                    // The live `remainKwh / SOC` formula is noisy on small
+                    // PHEV packs (1-decimal kWh resolution over 9-18 kWh →
+                    // ±1.5% noise per tick that median-of-10 can't fully
+                    // suppress). Capacity-Ah comes from the BMS's coulomb
+                    // count and is independent of SOC range — feeds the
+                    // capacityAhSoh anchor without disturbing currentSoh.
+                    try {
+                        com.overdrive.app.byd.BydDataCollector col = com.overdrive.app.byd.BydDataCollector.getInstance();
+                        if (col != null && col.isInitialized() && col.isPhevPublic()) {
+                            com.overdrive.app.byd.BydVehicleData vd = col.getData();
+                            if (vd != null && !Double.isNaN(vd.capacityAh) && vd.capacityAh > 0) {
+                                int cells = com.overdrive.app.abrp.SohEstimator
+                                        .cellCountForCapacity(sohEst.getNominalCapacityKwh());
+                                if (cells > 0) {
+                                    sohEst.updateFromCapacityAh(vd.capacityAh, cells, true, soc);
+                                }
+                            }
+                        }
+                    } catch (Exception ignored) { /* anchor is best-effort */ }
                 }
             } catch (Exception e) {
                 logger.debug("SOH update failed: " + e.getMessage());

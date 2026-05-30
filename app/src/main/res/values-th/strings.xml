@@ -22,6 +22,7 @@
     <string name="cd_expand_collapse">ขยาย/พับเก็บ</string>
     <string name="cd_recording_status">สถานะการบันทึก</string>
     <string name="cd_trip_tracking_status">สถานะการติดตามทริป</string>
+    <string name="cd_mic_status">สถานการณ์การจับไมโครโฟน</string>
     <string name="cd_video_thumbnail">ภาพตัวอย่างวิดีโอ</string>
     <string name="cd_play">เล่น</string>
     <string name="cd_back">ย้อนกลับ</string>
@@ -30,6 +31,7 @@
     <string name="cd_player_next">วิดีโอถัดไป</string>
     <string name="cd_player_maximize">ขยายเต็มจอ</string>
     <string name="cd_player_minimize">ออกจากการแสดงเต็มจอ</string>
+    <string name="cd_player_mute">เปลี่ยนเสียง</string>
     <string name="cd_delete">ลบ</string>
     <string name="cd_expand">ขยาย</string>
     <string name="cd_configure">ตั้งค่า</string>
@@ -40,6 +42,7 @@
     <string name="cd_permission_granted">อนุญาตแล้ว</string>
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">ทริป</string>
+    <string name="overlay_mic_inactive_label">MIC</string>
     <string name="log_entry_default_timestamp">12:34:56</string>
     <string name="log_entry_default_tag">[TAG]</string>
     <string name="log_entry_default_message">ข้อความ Log</string>
@@ -333,6 +336,7 @@
     <string name="toast_fetching_log">กำลังดึง Log ของ %1$s…</string>
     <string name="toast_log_empty_or_missing">ไฟล์ Log ว่างเปล่าหรือหาไม่เจอ</string>
     <string name="toast_log_empty">ไฟล์ Log ว่างเปล่า</string>
+    <string name="toast_daemon_manager_unavailable">ผู้จัดการ Daemon ไม่พร้อม ลองอีกครั้งในนาที</string>
     <string name="toast_log_save_failed">บันทึก Log ไม่สำเร็จ: %1$s</string>
     <string name="toast_log_not_found">หาไฟล์ Log ไม่เจอ หรืออ่านไม่ได้</string>
     <string name="log_share_title">%1$s Log - %2$s</string>
@@ -350,6 +354,12 @@
     <string name="play_with_chooser">เล่นด้วย</string>
     <string name="setup_version_banner">อัปเดตเป็น v%1$s แล้ว — อย่าลืมไปกดยืนยันการทำงานอัตโนมัติอีกรอบนะ BYD มันชอบรีเซ็ตตอนลงแอป</string>
     <string name="setup_overlay_already_granted">อนุญาตแล้ว</string>
+    <string name="setup_tips_header">คําแนะนํา &amp; การแก้ไขปัญหา</string>
+    <string name="setup_traffic_title">ปิดการติดตามการจราจร BYD</string>
+    <string name="setup_traffic_body">เครื่องตรวจสอบการจราจร BYD ป้องกันแอปพลิเคชันจากพรรคที่สามที่จะเข้าถึงอินเตอร์เน็ต การปิดมันทําให้ OverDrive และแอปพลิเคชันอื่น ๆ ที่คุณติดตั้งได้ใช้งานเครือข่ายจริงๆ. หลังจากนั้นต้องรีบูทแบบแข็ง</string>
+    <string name="setup_traffic_button">ติดตามการจราจร</string>
+    <string name="setup_camera_fix_title">กล้องถ่ายสีดํา หรือไม่ถูกต้อง?</string>
+    <string name="setup_camera_fix_body">เปิดการวินิจฉัย → กล้องสํารวจ, กําหนด ID กล้องเป็น 0, คัด Save, แล้วเริ่มต้นใหม่ daemon กล้อง. หากการส่งยังผิด, ย้ํากับ ID กล้อง 1. ปล่อยส่วนการแผนที่ไม่แตะต้อง.</string>
     <string name="camera_current_manual">ปัจจุบัน: กล้อง %1$d (ตั้งค่าเอง)</string>
     <string name="camera_current_auto_label">ปัจจุบัน: อัตโนมัติ</string>
     <string name="soh_estimation_active">ประเมินค่า SOH ทำงานอยู่</string>

@@ -174,9 +174,21 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
         // For camera daemon, also kill the restart wrapper script and delete it
         if ("byd_cam_daemon".equals(processName)) {
             // Write disable sentinel FIRST — prevents watchdog from restarting
-            ctx.execShell("echo 'disabled by telegram at $(date)' > /data/local/tmp/camera_daemon.disabled");
-            // Kill watchdog FIRST so it doesn't respawn the daemon
-            ctx.execShell("pkill -9 -f 'start_cam_daemon' 2>/dev/null");
+            ctx.execShell("echo \"disabled by telegram at $(date)\" > /data/local/tmp/camera_daemon.disabled; chmod 666 /data/local/tmp/camera_daemon.disabled 2>/dev/null");
+            // Kill watchdog FIRST so it doesn't respawn the daemon.
+            //
+            // pkill -f matches FULL argv (including any variable-assignment
+            // text). execShell wraps the command in `sh -c "<cmd>"`, so even
+            // the `P=start_cam_daemon` form puts the literal pattern in the
+            // wrapper's argv → pkill self-matches and SIGKILLs its parent.
+            // ps+awk+kill filters by PID list and excludes the calling
+            // shell's own PID — same pattern used by
+            // TelegramBotDaemon.killOldInstances.
+            ctx.execShell(
+                "MY_PID=$$; ps -A -o PID,ARGS | grep -F start_cam_daemon "
+                + "| grep -v grep | awk '{print $1}' | while read pid; do "
+                + "if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done"
+            );
             // Also kill via PID file
             ctx.execShell("if [ -f /data/local/tmp/cam_watchdog.pid ]; then kill -9 $(cat /data/local/tmp/cam_watchdog.pid) 2>/dev/null; fi");
             ctx.execShell("rm -f /data/local/tmp/start_cam_daemon.sh 2>/dev/null");
@@ -185,16 +197,55 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
             try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
             ctx.execShell("rm -f /data/local/tmp/camera_daemon.lock 2>/dev/null");
         }
-        
-        // For acc sentry daemon, also kill the watchdog script
+
+        // For acc sentry daemon, also kill the watchdog script and plant
+        // the disable sentinel so the watchdog (if it survives the pkill)
+        // exits cleanly on its next loop iteration.
         if ("acc_sentry_daemon".equals(processName)) {
-            ctx.execShell("pkill -9 -f start_acc_sentry 2>/dev/null");
+            ctx.execShell("echo \"disabled by telegram at $(date)\" > /data/local/tmp/acc_sentry_daemon.disabled; chmod 666 /data/local/tmp/acc_sentry_daemon.disabled 2>/dev/null");
+            // ps+awk+kill — see cam case above for why pkill -f / variable
+            // hop is not self-match safe.
+            ctx.execShell(
+                "MY_PID=$$; ps -A -o PID,ARGS | grep -F start_acc_sentry "
+                + "| grep -v grep | awk '{print $1}' | while read pid; do "
+                + "if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done"
+            );
             ctx.execShell("rm -f /data/local/tmp/start_acc_sentry.sh 2>/dev/null");
             ctx.execShell("rm -f /data/local/tmp/acc_sentry_daemon.lock 2>/dev/null");
         }
+
+        // For zrok, also plant the disable sentinel + nuke the watchdog
+        // script so start_zrok.sh exits and stays gone. `pkill -f 'zrok'`
+        // below catches both start_zrok.sh and the zrok share binary, but
+        // without the sentinel the watchdog can re-exec the share between
+        // our pkill and the next health-check tick. Mirrors the cam_daemon
+        // sentinel handshake.
+        if ("zrok".equals(processName)) {
+            ctx.execShell("echo \"disabled by telegram at $(date)\" > /data/local/tmp/zrok.disabled; chmod 666 /data/local/tmp/zrok.disabled 2>/dev/null");
+            ctx.execShell("rm -f /data/local/tmp/start_zrok.sh 2>/dev/null");
+        }
+
+        // For any tunnel stop, clear the daemon-side notify-tunnel throttle
+        // stamp. The throttle exists to suppress cloudflared restart-loop
+        // spam — but a user-initiated stop+start should always re-notify.
+        if ("cloudflared".equals(processName)
+                || "zrok".equals(processName)
+                || "tailscale".equals(processName)) {
+            ctx.execShell("rm -f /data/local/tmp/.tunnel_last_notified 2>/dev/null");
+        }
         
-        // Use pkill -9 -f to match full command line (same as DaemonLauncher.kt)
-        ctx.execShell("pkill -9 -f " + processName + " 2>/dev/null");
+        // Kill via ps+awk+kill rather than pkill -f. pkill -f matches the
+        // FULL argv (including any "P=…" variable assignment text), and
+        // execShell wraps in `sh -c "<cmd>"` whose argv contains the
+        // literal processName. Even the variable-hop trick lets pkill
+        // self-match the assignment text → calling shell exits with 137,
+        // not 0. ps+awk+kill filters by PID and excludes $$ → no
+        // self-match.
+        ctx.execShell(
+            "MY_PID=$$; ps -A -o PID,ARGS | grep -F " + processName + " | grep -v grep "
+            + "| awk '{print $1}' | while read pid; do "
+            + "if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done"
+        );
         
         // Clean up lock file for daemons that use processName-based lock files
         if (!"byd_cam_daemon".equals(processName) && !"acc_sentry_daemon".equals(processName)) {
@@ -302,86 +353,85 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
             }
         }
         
-        // Step 1: Kill old processes and clean up (same as DaemonLauncher)
-        ctx.log("Cleaning up old processes...");
-        // Clear disable sentinel — user is explicitly starting the daemon
-        ctx.execShell("rm -f /data/local/tmp/camera_daemon.disabled 2>/dev/null");
-        // Kill watchdog script FIRST, then daemon, then clean lock
-        // Use multiple kill patterns to catch all variants
-        ctx.execShell("pkill -9 -f 'start_cam_daemon' 2>/dev/null");
-        ctx.execShell("pkill -9 -f 'start_cam_daemon.sh' 2>/dev/null");
-        // Also kill via PID file
-        ctx.execShell("if [ -f /data/local/tmp/cam_watchdog.pid ]; then kill -9 $(cat /data/local/tmp/cam_watchdog.pid) 2>/dev/null; fi");
-        try { Thread.sleep(500); } catch (InterruptedException ignored) {}
-        // Now kill the daemon itself
-        ctx.execShell("pkill -9 -f '" + processName + "' 2>/dev/null");
-        ctx.execShell("killall -9 " + processName + " 2>/dev/null");
-        ctx.execShell("rm -f " + scriptPath + " 2>/dev/null");
-        ctx.execShell("rm -f /data/local/tmp/camera_daemon.lock 2>/dev/null");
-        ctx.execShell("rm -f /data/local/tmp/cam_watchdog.pid 2>/dev/null");
-        // Wait for everything to fully die
-        try { Thread.sleep(1500); } catch (InterruptedException ignored) {}
-        
-        // Verify nothing is still running
+        // Step 1: Kill old processes and clean up. Combine into ONE shell
+        // round-trip via spawnDetached + a wait-for-death loop, instead of
+        // 6+ separate execShell forks (each ~30-50ms on 6125f). This
+        // saves ~250ms of bot polling-thread blockage and — critically —
+        // moves lock-rm AFTER the daemon dies so the daemon can't write
+        // its PID back into the lockfile after we rm it (the
+        // "lockfile resurrection" race A2 fixes for UI/update paths).
+        //
+        // NOTE: this multi-command payload contains "cam_daemon" literally,
+        // so a `sh -c "..."` form would self-suicide on the first pkill.
+        // ctx.execShell uses Runtime.exec with String[] argv so the
+        // calling shell's argv[2] does contain the pattern — same self-
+        // match risk. Workaround: write to a tmp file via heredoc, then
+        // run from the file. The script's argv when executed is
+        // `sh /data/local/tmp/.cam_kill.sh` — pattern not visible.
+        ctx.log("Cleaning up old processes (single round-trip)...");
+        String cleanupScript =
+            "#!/system/bin/sh\n" +
+            "# Telegram-side cam_daemon stop sequence\n" +
+            "rm -f /data/local/tmp/camera_daemon.disabled 2>/dev/null\n" +
+            "rm -f " + scriptPath + " /data/local/tmp/cam_watchdog.pid 2>/dev/null\n" +
+            "if [ -f /data/local/tmp/cam_watchdog.pid ]; then kill -9 $(cat /data/local/tmp/cam_watchdog.pid) 2>/dev/null; fi\n" +
+            "MY_PID=$$; ps -A -o PID,ARGS | grep -F 'cam_daemon' | grep -v grep "
+                + "| awk '{print $1}' | while read pid; do "
+                + "if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done\n" +
+            "killall -9 " + processName + " 2>/dev/null\n" +
+            // Wait-for-death: poll up to 5s for the daemon to actually
+            // exit. Without this, lock-rm runs before SIGKILL is fully
+            // processed and the daemon can rewrite the lockfile post-rm.
+            "for i in 1 2 3 4 5; do\n" +
+            "  if ! ps -A | grep -F '" + processName + "' | grep -v grep > /dev/null; then break; fi\n" +
+            "  sleep 1\n" +
+            "  MY_PID=$$; ps -A -o PID,ARGS | grep -F '" + processName + "' | grep -v grep "
+                + "| awk '{print $1}' | while read pid; do "
+                + "if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done\n" +
+            "done\n" +
+            // Now safe to rm the lock — daemon is gone.
+            "rm -f /data/local/tmp/camera_daemon.lock 2>/dev/null\n" +
+            "echo done\n";
+        // Write via heredoc — body comes from stdin not argv, no
+        // self-match. Then exec the file (argv = `sh <path>` only).
+        String cleanupTmpPath = "/data/local/tmp/.tg_cam_kill_" + System.nanoTime() + ".sh";
+        ctx.execShell(
+            "cat > " + cleanupTmpPath + " <<'__TG_CAM_KILL_EOF__'\n" +
+            cleanupScript +
+            "__TG_CAM_KILL_EOF__\n" +
+            "chmod 755 " + cleanupTmpPath
+        );
+        ctx.execShell("sh " + cleanupTmpPath);
+        ctx.execShell("rm -f " + cleanupTmpPath);
+
         boolean stillRunning = isDaemonRunning(processName, ctx);
         if (stillRunning) {
-            ctx.log("WARNING: Daemon still running after kill — retrying...");
-            ctx.execShell("pkill -9 -f '" + processName + "' 2>/dev/null");
-            try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
+            ctx.log("WARNING: Daemon still running after kill+wait — proceeding anyway");
         }
         
-        // Step 2: Write watchdog script (exact same content as DaemonLauncher.writeCamDaemonScript)
-        ctx.log("Writing watchdog script...");
-        String appProcessCmd = "CLASSPATH=/system/framework/bmmcamera.jar:" + apkPath + " app_process " +
-            "-Djava.library.path=" + nativeLibDir + ":/system/lib64:/vendor/lib64:/product/lib64:/odm/lib64 " +
-            proxyArgs + "/system/bin " +
-            "--nice-name=" + processName + " " +
-            "com.overdrive.app.daemon.CameraDaemon " +
-            outputDir + " " + nativeLibDir + " >> \"$LOG_FILE\" 2>&1";
-        
-        // Write script line by line using echo (same approach as DaemonLauncher)
-        ctx.execShell("echo '#!/system/bin/sh' > " + scriptPath);
-        ctx.execShell("echo '# CameraDaemon Watchdog Script' >> " + scriptPath);
-        ctx.execShell("echo 'LOG_FILE=\"" + logFile + "\"' >> " + scriptPath);
-        ctx.execShell("echo 'PIDFILE=/data/local/tmp/cam_watchdog.pid' >> " + scriptPath);
-        ctx.execShell("echo '' >> " + scriptPath);
-        // Kill any existing watchdog using PID file
-        ctx.execShell("echo 'if [ -f \"$PIDFILE\" ]; then' >> " + scriptPath);
-        ctx.execShell("echo '  OLDPID=$(cat \"$PIDFILE\")' >> " + scriptPath);
-        ctx.execShell("echo '  if [ -d \"/proc/$OLDPID\" ]; then' >> " + scriptPath);
-        ctx.execShell("echo '    kill -9 $OLDPID 2>/dev/null' >> " + scriptPath);
-        ctx.execShell("echo '    sleep 1' >> " + scriptPath);
-        ctx.execShell("echo '  fi' >> " + scriptPath);
-        ctx.execShell("echo 'fi' >> " + scriptPath);
-        ctx.execShell("echo 'echo $$ > \"$PIDFILE\"' >> " + scriptPath);
-        ctx.execShell("echo '' >> " + scriptPath);
-        ctx.execShell("echo 'while true; do' >> " + scriptPath);
-        ctx.execShell("echo '  # Check disable sentinel — if present, daemon was intentionally stopped' >> " + scriptPath);
-        ctx.execShell("echo '  if [ -f /data/local/tmp/camera_daemon.disabled ]; then' >> " + scriptPath);
-        ctx.execShell("echo '    echo \"[$(date)] Daemon disabled by user (sentinel file exists). Exiting watchdog.\" >> \"$LOG_FILE\"' >> " + scriptPath);
-        ctx.execShell("echo '    rm -f \"$PIDFILE\"' >> " + scriptPath);
-        ctx.execShell("echo '    exit 0' >> " + scriptPath);
-        ctx.execShell("echo '  fi' >> " + scriptPath);
-        ctx.execShell("echo '  echo \"[$(date)] Starting CameraDaemon...\" >> \"$LOG_FILE\"' >> " + scriptPath);
-        ctx.execShell("echo '' >> " + scriptPath);
-        // The app_process line — write via heredoc to avoid escaping hell
-        ctx.execShell("cat >> " + scriptPath + " << 'EOFLINE'\n  " + appProcessCmd + "\nEOFLINE");
-        ctx.execShell("echo '' >> " + scriptPath);
-        ctx.execShell("echo '  EXIT_CODE=$?' >> " + scriptPath);
-        ctx.execShell("echo '  # Check sentinel again — daemon may have written it during shutdown' >> " + scriptPath);
-        ctx.execShell("echo '  if [ -f /data/local/tmp/camera_daemon.disabled ]; then' >> " + scriptPath);
-        ctx.execShell("echo '    echo \"[$(date)] Daemon disabled by user (sentinel written during shutdown). Exiting watchdog.\" >> \"$LOG_FILE\"' >> " + scriptPath);
-        ctx.execShell("echo '    rm -f \"$PIDFILE\"' >> " + scriptPath);
-        ctx.execShell("echo '    exit 0' >> " + scriptPath);
-        ctx.execShell("echo '  fi' >> " + scriptPath);
-        ctx.execShell("echo '  if [ $EXIT_CODE -ne 0 ]; then' >> " + scriptPath);
-        ctx.execShell("echo '    echo \"[$(date)] Daemon exited with code $EXIT_CODE, NOT restarting.\" >> \"$LOG_FILE\"' >> " + scriptPath);
-        ctx.execShell("echo '    break' >> " + scriptPath);
-        ctx.execShell("echo '  fi' >> " + scriptPath);
-        ctx.execShell("echo '  echo \"[$(date)] Daemon exited cleanly (code 0), restarting in 10s...\" >> \"$LOG_FILE\"' >> " + scriptPath);
-        ctx.execShell("echo '  sleep 10' >> " + scriptPath);
-        ctx.execShell("echo 'done' >> " + scriptPath);
-        ctx.execShell("chmod 755 " + scriptPath);
+        // Step 2: Write the SAME watchdog script the UI deploys, by calling
+        // DaemonLauncher.buildCamDaemonWatchdogScript (single source of truth).
+        // Use a single heredoc instead of 50+ separate `echo "..." >> path`
+        // execShell calls. On Snapdragon 6125f cold-fork is ~30-50ms per
+        // execShell, so the per-line approach was burning ~2s of bot
+        // polling-thread time per cam deploy. Heredoc form is one fork.
+        ctx.log("Writing watchdog script (shared with UI flow, single fork)...");
+        java.util.List<String> camLines =
+            com.overdrive.app.launcher.DaemonLauncher.Companion.buildCamDaemonWatchdogScript(
+                apkPath, nativeLibDir, outputDir, proxyArgs);
+        StringBuilder camBody = new StringBuilder();
+        for (String line : camLines) {
+            camBody.append(line).append('\n');
+        }
+        // Heredoc body comes from stdin not argv — no self-match risk
+        // even though watchdog body contains daemon patterns. The
+        // delimiter is a unique marker that must not appear in the body.
+        ctx.execShell(
+            "cat > " + scriptPath + " <<'__CAM_WATCHDOG_EOF__'\n" +
+            camBody.toString() +
+            "__CAM_WATCHDOG_EOF__\n" +
+            "chmod 755 " + scriptPath
+        );
         
         // Verify script exists
         String verify = ctx.execShell("test -f " + scriptPath + " && wc -l < " + scriptPath);
@@ -410,38 +460,56 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
      */
     private boolean startAccSentryDaemonWithWatchdog(String apkPath, CommandContext ctx) {
         String scriptPath = "/data/local/tmp/start_acc_sentry.sh";
-        String logFile = "/data/local/tmp/acc_sentry_daemon.log";
         String processName = "acc_sentry_daemon";
-        
-        // Step 1: Kill old processes
-        ctx.log("Cleaning up old processes...");
-        ctx.execShell("pkill -9 -f '" + processName + "' 2>/dev/null");
-        ctx.execShell("pkill -9 -f 'start_acc_sentry' 2>/dev/null");
-        ctx.execShell("rm -f " + scriptPath + " 2>/dev/null");
-        ctx.execShell("rm -f /data/local/tmp/acc_sentry_daemon.lock 2>/dev/null");
-        try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
-        
-        // Step 2: Write watchdog script
-        ctx.log("Writing watchdog script...");
-        String appProcessCmd = "CLASSPATH=" + apkPath + " app_process /system/bin " +
-            "--nice-name=" + processName + " " +
-            "com.overdrive.app.daemon.AccSentryDaemon >> \"$LOG_FILE\" 2>&1";
-        
-        ctx.execShell("echo '#!/system/bin/sh' > " + scriptPath);
-        ctx.execShell("echo 'LOG_FILE=\"" + logFile + "\"' >> " + scriptPath);
-        ctx.execShell("echo '' >> " + scriptPath);
-        ctx.execShell("echo 'while true; do' >> " + scriptPath);
-        ctx.execShell("echo '  echo \"[$(date)] Starting AccSentryDaemon...\" >> \"$LOG_FILE\"' >> " + scriptPath);
-        ctx.execShell("cat >> " + scriptPath + " << 'EOFLINE'\n  " + appProcessCmd + "\nEOFLINE");
-        ctx.execShell("echo '  EXIT_CODE=$?' >> " + scriptPath);
-        ctx.execShell("echo '  if [ $EXIT_CODE -ne 0 ]; then' >> " + scriptPath);
-        ctx.execShell("echo '    echo \"[$(date)] Exited with code $EXIT_CODE, NOT restarting.\" >> \"$LOG_FILE\"' >> " + scriptPath);
-        ctx.execShell("echo '    break' >> " + scriptPath);
-        ctx.execShell("echo '  fi' >> " + scriptPath);
-        ctx.execShell("echo '  echo \"[$(date)] Exited with code 0, restarting in 3s...\" >> \"$LOG_FILE\"' >> " + scriptPath);
-        ctx.execShell("echo '  sleep 3' >> " + scriptPath);
-        ctx.execShell("echo 'done' >> " + scriptPath);
-        ctx.execShell("chmod 755 " + scriptPath);
+
+        // Step 1: Kill old processes via tmpfile script (no self-match
+        // risk) + wait-for-death + post-pkill lock-rm. Same pattern as
+        // cam-daemon stop above. One round-trip instead of 4 forks.
+        ctx.log("Cleaning up old processes (single round-trip)...");
+        String accCleanupScript =
+            "#!/system/bin/sh\n" +
+            "# Telegram-side acc_sentry_daemon stop sequence\n" +
+            "rm -f /data/local/tmp/acc_sentry_daemon.disabled 2>/dev/null\n" +
+            "rm -f " + scriptPath + " 2>/dev/null\n" +
+            "MY_PID=$$; ps -A -o PID,ARGS | grep -F 'acc_sentry' | grep -v grep "
+                + "| awk '{print $1}' | while read pid; do "
+                + "if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done\n" +
+            "for i in 1 2 3 4 5; do\n" +
+            "  if ! ps -A | grep -F '" + processName + "' | grep -v grep > /dev/null; then break; fi\n" +
+            "  sleep 1\n" +
+            "  MY_PID=$$; ps -A -o PID,ARGS | grep -F '" + processName + "' | grep -v grep "
+                + "| awk '{print $1}' | while read pid; do "
+                + "if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done\n" +
+            "done\n" +
+            "rm -f /data/local/tmp/acc_sentry_daemon.lock 2>/dev/null\n" +
+            "echo done\n";
+        String accCleanupTmpPath = "/data/local/tmp/.tg_acc_kill_" + System.nanoTime() + ".sh";
+        ctx.execShell(
+            "cat > " + accCleanupTmpPath + " <<'__TG_ACC_KILL_EOF__'\n" +
+            accCleanupScript +
+            "__TG_ACC_KILL_EOF__\n" +
+            "chmod 755 " + accCleanupTmpPath
+        );
+        ctx.execShell("sh " + accCleanupTmpPath);
+        ctx.execShell("rm -f " + accCleanupTmpPath);
+
+        // Step 2: Write the SAME watchdog the UI uses (sentinel-gated,
+        // uncapped — see [[feedback_acc_sentry_uncapped_immortal]]). Single
+        // source: DaemonLauncher.buildAccSentryWatchdogScript. Heredoc
+        // form = one fork instead of N (one per script line).
+        ctx.log("Writing watchdog script (shared with UI flow, single fork)...");
+        java.util.List<String> accLines =
+            com.overdrive.app.launcher.DaemonLauncher.Companion.buildAccSentryWatchdogScript(apkPath, "");
+        StringBuilder accBody = new StringBuilder();
+        for (String line : accLines) {
+            accBody.append(line).append('\n');
+        }
+        ctx.execShell(
+            "cat > " + scriptPath + " <<'__ACC_WATCHDOG_EOF__'\n" +
+            accBody.toString() +
+            "__ACC_WATCHDOG_EOF__\n" +
+            "chmod 755 " + scriptPath
+        );
         
         // Step 3: Launch — spawnDetached, see CameraDaemon launch above for why.
         ctx.log("Launching watchdog...");
@@ -496,6 +564,18 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
                 break;
                 
             case "zrok":
+                // Clear the disable sentinel — user is explicitly starting
+                // the tunnel via Telegram. Without this, /daemon zrok stop
+                // followed by /daemon zrok start would silently no-op
+                // because the (still-running watchdog from the prior
+                // start) sees the sentinel and exits, and our spawn below
+                // bypasses the watchdog entirely. Note: this Telegram
+                // path launches zrok bare, not under the start_zrok.sh
+                // watchdog. A subsequent UI start will re-deploy the
+                // watchdog properly; until then the tunnel runs without
+                // a supervisor.
+                ctx.execShell("rm -f /data/local/tmp/zrok.disabled 2>/dev/null");
+
                 // Zrok tunnel — use RESERVED mode with saved token (same as app UI)
                 // Falls back to public mode only if no reserved token exists
                 String identityCheck = ctx.execShell("test -f /data/local/tmp/.zrok/environment.json && echo yes || echo no");
@@ -535,30 +615,42 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
                     savedName = nameRead.trim();
                 }
                 
-                if (reservedToken != null) {
-                    // RESERVED mode — permanent URL, same as app UI
+                // Deploy the SAME watchdog script (start_zrok.sh) the UI uses,
+                // not a bare `nohup zrok share`. Without the watchdog, the
+                // share crashes once and the tunnel dies forever — and the
+                // health-check sees `daemon_telegram_state.properties=running`
+                // so it skips relaunch. Mirrors writeAndLaunchWatchdog in
+                // ZrokLauncher.kt; script body comes from
+                // ZrokLauncher.buildZrokWatchdogScriptStatic.
+                boolean reservedMode = (reservedToken != null);
+                String tokenForScript = reservedMode ? reservedToken : "";
+                if (reservedMode) {
                     ctx.log("Using reserved token: " + reservedToken);
                     if (savedName != null) {
                         ctx.log("Permanent URL: https://" + savedName + ".share.zrok.io");
                     }
-                    cmd = "nohup sh -c 'HOME=/data/local/tmp " +
-                          "ALL_PROXY=socks5://127.0.0.1:8119 " +
-                          "HTTP_PROXY=socks5://127.0.0.1:8119 " +
-                          "HTTPS_PROXY=socks5://127.0.0.1:8119 " +
-                          "NO_PROXY=localhost,127.0.0.1 " +
-                          "/data/local/tmp/zrok share reserved " + reservedToken + " --headless' " +
-                          "> /data/local/tmp/zrok.log 2>&1 &";
                 } else {
-                    // PUBLIC mode fallback — random URL (no reserved token found)
                     ctx.log("⚠️ No reserved token found — using public mode (random URL)");
-                    cmd = "nohup sh -c 'HOME=/data/local/tmp " +
-                          "ALL_PROXY=socks5://127.0.0.1:8119 " +
-                          "HTTP_PROXY=socks5://127.0.0.1:8119 " +
-                          "HTTPS_PROXY=socks5://127.0.0.1:8119 " +
-                          "NO_PROXY=localhost,127.0.0.1 " +
-                          "/data/local/tmp/zrok share public http://localhost:8080 --headless' " +
-                          "> /data/local/tmp/zrok.log 2>&1 &";
                 }
+                java.util.List<String> watchdogLines =
+                    com.overdrive.app.launcher.ZrokLauncher.Companion.buildZrokWatchdogScriptStatic(
+                        reservedMode, tokenForScript, useProxy);
+                String zrokScriptPath = "/data/local/tmp/start_zrok.sh";
+                // Heredoc-based write: one fork instead of N (where N is the
+                // number of script lines). Heredoc body comes from stdin so
+                // the daemon-pattern in the body never enters argv → no
+                // pkill self-match risk.
+                StringBuilder zrokBody = new StringBuilder();
+                for (String line : watchdogLines) {
+                    zrokBody.append(line).append('\n');
+                }
+                ctx.execShell(
+                    "cat > " + zrokScriptPath + " <<'__ZROK_WATCHDOG_EOF__'\n" +
+                    zrokBody.toString() +
+                    "__ZROK_WATCHDOG_EOF__\n" +
+                    "chmod 755 " + zrokScriptPath
+                );
+                cmd = "nohup sh " + zrokScriptPath + " > /dev/null 2>&1 &";
                 processName = "zrok";
                 break;
 

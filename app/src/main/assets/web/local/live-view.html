@@ -699,6 +699,18 @@
                     content.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>';
                 }
                 this.activeTab = tab;
+                // Reapply the chip's corner against the new tab's safe
+                // zone. The map tab has no top-bar / car-selector
+                // overlays; the camera tab has both. Without this, a chip
+                // snapped to bl/br on the map tab ends up behind the
+                // camera tab's car-selector after switching, and the
+                // chip visually "shifts down" relative to the new layout.
+                var miniChip = document.getElementById('miniPreview');
+                if (miniChip && typeof miniChip._reapplyCorner === 'function') {
+                    // setTimeout 0 lets the active-class change propagate so
+                    // computeSafeZone() measures the new tab's children.
+                    setTimeout(function () { miniChip._reapplyCorner(); }, 0);
+                }
             }
         };
         // Initial state — the page lands on the map tab, so flip the class
@@ -975,9 +987,94 @@
             var rail = chip.parentElement;     // .live-tabs-view (positioned)
             var STORAGE_KEY = 'liveview.miniPreviewCorner';
             var MARGIN = 16;                   // distance from rail edge after snap
-            var TOP_RESERVED = 80;             // header / top-bar safe zone
-            var BOTTOM_RESERVED = 16;          // map info bar / nav safe zone
             var DRAG_THRESHOLD = 5;            // px before we treat as drag, not click
+
+            // Compute the actual top/bottom safe zones at apply-time. Static
+            // constants didn't work because:
+            //   - TOP_RESERVED=80 was just barely below the .camera-top-bar
+            //     overlay (connection pill + quality select), so the chip
+            //     visually sat under the bar's drop shadow when snapped tl/tr.
+            //   - BOTTOM_RESERVED=16+60 ignored the camera tab's
+            //     .car-selector-bottom, a ~200px-tall bottom widget. Snapping
+            //     bl/br on the map tab worked, but switching to the camera
+            //     tab put the chip behind the car selector.
+            //
+            // Strategy: measure the actual obstructing element rectangles
+            // relative to the rail. Top guard = bottom edge of the camera
+            // top-bar (or 0 on map tab where no overlay exists). Bottom
+            // guard = top edge of the car-selector-bottom (or rail bottom
+            // on map tab). 12px breathing room on each side so the chip
+            // sits below/above the obstruction with a visible gap.
+            function obstructionRect(selector) {
+                var el = document.querySelector(selector);
+                if (!el) return null;
+                // Skip elements with display:none (inactive tab panel).
+                if (el.offsetWidth === 0 && el.offsetHeight === 0) return null;
+                var elR = el.getBoundingClientRect();
+                var railR = rail.getBoundingClientRect();
+                return {
+                    top: elR.top - railR.top,
+                    bottom: elR.bottom - railR.top,
+                    height: elR.height,
+                };
+            }
+            function computeSafeZone() {
+                var BREATH = 12;
+                var railH = rail.getBoundingClientRect().height;
+                var chipH = chip.offsetHeight || 80;
+                // Top: take the MAX of every obstruction that overlaps the
+                // top region of the rail.
+                //   - .mobile-header on the map tab: position:absolute
+                //     floats over the map at < 768px, so its bottom edge
+                //     pokes INTO the rail's coordinate space — chip
+                //     would slide under it without this.
+                //   - .camera-top-bar: position:absolute inside the
+                //     camera panel, ~70-80px tall.
+                //   - The .map-overlay-actions FAB cluster (top-right):
+                //     a chip in the top-RIGHT would collide with My
+                //     Location / Directions buttons, so we also clear
+                //     past the bottom of that cluster on the map tab.
+                var topGuard = MARGIN;
+                var candidates = [
+                    obstructionRect('.mobile-header'),
+                    obstructionRect('.tab-panel.active .camera-top-bar'),
+                    obstructionRect('.tab-panel.active .map-overlay-actions'),
+                ];
+                for (var i = 0; i < candidates.length; i++) {
+                    var c = candidates[i];
+                    if (c && c.bottom > 0 && c.bottom + BREATH > topGuard) {
+                        topGuard = c.bottom + BREATH;
+                    }
+                }
+                // Bottom: car-selector-bottom only exists on the camera tab.
+                // On the map tab use the .map-info-bar if present, else the
+                // safe-bottom inset.
+                var bottomGuard = MARGIN;
+                var carSel = obstructionRect('.tab-panel.active .car-selector-bottom');
+                var infoBar = obstructionRect('.tab-panel.active .map-info-bar');
+                var obstr = carSel || infoBar;
+                if (obstr && obstr.top > 0 && obstr.top < railH) {
+                    // Distance from rail bottom up to the top edge of the
+                    // obstruction. Only honour rects that are actually
+                    // BELOW the rail top (top > 0) and INSIDE the rail
+                    // (top < railH) — defends against measurement glitches
+                    // when an inactive panel's children are briefly read
+                    // through getBoundingClientRect right after a tab
+                    // swap (Chrome desktop sometimes returns rects from
+                    // a stale layout before the next paint commits).
+                    bottomGuard = (railH - obstr.top) + BREATH;
+                }
+                // Clamp so the chip ALWAYS has at least a chipH+8px usable
+                // band between top and bottom guards. If both guards are
+                // huge (rail unusually short or stale measurements), the
+                // chip would otherwise be positioned with bottom > railH-
+                // chipH which puts its top above 0 — invisible. Reserve
+                // room by capping each guard at 40% of the rail.
+                var maxGuard = Math.max(MARGIN, railH * 0.4 - chipH);
+                if (topGuard > maxGuard) topGuard = maxGuard;
+                if (bottomGuard > maxGuard) bottomGuard = maxGuard;
+                return { top: topGuard, bottom: bottomGuard };
+            }
 
             // Map a corner key to the four position properties. We set all
             // four explicitly (auto for the unused pair) so the stylesheet's
@@ -988,10 +1085,11 @@
                     chip.classList.add('snap-anim');
                     setTimeout(function () { chip.classList.remove('snap-anim'); }, 260);
                 }
-                var topRes = TOP_RESERVED + 'px';
+                var safe = computeSafeZone();
+                var topRes = safe.top + 'px';
                 var leftRes = MARGIN + 'px';
                 var rightRes = MARGIN + 'px';
-                var bottomRes = (BOTTOM_RESERVED + 60) + 'px';
+                var bottomRes = safe.bottom + 'px';
                 if (corner === 'tl') {
                     chip.style.top = topRes; chip.style.left = leftRes;
                     chip.style.right = 'auto'; chip.style.bottom = 'auto';
@@ -1006,6 +1104,15 @@
                     chip.style.top = 'auto'; chip.style.left = 'auto';
                 }
             }
+            // Expose for the tab-switch listener installed below.
+            chip._reapplyCorner = function () {
+                var saved = 'bl';
+                try {
+                    var s = localStorage.getItem(STORAGE_KEY);
+                    if (s && /^(tl|tr|bl|br)$/.test(s)) saved = s;
+                } catch (e) {}
+                applyCorner(saved, true);
+            };
 
             // Restore last corner on first paint. Default to bottom-left so
             // the chip doesn't overlap the camera tab's top bar (connection
@@ -1072,14 +1179,42 @@
                 if (ev.cancelable) ev.preventDefault();
                 var railRect = rail.getBoundingClientRect();
                 var chipW = chip.offsetWidth, chipH = chip.offsetHeight;
+                var safe = computeSafeZone();
                 var nextLeft = Math.max(MARGIN, Math.min(railRect.width - chipW - MARGIN, startLeft + dx));
-                var nextTop = Math.max(TOP_RESERVED, Math.min(railRect.height - chipH - BOTTOM_RESERVED - 60, startTop + dy));
+                var nextTop = Math.max(safe.top, Math.min(railRect.height - chipH - safe.bottom, startTop + dy));
                 chip.style.left = nextLeft + 'px';
                 chip.style.top = nextTop + 'px';
             }
 
             function endDrag() {
-                if (!moved) return;
+                if (!moved) {
+                    // Tap without drag — beginDrag still mutated the
+                    // chip's inline styles to `top:Ypx; left:Xpx; right:
+                    // auto; bottom:auto` (so a real drag could track the
+                    // pointer). The synthetic click is about to fire
+                    // BYD.tabs.switchTo(), which will trigger
+                    // _reapplyCorner — but only after a setTimeout(0).
+                    // Between now and that timeout, the chip would
+                    // briefly render anchored top-left at the OLD
+                    // position. On desktop with a previous bottom-corner
+                    // anchor this looks like the chip "jumping" up to
+                    // a Y coordinate that, when combined with the
+                    // tab-swap CSS reflow, can fall outside the new
+                    // panel's viewport (the click handler removes
+                    // .live-map-active which un-floats the mobile-header
+                    // and pushes the rail down; chip's old absolute
+                    // position is now off-screen above the rail).
+                    // Restore the corner anchor immediately to bridge
+                    // the gap — _reapplyCorner will run next tick and
+                    // recompute against the new tab's safe zone.
+                    var saved = 'bl';
+                    try {
+                        var s0 = localStorage.getItem(STORAGE_KEY);
+                        if (s0 && /^(tl|tr|bl|br)$/.test(s0)) saved = s0;
+                    } catch (e) {}
+                    applyCorner(saved, false);
+                    return;
+                }
                 chip.classList.remove('dragging');
                 var railRect = rail.getBoundingClientRect();
                 var chipRect = chip.getBoundingClientRect();
@@ -1095,60 +1230,84 @@
                 setTimeout(function () { chip.removeEventListener('click', swallow, true); }, 0);
             }
 
-            // ── Pointer Events path (preferred on Chrome 58+) ──────────
+            // Register touch + mouse + (optionally) pointer events in
+            // PARALLEL. The previous if/PointerEvent/else design bet
+            // everything on the pointer path, but BYD's Chrome 58 in-app
+            // WebView exposes window.PointerEvent yet sometimes never
+            // dispatches pointerdown on a touch-originated gesture
+            // (it dispatches touchstart instead, and the browser-level
+            // pointer-from-touch synthesis the spec describes is
+            // incomplete in the embedded WebView). The unified approach:
+            //   - touchstart owns drag if it fires first.
+            //   - pointerdown owns drag if IT fires first (mouse on
+            //     desktop / hybrid devices that send pointer-only).
+            //   - mousedown is a third fallback for ancient WebViews
+            //     where neither pointer nor touch events are reliable
+            //     (and for desktop browsers with no touch hardware that
+            //     still synthesise mouse events).
+            // activeId tracks which input owns the gesture so the other
+            // paths short-circuit, and endDrag clears it.
+            chip.addEventListener('touchstart', function (ev) {
+                if (activeId !== null || !ev.touches || !ev.touches.length) return;
+                if (!beginDrag(ev)) return;
+                activeId = 'touch:' + ev.touches[0].identifier;
+            }, { passive: true });
+            document.addEventListener('touchmove', function (ev) {
+                if (activeId === null || activeId.indexOf('touch:') !== 0) return;
+                moveDrag(ev);
+            }, { passive: false });
+            var tEnd = function () {
+                if (activeId === null || activeId.indexOf('touch:') !== 0) return;
+                endDrag();
+                activeId = null;
+            };
+            document.addEventListener('touchend', tEnd);
+            document.addEventListener('touchcancel', tEnd);
+
             if (window.PointerEvent) {
                 chip.addEventListener('pointerdown', function (ev) {
                     if (activeId !== null) return;
+                    // Skip touch-originated pointer events — the
+                    // touchstart path already owns those. Without this
+                    // skip, on Chrome that DOES synthesize pointer-from-
+                    // touch correctly, both paths would fire and
+                    // double-init the drag.
+                    if (ev.pointerType === 'touch') return;
                     if (!beginDrag(ev)) return;
-                    activeId = ev.pointerId;
+                    activeId = 'pointer:' + ev.pointerId;
                     try { chip.setPointerCapture(ev.pointerId); } catch (e) {}
                 });
                 document.addEventListener('pointermove', function (ev) {
-                    if (activeId === null || ev.pointerId !== activeId) return;
+                    if (activeId !== 'pointer:' + ev.pointerId) return;
                     moveDrag(ev);
                 });
                 var pUp = function (ev) {
-                    if (activeId === null || ev.pointerId !== activeId) return;
-                    try { chip.releasePointerCapture(activeId); } catch (e) {}
+                    if (activeId !== 'pointer:' + ev.pointerId) return;
+                    try { chip.releasePointerCapture(ev.pointerId); } catch (e) {}
                     endDrag();
                     activeId = null;
                 };
                 document.addEventListener('pointerup', pUp);
                 document.addEventListener('pointercancel', pUp);
-            } else {
-                // ── Touch + mouse fallback (very old WebViews) ─────────
-                chip.addEventListener('touchstart', function (ev) {
-                    if (activeId !== null || !ev.touches || !ev.touches.length) return;
-                    if (!beginDrag(ev)) return;
-                    activeId = ev.touches[0].identifier;
-                }, { passive: true });
-                document.addEventListener('touchmove', function (ev) {
-                    if (activeId === null) return;
-                    moveDrag(ev);
-                }, { passive: false });
-                var tEnd = function () {
-                    if (activeId === null) return;
-                    endDrag();
-                    activeId = null;
-                };
-                document.addEventListener('touchend', tEnd);
-                document.addEventListener('touchcancel', tEnd);
-
-                chip.addEventListener('mousedown', function (ev) {
-                    if (activeId !== null) return;
-                    if (!beginDrag(ev)) return;
-                    activeId = 'mouse';
-                });
-                document.addEventListener('mousemove', function (ev) {
-                    if (activeId !== 'mouse') return;
-                    moveDrag(ev);
-                });
-                document.addEventListener('mouseup', function () {
-                    if (activeId !== 'mouse') return;
-                    endDrag();
-                    activeId = null;
-                });
             }
+
+            // Mouse fallback — covers desktop and the rare WebView with
+            // neither working pointer nor touch events. Skipped if a
+            // touch or pointer drag is already in flight.
+            chip.addEventListener('mousedown', function (ev) {
+                if (activeId !== null) return;
+                if (!beginDrag(ev)) return;
+                activeId = 'mouse';
+            });
+            document.addEventListener('mousemove', function (ev) {
+                if (activeId !== 'mouse') return;
+                moveDrag(ev);
+            });
+            document.addEventListener('mouseup', function () {
+                if (activeId !== 'mouse') return;
+                endDrag();
+                activeId = null;
+            });
 
             // Re-snap on viewport resize (e.g. BYD landscape↔portrait
             // rotation) so a corner valid in one orientation is also

@@ -22,6 +22,7 @@
     <string name="cd_expand_collapse">Espandi/comprimi</string>
     <string name="cd_recording_status">Stato di registrazione</string>
     <string name="cd_trip_tracking_status">Stato tracciamento viaggi</string>
+    <string name="cd_mic_status">Stato di cattura del microfono</string>
     <string name="cd_video_thumbnail">Miniatura video</string>
     <string name="cd_play">Riproduci</string>
     <string name="cd_back">Indietro</string>
@@ -30,6 +31,7 @@
     <string name="cd_player_next">Prossima registrazione</string>
     <string name="cd_player_maximize">Massimizza player</string>
     <string name="cd_player_minimize">Esci da schermo intero</string>
+    <string name="cd_player_mute">Togliare l\' audio</string>
     <string name="cd_delete">Elimina</string>
     <string name="cd_expand">Espandi</string>
     <string name="cd_configure">Configura</string>
@@ -40,6 +42,7 @@
     <string name="cd_permission_granted">Permesso rilasciato</string>
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">TRIP</string>
+    <string name="overlay_mic_inactive_label">MIC</string>
     <string name="log_entry_default_timestamp">12:34:56</string>
     <string name="log_entry_default_tag">[TAG]</string>
     <string name="log_entry_default_message">Messaggio di log qui</string>
@@ -334,6 +337,7 @@ Puoi ottenerne uno su: zrok.io</string>
     <string name="toast_fetching_log">Recupero log %1$s...</string>
     <string name="toast_log_empty_or_missing">File log vuoto o non trovato</string>
     <string name="toast_log_empty">Il file log è vuoto</string>
+    <string name="toast_daemon_manager_unavailable">Il direttore Daemon non è pronto, riprova tra un attimo.</string>
     <string name="toast_log_save_failed">Salvataggio log non riuscito: %1$s</string>
     <string name="toast_log_not_found">File log non trovato o illeggibile</string>
     <string name="log_share_title">Log %1$s - %2$s</string>
@@ -352,6 +356,12 @@ Questa azione non puo essere annullata.</string>
     <string name="play_with_chooser">Riproduci con</string>
     <string name="setup_version_banner">Aggiornato a v%1$s — riconferma l avvio automatico, BYD lo cancella a ogni installazione</string>
     <string name="setup_overlay_already_granted">Gia concesso</string>
+    <string name="setup_tips_header">Suggerimenti e risoluzione dei problemi</string>
+    <string name="setup_traffic_title">Disattivare il monitor del traffico BYD</string>
+    <string name="setup_traffic_body">Il Traffic Monitor BYD blocca le app di terze parti dall\'accesso a Internet. Disattivarlo consente a OverDrive e a tutte le altre app installate di utilizzare effettivamente la rete.</string>
+    <string name="setup_traffic_button">Monitore di traffico aperto</string>
+    <string name="setup_camera_fix_title">La fotocamera è nera o sbagliata?</string>
+    <string name="setup_camera_fix_body">Open Diagnostics → Camera probe, impostare l\'ID della fotocamera a 0, toccare Salvare, quindi riavviare il daemon della fotocamera. Se i feed sono ancora sbagliati, ripetere con l\'ID della fotocamera 1. Lasciare la sezione di mappatura intatta.</string>
     <string name="camera_current_manual">Attuale: Telecamera %1$d (manuale)</string>
     <string name="camera_current_auto_label">Attuale: Auto</string>
     <string name="soh_estimation_active">Stima attiva</string>

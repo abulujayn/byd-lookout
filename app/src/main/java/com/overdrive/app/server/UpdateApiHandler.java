@@ -137,6 +137,10 @@ public class UpdateApiHandler {
         synchronized (lock) {
             if (!done[0]) lock.wait(12_000);
         }
+        // Release per-instance executor + tunnel-poll scheduler. The
+        // updater is a one-shot for this request — without close() its
+        // AdbDaemonLauncher's executor stays parked for the JVM. Idempotent.
+        try { updater.close(); } catch (Exception ignored) {}
 
         if (resultRef[0] == null) {
             HttpResponse.sendJsonError(out, Messages.get("errors.update_check_timed_out"));
@@ -311,10 +315,14 @@ public class UpdateApiHandler {
             if (!done[0]) lock.wait(20_000);
         }
         if (err[0] != null) {
+            // Update check errored — release per-instance executor before bail.
+            try { updater.close(); } catch (Exception ignored) {}
             HttpResponse.sendJsonError(out, Messages.get("errors.update_pre_install_failed_with_detail", err[0]));
             return;
         }
         if (!available[0]) {
+            // No update — release per-instance executor before bail.
+            try { updater.close(); } catch (Exception ignored) {}
             HttpResponse.sendJsonError(out, Messages.get("errors.update_no_update_available"));
             return;
         }
@@ -380,10 +388,15 @@ public class UpdateApiHandler {
                                 Messages.get("messages.update_installing_finishing"), null);
                         // Process should die before this matters, but defensive.
                         installInFlight = false;
+                        // pm install kills the process so leak doesn't materialize, but
+                        // close() is idempotent and cheap — defensive.
+                        try { updater.close(); } catch (Exception ignored) {}
                     }
                     @Override public void onError(String error) {
                         writeProgress("error", -1, Messages.get("messages.update_install_failed"), error);
                         installInFlight = false;
+                        // Install failed; release per-instance executor.
+                        try { updater.close(); } catch (Exception ignored) {}
                     }
                 });
             } catch (Exception e) {

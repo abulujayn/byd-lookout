@@ -40,7 +40,49 @@
 
     </LinearLayout>
 
-    <!-- Separator (only when both items visible) -->
+    <!-- Separator: rec ↔ mic. Visible only when both are visible. -->
+    <View
+        android:id="@+id/separatorRecMic"
+        android:layout_width="1dp"
+        android:layout_height="14dp"
+        android:layout_marginHorizontal="8dp"
+        android:background="@color/border_default"
+        android:visibility="gone" />
+
+    <!-- Mic capture status. Visible only when audioEnabled config is on AND
+         a recording mode is configured (mic capture is gated to ACC-on
+         recording). Active = mic capturing right now; Inactive = configured
+         but capture isn't running (toggle on but mode in standby gear). -->
+    <LinearLayout
+        android:id="@+id/micContainer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:visibility="gone">
+
+        <ImageView
+            android:id="@+id/ivMicIcon"
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:src="@drawable/ic_overlay_mic_inactive"
+            android:contentDescription="@string/cd_mic_status" />
+
+        <TextView
+            android:id="@+id/tvMicLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:text="@string/overlay_mic_inactive_label"
+            android:textColor="@color/status_danger"
+            android:textSize="11sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace" />
+
+    </LinearLayout>
+
+    <!-- Separator: rec/mic ↔ trip. Renamed from separator → separator
+         so existing StatusOverlayService refs continue to work. -->
     <View
         android:id="@+id/separator"
         android:layout_width="1dp"

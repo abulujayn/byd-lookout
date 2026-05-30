@@ -22,6 +22,7 @@
     <string name="cd_expand_collapse">Расширение/колапс</string>
     <string name="cd_recording_status">Статус записи</string>
     <string name="cd_trip_tracking_status">Статус отслеживания путешествий</string>
+    <string name="cd_mic_status">Состояние захвата микрофона</string>
     <string name="cd_video_thumbnail">Видео миниатюра</string>
     <string name="cd_play">Воспроизвести</string>
     <string name="cd_back">Назад</string>
@@ -30,6 +31,7 @@
     <string name="cd_player_next">Следующая запись</string>
     <string name="cd_player_maximize">Максимизировать игрок</string>
     <string name="cd_player_minimize">Выход на полный экран</string>
+    <string name="cd_player_mute">Променить аудио</string>
     <string name="cd_delete">Удалить</string>
     <string name="cd_expand">Расширение</string>
     <string name="cd_configure">Конфигурация</string>
@@ -40,6 +42,7 @@
     <string name="cd_permission_granted">Разрешение выдано</string>
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">ТРИП</string>
+    <string name="overlay_mic_inactive_label">МИЦ</string>
     <string name="log_entry_default_timestamp">12:34:56</string>
     <string name="log_entry_default_tag">[ТАГ]</string>
     <string name="log_entry_default_message">Сообщение в журнале здесь</string>
@@ -333,6 +336,7 @@
     <string name="toast_fetching_log">Привозить журнал %1$s...</string>
     <string name="toast_log_empty_or_missing">Файл журнала пустой или не найден</string>
     <string name="toast_log_empty">Файл журнала пустой</string>
+    <string name="toast_daemon_manager_unavailable">Менеджер Daemon не готов, попробуйте снова через минуту.</string>
     <string name="toast_log_save_failed">Не удалось сохранить журнал: %1$s</string>
     <string name="toast_log_not_found">Файл журнала не найден или нечитаемый</string>
     <string name="log_share_title">%1$s Журнал - %2$s</string>
@@ -350,6 +354,12 @@
     <string name="play_with_chooser">Играть с</string>
     <string name="setup_version_banner">Обновлено на v%1$s  подтвердить автозапуск, BYD стирает его на каждой установке</string>
     <string name="setup_overlay_already_granted">Уже предоставлено</string>
+    <string name="setup_tips_header">Советы и решение проблем</string>
+    <string name="setup_traffic_title">Отключить монитор трафика BYD</string>
+    <string name="setup_traffic_body">Монитор трафика BYD блокирует доступ третьих лиц к Интернету. Отключение позволяет OverDrive и любым другим приложениям, которые вы устанавливаете, фактически использовать сеть.</string>
+    <string name="setup_traffic_button">Открытый монитор трафика</string>
+    <string name="setup_camera_fix_title">Камера подает черный или неточный?</string>
+    <string name="setup_camera_fix_body">Откройте диагностику → Зонд камеры, нажмите идентификатор камеры на 0, нажмите Save, а затем перезагрузите демона камеры. Если ленты все еще неправильны, повторяйте с идентификатором камеры 1. Оставьте раздел отображения нетронутым.</string>
     <string name="camera_current_manual">Текущая: Камера %1$d (учебное пособие)</string>
     <string name="camera_current_auto_label">Текущий: Авто</string>
     <string name="soh_estimation_active">Оценка активная</string>

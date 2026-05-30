@@ -22,6 +22,7 @@
     <string name="cd_expand_collapse">Expansion/effondrement</string>
     <string name="cd_recording_status">Statut de l\'enregistrement</string>
     <string name="cd_trip_tracking_status">Statut du suivi du voyage</string>
+    <string name="cd_mic_status">Statut de capture du microphone</string>
     <string name="cd_video_thumbnail">Miniature vidéo</string>
     <string name="cd_play">Lire</string>
     <string name="cd_back">Retour</string>
@@ -30,6 +31,7 @@
     <string name="cd_player_next">Enregistrement suivant</string>
     <string name="cd_player_maximize">Maximiser le joueur</string>
     <string name="cd_player_minimize">Sortie à écran complet</string>
+    <string name="cd_player_mute">Faire tourner l\'audio</string>
     <string name="cd_delete">Supprimer</string>
     <string name="cd_expand">Élargissement</string>
     <string name="cd_configure">Configuration</string>
@@ -40,6 +42,7 @@
     <string name="cd_permission_granted">Autorisation accordée</string>
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">Retour</string>
+    <string name="overlay_mic_inactive_label">MIC</string>
     <string name="log_entry_default_timestamp">Il est 12h34:56</string>
     <string name="log_entry_default_tag">Je vous en prie.</string>
     <string name="log_entry_default_message">Message de journaux ici</string>
@@ -333,6 +336,7 @@
     <string name="toast_fetching_log">Je prends le journal %1$s...</string>
     <string name="toast_log_empty_or_missing">Fichier journalier est vide ou non trouvé</string>
     <string name="toast_log_empty">Le fichier journalier est vide</string>
+    <string name="toast_daemon_manager_unavailable">Le directeur Daemon n\'est pas prêt, réessayez dans un instant.</string>
     <string name="toast_log_save_failed">Échec de sauvegarde du journal: %1$s</string>
     <string name="toast_log_not_found">Fichier journalier non trouvé ou illégable</string>
     <string name="log_share_title">%1$s Log - %2$s</string>
@@ -350,6 +354,12 @@
     <string name="play_with_chooser">Joue avec</string>
     <string name="setup_version_banner">Mis à jour à v%1$s  reconfirmer le démarrage automatique, BYD l\'efface à chaque installation</string>
     <string name="setup_overlay_already_granted">Déjà accordé</string>
+    <string name="setup_tips_header">Conseils et dépannage</string>
+    <string name="setup_traffic_title">Désactiver le moniteur de circulation BYD</string>
+    <string name="setup_traffic_body">Le BYD Traffic Monitor bloque les applications tierces d\'accéder à Internet. La désactivation permet à OverDrive et à toutes les autres applications que vous installez d\'utiliser réellement le réseau.</string>
+    <string name="setup_traffic_button">Moniteur de circulation ouvert</string>
+    <string name="setup_camera_fix_title">La caméra est noire ou incorrecte ?</string>
+    <string name="setup_camera_fix_body">Ouvrez le diagnostic → sonde de la caméra, définissez l\'identifiant de la caméra à 0, appuyez sur Enregistrer, puis redémarrez le démon de la caméra. Si les flux sont toujours erronés, répétez avec l\'identifiant de la caméra 1. Laissez la section de cartographie intacte.</string>
     <string name="camera_current_manual">Actuel: appareil photo %1$d (manuel)</string>
     <string name="camera_current_auto_label">Actuel: Auto</string>
     <string name="soh_estimation_active">Activité de l\'estimation</string>

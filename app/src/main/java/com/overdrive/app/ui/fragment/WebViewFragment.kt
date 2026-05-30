@@ -36,6 +36,35 @@ class WebViewFragment : Fragment() {
     companion object {
         const val ARG_PAGE_PATH = "page_path"
         private const val KEY_SAVED_URL = "saved_url"
+
+        // CDN strategy short-circuit. The fetch loop tries HTTP-proxy →
+        // SOCKS-proxy → direct in order. On the head unit's mobile data
+        // path each failing attempt eats up to (connect + read) ms, and
+        // a single page (live-view.html) easily fires 30+ tile / font /
+        // jmuxer requests in parallel through this same loop — multiply
+        // a 3-strategy serial cascade by 30 and the page parser stalls
+        // for tens of seconds. Once we know which strategy is currently
+        // working, every CDN request takes that one first; the cascade
+        // is reserved for the periodic re-probe.
+        //
+        // Values: 0 = unknown / re-probe, 1 = HTTP proxy, 2 = SOCKS proxy,
+        // 3 = direct.
+        @Volatile
+        private var lastWorkingCdnStrategy: Int = 0
+        @Volatile
+        private var lastCdnStrategyTimestamp: Long = 0L
+        // Re-probe roughly every minute so a recovered proxy / re-routed
+        // network gets a chance, without thrashing on every tile.
+        private const val CDN_STRATEGY_TTL_MS: Long = 60_000L
+
+        // Per-attempt budgets. The previous values (8s connect / 15s read
+        // for proxies, 3s connect / 15s read direct) added up to a
+        // worst-case ~70s per resource on a parser-blocking <script> tag
+        // on bad mobile data. 3.5s + 4s caps each attempt at ~7.5s, and
+        // with the sticky strategy above the *typical* cost is one
+        // attempt per resource.
+        private const val CDN_CONNECT_TIMEOUT_MS = 3500
+        private const val CDN_READ_TIMEOUT_MS = 4000
         
         /**
          * JavaScript injected after each page load.
@@ -414,46 +443,91 @@ class WebViewFragment : Fragment() {
                     // For map tiles/CDN: route through sing-box proxy (HTTP or SOCKS).
                     // The BYD head unit has no direct internet — all external requests
                     // must go through the sing-box mixed proxy on port 8119.
-                    // Strategy: try HTTP proxy first, then SOCKS proxy, then direct, then
-                    // fall back to letting WebView handle it (which uses system proxy).
+                    //
+                    // Strategy ordering, in priority:
+                    //   1. The strategy that worked on the LAST CDN fetch (sticky,
+                    //      re-probed every CDN_STRATEGY_TTL_MS). On a single page
+                    //      load with 30+ external resources, this collapses what
+                    //      used to be a 3-attempt serial cascade per resource into
+                    //      a single attempt, which is the difference between the
+                    //      page parser stalling for tens of seconds and rendering
+                    //      promptly when sing-box is up but slow / mobile data is
+                    //      flaky.
+                    //   2. The remaining strategies in HTTP → SOCKS → direct order
+                    //      (skipping the sticky one we already tried).
+                    //
+                    // On all-fail we return a real 504 instead of falling through
+                    // to super.shouldInterceptRequest. Letting WebView retry the
+                    // resource via the system network stack just routes it back
+                    // through the same sing-box proxy (or no proxy at all on
+                    // mobile-data-only) we already exhausted, and parser-blocking
+                    // <script> tags hang on that retry instead of failing fast.
+                    // 504 makes the resource fail instantly so the page can
+                    // continue without it.
                     if (isMapTile) {
                         val proxyAvailable = com.overdrive.app.mqtt.ProxyHelper.isProxyAvailable()
-                        
-                        // Build list of proxy strategies to try
-                        val strategies = mutableListOf<java.net.Proxy>()
-                        if (proxyAvailable) {
-                            // sing-box "mixed" inbound supports both HTTP and SOCKS5
-                            strategies.add(java.net.Proxy(java.net.Proxy.Type.HTTP, java.net.InetSocketAddress("127.0.0.1", 8119)))
-                            strategies.add(java.net.Proxy(java.net.Proxy.Type.SOCKS, java.net.InetSocketAddress("127.0.0.1", 8119)))
+
+                        val httpProxy: java.net.Proxy by lazy {
+                            java.net.Proxy(java.net.Proxy.Type.HTTP,
+                                java.net.InetSocketAddress("127.0.0.1", 8119))
                         }
-                        strategies.add(java.net.Proxy.NO_PROXY) // direct as last resort
-                        
-                        for (proxy in strategies) {
+                        val socksProxy: java.net.Proxy by lazy {
+                            java.net.Proxy(java.net.Proxy.Type.SOCKS,
+                                java.net.InetSocketAddress("127.0.0.1", 8119))
+                        }
+
+                        fun strategyForId(id: Int): java.net.Proxy? = when (id) {
+                            1 -> if (proxyAvailable) httpProxy else null
+                            2 -> if (proxyAvailable) socksProxy else null
+                            3 -> java.net.Proxy.NO_PROXY
+                            else -> null
+                        }
+
+                        // Build the attempt order. Sticky strategy first (if
+                        // still within TTL), then everything else.
+                        val attemptOrder = mutableListOf<Int>()
+                        val now = System.currentTimeMillis()
+                        val sticky = lastWorkingCdnStrategy
+                        if (sticky != 0 &&
+                            now - lastCdnStrategyTimestamp < CDN_STRATEGY_TTL_MS) {
+                            if (strategyForId(sticky) != null) attemptOrder.add(sticky)
+                        }
+                        // Default cascade: HTTP, SOCKS, direct.
+                        for (id in intArrayOf(1, 2, 3)) {
+                            if (id !in attemptOrder && strategyForId(id) != null) {
+                                attemptOrder.add(id)
+                            }
+                        }
+
+                        for (id in attemptOrder) {
+                            val proxy = strategyForId(id) ?: continue
+                            var connection: java.net.HttpURLConnection? = null
                             try {
-                                val connection = java.net.URL(url).openConnection(proxy) as java.net.HttpURLConnection
-                                connection.connectTimeout = if (proxy == java.net.Proxy.NO_PROXY) 3000 else 8000
-                                connection.readTimeout = 15000
+                                connection = java.net.URL(url).openConnection(proxy) as java.net.HttpURLConnection
+                                connection.connectTimeout = CDN_CONNECT_TIMEOUT_MS
+                                connection.readTimeout = CDN_READ_TIMEOUT_MS
                                 connection.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 7.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0 Safari/537.36")
                                 request?.requestHeaders?.forEach { (key, value) ->
                                     if (key != "User-Agent") connection.setRequestProperty(key, value)
                                 }
                                 connection.connect()
-                                
+
                                 if (connection.responseCode !in 200..399) {
                                     connection.disconnect()
+                                    connection = null
                                     continue
                                 }
-                                
+
                                 val stream = connection.inputStream
                                 val rawContentType = connection.contentType ?: "application/octet-stream"
                                 val mime = rawContentType.split(";").first().trim()
                                 val encoding = if (rawContentType.contains("charset=")) {
                                     rawContentType.substringAfter("charset=").trim()
                                 } else null
-                                
+
                                 val response = WebResourceResponse(mime, encoding, stream)
                                 response.setStatusCodeAndReasonPhrase(connection.responseCode, connection.responseMessage ?: "OK")
-                                
+
                                 val headers = mutableMapOf<String, String>()
                                 connection.headerFields?.forEach { (k, v) ->
                                     if (k == null || v.isEmpty()) return@forEach
@@ -479,18 +553,37 @@ class WebViewFragment : Fragment() {
                                 }
                                 headers["Access-Control-Allow-Origin"] = "*"
                                 response.responseHeaders = headers
-                                
-                                android.util.Log.d("WebViewProxy", "CDN OK via ${proxy.type()}: $url")
+
+                                // Promote this strategy. Subsequent CDN
+                                // requests on the same page will hit it
+                                // first and skip the cascade.
+                                lastWorkingCdnStrategy = id
+                                lastCdnStrategyTimestamp = now
+
+                                android.util.Log.d("WebViewProxy", "CDN OK via ${proxy.type()} (id=$id): $url")
                                 return response
                             } catch (e: Exception) {
-                                android.util.Log.w("WebViewProxy", "CDN ${proxy.type()} failed for $url: ${e.message}")
+                                android.util.Log.w("WebViewProxy", "CDN ${proxy.type()} (id=$id) failed for $url: ${e.message}")
+                                try { connection?.disconnect() } catch (_: Exception) {}
                                 // Try next strategy
                             }
                         }
-                        
-                        // All strategies failed — let WebView try its own way
-                        android.util.Log.e("WebViewProxy", "All CDN strategies failed for: $url")
-                        return super.shouldInterceptRequest(view, request)
+
+                        // Exhausted — demote sticky so the next request
+                        // re-probes from scratch instead of retrying the
+                        // same dead path.
+                        if (sticky != 0) lastWorkingCdnStrategy = 0
+
+                        // Fail FAST with a synthetic 504 instead of letting
+                        // WebView fall back to the system network stack.
+                        // Falling through here is what stalls a parser-
+                        // blocking <script src="https://cdn.jsdelivr.net/...">
+                        // for tens of seconds on bad mobile data: WebView
+                        // re-runs the same proxy path we just exhausted.
+                        // 504 surfaces a real failure to the parser so the
+                        // page continues rendering without that resource.
+                        android.util.Log.e("WebViewProxy", "All CDN strategies failed for: $url — returning 504")
+                        return synthesize504("CDN unreachable")
                     }
 
                     // LOGGING: Check if we are seeing the video request
@@ -676,6 +769,27 @@ class WebViewFragment : Fragment() {
                     resp.responseHeaders = mapOf(
                         "Cache-Control" to "no-store",
                         "Connection" to "close"
+                    )
+                    return resp
+                }
+
+                /**
+                 * Build a 504 WebResourceResponse for a CDN/external
+                 * resource the head unit can't reach. Returning this
+                 * (instead of letting WebView retry via the system
+                 * network stack) makes parser-blocking <script>/<link>
+                 * tags fail FAST on bad mobile data so the page can
+                 * continue rendering. Body is empty so a <script> tag
+                 * doesn't try to evaluate non-JS as JS.
+                 */
+                private fun synthesize504(reason: String): WebResourceResponse {
+                    val stream = java.io.ByteArrayInputStream(ByteArray(0))
+                    val resp = WebResourceResponse("text/plain", "utf-8", stream)
+                    resp.setStatusCodeAndReasonPhrase(504, "Gateway Timeout")
+                    resp.responseHeaders = mapOf(
+                        "Cache-Control" to "no-store",
+                        "Connection" to "close",
+                        "X-Overdrive-Fail-Reason" to reason
                     )
                     return resp
                 }

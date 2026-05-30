@@ -34,6 +34,12 @@ public class UpdateDialog {
                 .setMessage(message)
                 .setPositiveButton("Update Now", (d, w) -> { d.dismiss(); onUpdate.run(); })
                 .setNegativeButton("Later", (d, w) -> { d.dismiss(); if (onDismiss != null) onDismiss.run(); })
+                // Route back-press / outside-tap dismissal through onDismiss
+                // too. setCancelable(true) without this listener silently
+                // skipped the dismiss callback, leaking the AppUpdater
+                // instance (its lazy-allocated AdbDaemonLauncher's executor
+                // + tunnel-poll scheduler) until process death.
+                .setOnCancelListener(d -> { if (onDismiss != null) onDismiss.run(); })
                 .setCancelable(true)
                 .show();
     }

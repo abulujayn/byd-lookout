@@ -37,6 +37,7 @@ class DaemonLauncher(
         private const val ACC_SENTRY_DAEMON_PROCESS = "acc_sentry_daemon"
         private const val PROXY_DAEMON_PROCESS = "sentry_proxy"
         private const val TELEGRAM_DAEMON_PROCESS = "telegram_bot_daemon"
+        private const val ZROK_PROCESS = "zrok"
         
         // Use privileged shell for proxy daemon
         private const val USE_PRIVILEGED_SHELL_FOR_PROXY = true
@@ -54,6 +55,243 @@ class DaemonLauncher(
         private var accSentryLaunchInProgress = false
         @Volatile
         private var cameraLaunchInProgress = false
+
+        /**
+         * Build a shell snippet that ps+greps for [pattern], filters out the
+         * helper grep process AND the calling shell's PID, and SIGKILLs the
+         * remaining matches. This replaces every `pkill -9 -f '<pattern>'`
+         * that used to live in shell payloads — pkill -f matches against
+         * /proc/<pid>/cmdline, which means the calling sh -c wrapper
+         * (whose cmdline contains the literal pattern) self-matches and
+         * gets SIGKILLed before any subsequent commands in the same
+         * payload run. ps+awk+kill avoids that by keying on PID.
+         *
+         * Caller note: [pattern] is interpolated raw into a shell
+         * argument to `grep -F`. Pass static patterns only; if a future
+         * caller needs to pass user input, escape single quotes first.
+         *
+         * @return a multi-statement shell snippet, terminated with `; ` so
+         *         it can concatenate cleanly into a one-line payload.
+         */
+        fun psAwkKill(pattern: String): String =
+            "MY_PID=\$\$; ps -A -o PID,ARGS | grep -F '$pattern' | grep -v grep " +
+            "| awk '{print \$1}' | while read pid; do " +
+            "if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done"
+
+        /** Newline-terminated form for use inside `buildString` script bodies. */
+        fun psAwkKillLine(pattern: String): String = psAwkKill(pattern) + "\n"
+
+        /**
+         * Build the start_acc_sentry.sh watchdog script body. Static so the
+         * Telegram bot daemon can emit the SAME watchdog the UI uses. The
+         * acc-sentry watchdog is intentionally UNCAPPED (no MAX_RETRIES, no
+         * backoff) — see [[feedback_acc_sentry_uncapped_immortal]].
+         */
+        fun buildAccSentryWatchdogScript(apkPath: String, proxyArgs: String): List<String> {
+            val lockFile = "/data/local/tmp/acc_sentry_daemon.lock"
+            return listOf(
+                "#!/system/bin/sh",
+                "# AccSentryDaemon Watchdog Script",
+                "APK_PATH=\"$apkPath\"",
+                "CLS=\"com.overdrive.app.daemon.AccSentryDaemon\"",
+                "PROCESS_NAME=\"$ACC_SENTRY_DAEMON_PROCESS\"",
+                "LOG_FILE=\"$ACC_SENTRY_DAEMON_LOG\"",
+                "LOCK_FILE=\"$lockFile\"",
+                "SENTINEL=\"/data/local/tmp/acc_sentry_daemon.disabled\"",
+                "PROXY_ARGS=\"$proxyArgs\"",
+                "",
+                "/system/bin/device_config put activity_manager max_phantom_processes 2147483647 > /dev/null 2>&1",
+                "",
+                "echo \"=== WATCHDOG STARTED ===\" > \$LOG_FILE",
+                "",
+                "echo \"[\$(date)] Waiting for system boot to complete...\" >> \$LOG_FILE",
+                "BOOT_WAIT=0",
+                "while [ \"\$(getprop sys.boot_completed)\" != \"1\" ] && [ \$BOOT_WAIT -lt 120 ]; do",
+                "  if [ -f \"\$SENTINEL\" ]; then",
+                "    echo \"[\$(date)] Daemon disabled by user during boot-wait. Exiting watchdog.\" >> \"\$LOG_FILE\"",
+                "    exit 0",
+                "  fi",
+                "  sleep 2",
+                "  BOOT_WAIT=\$((BOOT_WAIT + 2))",
+                "done",
+                "echo \"[\$(date)] Boot completed (waited \${BOOT_WAIT}s)\" >> \$LOG_FILE",
+                "",
+                "sleep 5",
+                "",
+                "while true; do",
+                "  if [ -f \"\$LOG_FILE\" ]; then",
+                "    SIZE=\$(stat -c%s \"\$LOG_FILE\" 2>/dev/null || echo 0)",
+                "    if [ \"\$SIZE\" -gt 2097152 ]; then",
+                "      echo \"[\$(date)] Log rotated...\" > \"\$LOG_FILE\"",
+                "    fi",
+                "  fi",
+                "",
+                "  if [ -f \"\$SENTINEL\" ]; then",
+                "    echo \"[\$(date)] Daemon disabled by user (sentinel file exists). Exiting watchdog.\" >> \"\$LOG_FILE\"",
+                "    exit 0",
+                "  fi",
+                "",
+                "  echo \"[\$(date)] Starting Daemon...\" >> \"\$LOG_FILE\"",
+                "  CLASSPATH=\"\$APK_PATH\" app_process \$PROXY_ARGS /system/bin --nice-name=\"\$PROCESS_NAME\" \"\$CLS\" >> \"\$LOG_FILE\" 2>&1",
+                "",
+                "  EXIT_CODE=\$?",
+                "  if [ -f \"\$SENTINEL\" ]; then",
+                "    echo \"[\$(date)] Daemon disabled by user (sentinel written during shutdown). Exiting watchdog.\" >> \"\$LOG_FILE\"",
+                "    exit 0",
+                "  fi",
+                "",
+                "  echo \"[\$(date)] Daemon DIED (Code: \$EXIT_CODE). Respawning in 2s...\" >> \"\$LOG_FILE\"",
+                // SIGKILL/SIGABRT (137/134) doesn't run shutdown hooks, so
+                // the daemon's FileLock-backed lock file is left holding
+                // the dead PID. Without the rm here, the next app_process
+                // invocation hits acquireSingletonLock's PID-cmdline check
+                // and refuses to start (returns false → System.exit(1)),
+                // entering an infinite respawn loop because exit 1 isn't
+                // a healthy-uptime exit either. Cam/Telegram watchdogs
+                // already do this; AccSentry missed it.
+                "  if [ \$EXIT_CODE -eq 137 ] || [ \$EXIT_CODE -eq 134 ]; then",
+                "    rm -f \"\$LOCK_FILE\" 2>/dev/null",
+                "  fi",
+                "  sleep 2",
+                "done"
+            )
+        }
+
+        /**
+         * Build the start_telegram.sh watchdog script body. Same retry
+         * policy as cam_daemon (no cap, healthy-uptime reset, monotonic
+         * uptime, 60s backoff cap). The Telegram bot daemon was previously
+         * spawned bare via `nohup sh -c '<inner>' > log &`; if it crashed,
+         * only the in-process 30s health-check covered it — and only when
+         * MainActivity was alive. Worst-case downtime was ~12 minutes
+         * (ProcessRevivalReceiver alarm → revive → next health-check tick).
+         * With this watchdog, recovery is seconds.
+         */
+        fun buildTelegramWatchdogScript(apkPath: String, proxyArgs: String): List<String> {
+            val appProcessLine =
+                "  CLASSPATH=$apkPath app_process " +
+                "${proxyArgs}/system/bin " +
+                "--nice-name=$TELEGRAM_DAEMON_PROCESS " +
+                "com.overdrive.app.daemon.TelegramBotDaemon >> \"\$LOG_FILE\" 2>&1"
+
+            return listOf(
+                "#!/system/bin/sh",
+                "# TelegramBotDaemon Watchdog Script",
+                "LOG_FILE=\"$TELEGRAM_DAEMON_LOG\"",
+                "LOCK_FILE=\"/data/local/tmp/telegram_bot_daemon.lock\"",
+                "SENTINEL=\"/data/local/tmp/telegram_bot_daemon.disabled\"",
+                "RETRY_COUNT=0",
+                "HEALTHY_UPTIME_SEC=300",
+                "",
+                "while true; do",
+                "  if [ -f \"\$SENTINEL\" ]; then",
+                "    echo \"[\$(date)] Daemon disabled by user (sentinel file exists). Exiting watchdog.\" >> \"\$LOG_FILE\"",
+                "    exit 0",
+                "  fi",
+                "  echo \"[\$(date)] Starting TelegramBotDaemon...\" >> \"\$LOG_FILE\"",
+                "  START_EPOCH=\$(awk '{print int(\$1)}' /proc/uptime 2>/dev/null || date +%s)",
+                "",
+                appProcessLine,
+                "",
+                "  EXIT_CODE=\$?",
+                "  END_EPOCH=\$(awk '{print int(\$1)}' /proc/uptime 2>/dev/null || date +%s)",
+                "  UPTIME_SEC=\$((END_EPOCH - START_EPOCH))",
+                "  if [ \$UPTIME_SEC -lt 0 ]; then UPTIME_SEC=0; fi",
+                "  if [ -f \"\$SENTINEL\" ]; then",
+                "    echo \"[\$(date)] Daemon disabled by user (sentinel written during shutdown). Exiting watchdog.\" >> \"\$LOG_FILE\"",
+                "    exit 0",
+                "  fi",
+                "  if [ \$EXIT_CODE -eq 0 ]; then",
+                "    echo \"[\$(date)] Daemon exited cleanly (code 0), restarting in 10s...\" >> \"\$LOG_FILE\"",
+                "    RETRY_COUNT=0",
+                "    sleep 10",
+                "  else",
+                "    if [ \$UPTIME_SEC -ge \$HEALTHY_UPTIME_SEC ] && [ \$RETRY_COUNT -gt 0 ]; then",
+                "      echo \"[\$(date)] Daemon ran healthy for \${UPTIME_SEC}s before exit \$EXIT_CODE — resetting retry counter\" >> \"\$LOG_FILE\"",
+                "      RETRY_COUNT=0",
+                "    fi",
+                "    RETRY_COUNT=\$((RETRY_COUNT + 1))",
+                "    DELAY=\$((RETRY_COUNT * 3))",
+                "    if [ \$DELAY -gt 60 ]; then DELAY=60; fi",
+                "    echo \"[\$(date)] Daemon exited with code \$EXIT_CODE after \${UPTIME_SEC}s (attempt \$RETRY_COUNT), retrying in \${DELAY}s...\" >> \"\$LOG_FILE\"",
+                "    if [ \$EXIT_CODE -eq 137 ] || [ \$EXIT_CODE -eq 134 ]; then",
+                "      rm -f \"\$LOCK_FILE\" 2>/dev/null",
+                "    fi",
+                "    sleep \$DELAY",
+                "  fi",
+                "done"
+            )
+        }
+
+        /**
+         * Build the start_cam_daemon.sh watchdog script body. Static so the
+         * Telegram bot daemon — which lives in a separate process and can't
+         * easily own a DaemonLauncher instance — can emit the SAME watchdog
+         * the UI uses, instead of an old retry-policy variant. See
+         * [[feedback_watchdog_no_retry_cap]] for the no-cap rationale.
+         */
+        fun buildCamDaemonWatchdogScript(
+                apkPath: String,
+                nativeLibDir: String,
+                outputDir: String,
+                proxyArgs: String
+        ): List<String> {
+            val appProcessLine =
+                "  CLASSPATH=/system/framework/bmmcamera.jar:$apkPath app_process " +
+                "-Djava.library.path=$nativeLibDir:/system/lib64:/vendor/lib64:/product/lib64:/odm/lib64 " +
+                "${proxyArgs}/system/bin " +
+                "--nice-name=$CAMERA_DAEMON_PROCESS " +
+                "com.overdrive.app.daemon.CameraDaemon " +
+                "$outputDir $nativeLibDir >> \"\$LOG_FILE\" 2>&1"
+
+            return listOf(
+                "#!/system/bin/sh",
+                "# CameraDaemon Watchdog Script",
+                "LOG_FILE=\"$CAMERA_DAEMON_LOG\"",
+                "LOCK_FILE=\"/data/local/tmp/camera_daemon.lock\"",
+                "SENTINEL=\"/data/local/tmp/camera_daemon.disabled\"",
+                "RETRY_COUNT=0",
+                "HEALTHY_UPTIME_SEC=300",
+                "",
+                "while true; do",
+                "  if [ -f \"\$SENTINEL\" ]; then",
+                "    echo \"[\$(date)] Daemon disabled by user (sentinel file exists). Exiting watchdog.\" >> \"\$LOG_FILE\"",
+                "    exit 0",
+                "  fi",
+                "  echo \"[\$(date)] Starting CameraDaemon...\" >> \"\$LOG_FILE\"",
+                "  START_EPOCH=\$(awk '{print int(\$1)}' /proc/uptime 2>/dev/null || date +%s)",
+                "",
+                appProcessLine,
+                "",
+                "  EXIT_CODE=\$?",
+                "  END_EPOCH=\$(awk '{print int(\$1)}' /proc/uptime 2>/dev/null || date +%s)",
+                "  UPTIME_SEC=\$((END_EPOCH - START_EPOCH))",
+                "  if [ \$UPTIME_SEC -lt 0 ]; then UPTIME_SEC=0; fi",
+                "  if [ -f \"\$SENTINEL\" ]; then",
+                "    echo \"[\$(date)] Daemon disabled by user (sentinel written during shutdown). Exiting watchdog.\" >> \"\$LOG_FILE\"",
+                "    exit 0",
+                "  fi",
+                "  if [ \$EXIT_CODE -eq 0 ]; then",
+                "    echo \"[\$(date)] Daemon exited cleanly (code 0), restarting in 10s...\" >> \"\$LOG_FILE\"",
+                "    RETRY_COUNT=0",
+                "    sleep 10",
+                "  else",
+                "    if [ \$UPTIME_SEC -ge \$HEALTHY_UPTIME_SEC ] && [ \$RETRY_COUNT -gt 0 ]; then",
+                "      echo \"[\$(date)] Daemon ran healthy for \${UPTIME_SEC}s before exit \$EXIT_CODE — resetting retry counter\" >> \"\$LOG_FILE\"",
+                "      RETRY_COUNT=0",
+                "    fi",
+                "    RETRY_COUNT=\$((RETRY_COUNT + 1))",
+                "    DELAY=\$((RETRY_COUNT * 3))",
+                "    if [ \$DELAY -gt 60 ]; then DELAY=60; fi",
+                "    echo \"[\$(date)] Daemon exited with code \$EXIT_CODE after \${UPTIME_SEC}s (attempt \$RETRY_COUNT), retrying in \${DELAY}s...\" >> \"\$LOG_FILE\"",
+                "    if [ \$EXIT_CODE -eq 137 ] || [ \$EXIT_CODE -eq 134 ]; then",
+                "      rm -f \"\$LOCK_FILE\" 2>/dev/null",
+                "    fi",
+                "    sleep \$DELAY",
+                "  fi",
+                "done"
+            )
+        }
     }
     
     interface LaunchCallback {
@@ -116,8 +354,29 @@ class DaemonLauncher(
             if (isRunning) {
                 logManager.info(TAG, "CameraDaemon already running")
                 callback.onLog("CameraDaemon already running")
-                callback.onLaunched()
-                cameraLaunchInProgress = false
+                // Clear the disable sentinel synchronously (in the rm's own
+                // onSuccess callback) BEFORE reporting success. If we fired
+                // onLaunched() before the rm landed, a daemon exit racing
+                // the rm could let the watchdog gate-2 see the still-present
+                // sentinel and exit 0 — silent permanent stop. With the rm
+                // gated, the caller sees "running" only once the sentinel
+                // is actually gone.
+                adbShellExecutor.execute(
+                    command = "rm -f /data/local/tmp/camera_daemon.disabled 2>/dev/null; echo done",
+                    callback = object : AdbShellExecutor.ShellCallback {
+                        override fun onSuccess(o: String) {
+                            callback.onLaunched()
+                            cameraLaunchInProgress = false
+                        }
+                        override fun onError(e: String) {
+                            // rm failure is non-fatal but log it — better to
+                            // proceed than wedge the launcher.
+                            logManager.warn(TAG, "Sentinel rm failed on already-running short-circuit: $e")
+                            callback.onLaunched()
+                            cameraLaunchInProgress = false
+                        }
+                    }
+                )
             } else {
                 launchCameraDaemonInternal(outputDir, nativeLibDir, object : LaunchCallback {
                     override fun onLog(message: String) = callback.onLog(message)
@@ -143,20 +402,23 @@ class DaemonLauncher(
         callback.onLog("Deploying watchdog script...")
         
         // Step 1: Kill old processes and clean up.
-        // Single broad pkill on 'cam_daemon' takes out start_cam_daemon (watchdog),
-        // byd_cam_daemon (daemon), and any orphans in one syscall — so neither
-        // can respawn the other between calls. No sleep race needed.
-        // Also clear the disable sentinel — user is explicitly starting the daemon.
-        val cleanupCmd = buildString {
-            append("rm -f /data/local/tmp/camera_daemon.disabled 2>/dev/null; ")
-            append("pkill -9 -f 'cam_daemon' 2>/dev/null; ")
-            append("killall -9 $CAMERA_DAEMON_PROCESS 2>/dev/null; ")
-            append("rm -f $scriptPath /data/local/tmp/cam_watchdog.pid /data/local/tmp/camera_daemon.lock 2>/dev/null; ")
-            append("echo done")
+        // Use script-via-tmpfile so toybox `pkill -f 'cam_daemon'` can't
+        // self-match the calling shell's argv. Order: clear sentinel
+        // (user is explicitly starting), rm watchdog/pidfile, pkill,
+        // settle, then rm lock file (lock-rm AFTER pkill prevents the
+        // lockfile resurrection race).
+        val cleanupScript = buildString {
+            append("rm -f /data/local/tmp/camera_daemon.disabled 2>/dev/null\n")
+            append("rm -f $scriptPath /data/local/tmp/cam_watchdog.pid 2>/dev/null\n")
+            append(psAwkKillLine("cam_daemon"))
+            append("killall -9 $CAMERA_DAEMON_PROCESS 2>/dev/null\n")
+            append("sleep 1\n")
+            append("rm -f /data/local/tmp/camera_daemon.lock 2>/dev/null\n")
+            append("echo done\n")
         }
-        
-        adbShellExecutor.execute(
-            command = cleanupCmd,
+
+        adbShellExecutor.executeScript(
+            scriptBody = cleanupScript,
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     callback.onLog("Old processes cleaned up, writing script...")
@@ -175,62 +437,11 @@ class DaemonLauncher(
         apkPath: String, proxyArgs: String, outputDir: String, nativeLibDir: String,
         scriptPath: String, callback: LaunchCallback
     ) {
-        val scriptLines = listOf(
-            "#!/system/bin/sh",
-            "# CameraDaemon Watchdog Script",
-            "LOG_FILE=\"$CAMERA_DAEMON_LOG\"",
-            "LOCK_FILE=\"/data/local/tmp/camera_daemon.lock\"",
-            "SENTINEL=\"/data/local/tmp/camera_daemon.disabled\"",
-            "MAX_RETRIES=5",
-            "RETRY_COUNT=0",
-            "",
-            "while true; do",
-            "  # Check disable sentinel — if present, daemon was intentionally stopped",
-            "  if [ -f \"\$SENTINEL\" ]; then",
-            "    echo \"[\$(date)] Daemon disabled by user (sentinel file exists). Exiting watchdog.\" >> \"\$LOG_FILE\"",
-            "    exit 0",
-            "  fi",
-            "  echo \"[\$(date)] Starting CameraDaemon...\" >> \"\$LOG_FILE\"",
-            "",
-            "  CLASSPATH=/system/framework/bmmcamera.jar:$apkPath app_process " +
-                "-Djava.library.path=$nativeLibDir:/system/lib64:/vendor/lib64:/product/lib64:/odm/lib64 " +
-                "${proxyArgs}/system/bin " +
-                "--nice-name=$CAMERA_DAEMON_PROCESS " +
-                "com.overdrive.app.daemon.CameraDaemon " +
-                "$outputDir $nativeLibDir >> \"\$LOG_FILE\" 2>&1",
-            "",
-            "  EXIT_CODE=\$?",
-            "  # Check sentinel again — daemon may have written it during shutdown",
-            "  if [ -f \"\$SENTINEL\" ]; then",
-            "    echo \"[\$(date)] Daemon disabled by user (sentinel written during shutdown). Exiting watchdog.\" >> \"\$LOG_FILE\"",
-            "    exit 0",
-            "  fi",
-            "  if [ \$EXIT_CODE -eq 0 ]; then",
-            "    echo \"[\$(date)] Daemon exited cleanly (code 0), restarting in 10s...\" >> \"\$LOG_FILE\"",
-            "    RETRY_COUNT=0",
-            "    sleep 10",
-            "  elif [ \$EXIT_CODE -eq 1 ] || [ \$EXIT_CODE -eq 137 ] || [ \$EXIT_CODE -eq 134 ]; then",
-            "    # Exit 1 = singleton lock conflict, 137 = SIGKILL (OOM), 134 = SIGABRT (native crash/font init)",
-            "    # All are transient — retry with backoff",
-            "    RETRY_COUNT=\$((RETRY_COUNT + 1))",
-            "    if [ \$RETRY_COUNT -ge \$MAX_RETRIES ]; then",
-            "      echo \"[\$(date)] Daemon exited with code \$EXIT_CODE, max retries (\$MAX_RETRIES) reached. Giving up.\" >> \"\$LOG_FILE\"",
-            "      break",
-            "    fi",
-            "    DELAY=\$((RETRY_COUNT * 3))",
-            "    echo \"[\$(date)] Daemon exited with code \$EXIT_CODE (attempt \$RETRY_COUNT/\$MAX_RETRIES), retrying in \${DELAY}s...\" >> \"\$LOG_FILE\"",
-            "    # Clean stale lock file if process was killed or aborted",
-            "    if [ \$EXIT_CODE -eq 137 ] || [ \$EXIT_CODE -eq 134 ]; then",
-            "      rm -f \"\$LOCK_FILE\" 2>/dev/null",
-            "    fi",
-            "    sleep \$DELAY",
-            "  else",
-            "    echo \"[\$(date)] Daemon exited with code \$EXIT_CODE, NOT restarting.\" >> \"\$LOG_FILE\"",
-            "    break",
-            "  fi",
-            "done"
-        )
-        
+        // Single source of truth for the watchdog body lives in the companion
+        // (buildCamDaemonWatchdogScript) so the Telegram bot daemon can emit
+        // the same script. See [[feedback_watchdog_no_retry_cap]].
+        val scriptLines = buildCamDaemonWatchdogScript(apkPath, nativeLibDir, outputDir, proxyArgs)
+
         // Write script using multiple echo commands (same proven approach as AccSentryDaemon)
         val writeCmd = buildString {
             append("rm -f $scriptPath 2>/dev/null; ")
@@ -584,19 +795,34 @@ class DaemonLauncher(
                     val hasDaemon = output.contains(ACC_SENTRY_DAEMON_PROCESS)
                     val hasWatchdog = output.contains("start_acc_sentry")
                     
-                    if (hasDaemon) {
-                        logManager.info(TAG, "AccSentryDaemon already running")
-                        callback.onLog("AccSentryDaemon already running")
-                        callback.onLaunched()
-                        accSentryLaunchInProgress = false
-                        return
-                    }
-                    
-                    if (hasWatchdog) {
-                        logManager.info(TAG, "Watchdog process running - daemon will spawn")
-                        callback.onLog("Watchdog active, daemon will respawn")
-                        callback.onLaunched()
-                        accSentryLaunchInProgress = false
+                    if (hasDaemon || hasWatchdog) {
+                        // Clear the disable sentinel synchronously on the
+                        // already-running path: report success only after
+                        // the rm has landed, so a daemon exit racing the rm
+                        // can't let the watchdog gate-2 see a still-present
+                        // sentinel and exit 0 (silent permanent stop).
+                        val statusMsg = if (hasDaemon) "AccSentryDaemon already running"
+                                         else "Watchdog active, daemon will respawn"
+                        if (hasDaemon) {
+                            logManager.info(TAG, "AccSentryDaemon already running")
+                        } else {
+                            logManager.info(TAG, "Watchdog process running - daemon will spawn")
+                        }
+                        callback.onLog(statusMsg)
+                        adbShellExecutor.execute(
+                            command = "rm -f /data/local/tmp/acc_sentry_daemon.disabled 2>/dev/null; echo done",
+                            callback = object : AdbShellExecutor.ShellCallback {
+                                override fun onSuccess(o: String) {
+                                    callback.onLaunched()
+                                    accSentryLaunchInProgress = false
+                                }
+                                override fun onError(e: String) {
+                                    logManager.warn(TAG, "Sentinel rm failed on already-running short-circuit: $e")
+                                    callback.onLaunched()
+                                    accSentryLaunchInProgress = false
+                                }
+                            }
+                        )
                         return
                     }
                     
@@ -619,18 +845,21 @@ class DaemonLauncher(
         logManager.debug(TAG, "Deploying Immortal Watchdog Script for AccSentryDaemon...")
         callback.onLog("Deploying watchdog script via ADB (UID 2000)...")
         
-        // Step 1: Kill EVERYTHING in one syscall — single pkill on the broad
-        // 'acc_sentry' pattern takes out start_acc_sentry.sh (watchdog),
-        // acc_sentry_daemon (daemon), and any AccSentryDaemon class-loader
-        // shell wrappers simultaneously, so nothing survives to respawn anything.
-        val cleanupCmd = buildString {
-            append("pkill -9 -f 'acc_sentry' 2>/dev/null; ")
-            append("rm -f $lockFilePath $watchdogScriptPath 2>/dev/null; ")
-            append("echo done")
+        // Use script-via-tmpfile so toybox `pkill -f 'acc_sentry'` can't
+        // self-match the calling shell's argv. Order: clear sentinel
+        // (user is explicitly starting), rm watchdog script, pkill,
+        // settle, then rm lock file.
+        val cleanupScript = buildString {
+            append("rm -f /data/local/tmp/acc_sentry_daemon.disabled 2>/dev/null\n")
+            append("rm -f $watchdogScriptPath 2>/dev/null\n")
+            append(psAwkKillLine("acc_sentry"))
+            append("sleep 1\n")
+            append("rm -f $lockFilePath 2>/dev/null\n")
+            append("echo done\n")
         }
-        
-        adbShellExecutor.execute(
-            command = cleanupCmd,
+
+        adbShellExecutor.executeScript(
+            scriptBody = cleanupScript,
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     callback.onLog("Old processes cleaned up, writing watchdog script...")
@@ -650,61 +879,11 @@ class DaemonLauncher(
      * Write the watchdog script to /data/local/tmp/ using printf (more reliable than heredoc).
      */
     private fun writeWatchdogScript(apkPath: String, proxyArgs: String, scriptPath: String, callback: LaunchCallback) {
-        // Build the script content line by line using printf
-        // This avoids heredoc issues with ADB shell
-        val lockFile = "/data/local/tmp/acc_sentry_daemon.lock"
-        val scriptLines = listOf(
-            "#!/system/bin/sh",
-            "# AccSentryDaemon Watchdog Script",
-            "APK_PATH=\"$apkPath\"",
-            "CLS=\"com.overdrive.app.daemon.AccSentryDaemon\"",
-            "PROCESS_NAME=\"$ACC_SENTRY_DAEMON_PROCESS\"",
-            "LOG_FILE=\"$ACC_SENTRY_DAEMON_LOG\"",
-            "LOCK_FILE=\"$lockFile\"",
-            "PROXY_ARGS=\"$proxyArgs\"",
-            "",
-            "# Disable Phantom Process Killer (best effort)",
-            "/system/bin/device_config put activity_manager max_phantom_processes 2147483647 > /dev/null 2>&1",
-            "",
-            "echo \"=== WATCHDOG STARTED ===\" > \$LOG_FILE",
-            "",
-            "# CRITICAL: Wait for system boot to complete before starting daemon",
-            "# This prevents 'No service published for: power' errors that crash SystemUI",
-            "echo \"[\$(date)] Waiting for system boot to complete...\" >> \$LOG_FILE",
-            "BOOT_WAIT=0",
-            "while [ \"\$(getprop sys.boot_completed)\" != \"1\" ] && [ \$BOOT_WAIT -lt 120 ]; do",
-            "  sleep 2",
-            "  BOOT_WAIT=\$((BOOT_WAIT + 2))",
-            "done",
-            "echo \"[\$(date)] Boot completed (waited \${BOOT_WAIT}s)\" >> \$LOG_FILE",
-            "",
-            "# Extra delay to ensure all system services are fully initialized",
-            "sleep 5",
-            "",
-            "# Infinite respawn loop",
-            "while true; do",
-            "  # Log rotation: truncate if > 2MB",
-            "  if [ -f \"\$LOG_FILE\" ]; then",
-            "    SIZE=\$(stat -c%s \"\$LOG_FILE\" 2>/dev/null || echo 0)",
-            "    if [ \"\$SIZE\" -gt 2097152 ]; then",
-            "      echo \"[\$(date)] Log rotated...\" > \"\$LOG_FILE\"",
-            "    fi",
-            "  fi",
-            "",
-            "  # NOTE: Do NOT delete lock file here - Java FileLock handles stale locks automatically",
-            "  # When a process dies, the OS releases the lock. Deleting the file causes race conditions.",
-            "",
-            "  echo \"[\$(date)] Starting Daemon...\" >> \"\$LOG_FILE\"",
-            "",
-            "  # Launch daemon (blocking call)",
-            "  CLASSPATH=\"\$APK_PATH\" app_process \$PROXY_ARGS /system/bin --nice-name=\"\$PROCESS_NAME\" \"\$CLS\" >> \"\$LOG_FILE\" 2>&1",
-            "",
-            "  # Daemon exited - log and respawn",
-            "  EXIT_CODE=\$?",
-            "  echo \"[\$(date)] Daemon DIED (Code: \$EXIT_CODE). Respawning in 2s...\" >> \"\$LOG_FILE\"",
-            "  sleep 2",
-            "done"
-        )
+        // Single source of truth for the script body lives in the companion
+        // (buildAccSentryWatchdogScript) so the Telegram path can emit the
+        // same script. Sentinel-gated, uncapped — see
+        // [[feedback_acc_sentry_uncapped_immortal]].
+        val scriptLines = buildAccSentryWatchdogScript(apkPath, proxyArgs)
         
         // Write script using multiple echo commands (most reliable across Android shells)
         val writeCmd = buildString {
@@ -865,18 +1044,25 @@ class DaemonLauncher(
     
     /**
      * Stop the AccSentryDaemon and its watchdog script.
-     * Uses pkill -9 -f 'acc_sentry' to kill both daemon and watchdog in one command.
+     * ps+awk+kill matches both daemon (--nice-name=acc_sentry_daemon) and
+     * watchdog shell (sh /data/local/tmp/start_acc_sentry.sh) in one pass.
      */
     fun stopAccSentryDaemon(callback: LaunchCallback) {
         logManager.info(TAG, "Stopping AccSentryDaemon and watchdog...")
         callback.onLog("Stopping AccSentryDaemon...")
-        
-        // Kill everything matching 'acc_sentry' pattern - daemon AND watchdog script
-        adbShellExecutor.execute(
-            command = "pkill -9 -f 'acc_sentry'; " +
-                "rm -f /data/local/tmp/acc_sentry_daemon.lock 2>/dev/null; " +
-                "rm -f /data/local/tmp/start_acc_sentry.sh 2>/dev/null; " +
-                "echo done",
+
+        // Use executeScript (tmpfile) so the calling shell's argv stays
+        // free of any pattern. Sentinel + chmod first (defense for any
+        // straggler watchdog that the kill misses), watchdog-script rm,
+        // ps+awk+kill, settle + lock-rm.
+        adbShellExecutor.executeScript(
+            scriptBody = "echo \"disabled by ui at \$(date)\" > /data/local/tmp/acc_sentry_daemon.disabled\n" +
+                "chmod 666 /data/local/tmp/acc_sentry_daemon.disabled 2>/dev/null\n" +
+                "rm -f /data/local/tmp/start_acc_sentry.sh 2>/dev/null\n" +
+                psAwkKillLine("acc_sentry") +
+                "sleep 1\n" +
+                "rm -f /data/local/tmp/acc_sentry_daemon.lock 2>/dev/null\n" +
+                "echo done\n",
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     logManager.info(TAG, "AccSentryDaemon stopped")
@@ -928,31 +1114,102 @@ class DaemonLauncher(
     private fun launchTelegramDaemonInternal(callback: LaunchCallback) {
         val apkPath = context.applicationInfo.sourceDir
         val proxyArgs = getProxyArgs()
-        
+        val watchdogScriptPath = "/data/local/tmp/start_telegram.sh"
+
         // Write output_dir to telegram config so daemon knows where events are stored
         writeOutputDirToTelegramConfig()
-        
-        val innerCmd = buildString {
-            append("CLASSPATH=$apkPath ")
-            append("app_process ")
-            append(proxyArgs)
-            append("/system/bin ")
-            append("--nice-name=$TELEGRAM_DAEMON_PROCESS ")
-            append("com.overdrive.app.daemon.TelegramBotDaemon")
-        }
-        
-        val cmd = "nohup sh -c '$innerCmd' > $TELEGRAM_DAEMON_LOG 2>&1 &"
-        
-        logManager.debug(TAG, "TelegramBotDaemon command: $cmd")
-        callback.onLog("Launching via ADB shell...")
-        
-        adbShellExecutor.execute(
-            command = cmd,
+
+        // Step 1: Pre-launch sweep via executeScript (tmpfile path so toybox
+        // `pkill -f 'telegram_bot_daemon'` can't self-match the calling
+        // shell). Clear the disable sentinel — user is explicitly starting.
+        // Lock-rm goes AFTER pkill with a settle to prevent the lockfile
+        // resurrection race.
+        //
+        // CRITICAL: kill prior watchdog shells BEFORE killing the daemon.
+        // The watchdog shell's argv (`sh /data/local/tmp/start_telegram.sh`)
+        // does NOT contain "telegram_bot_daemon", so killing just the daemon
+        // leaves the supervising shell alive — it respawns the daemon within
+        // 10 s and the new watchdog we're about to deploy ends up racing
+        // the old one. On reboot, multiple boot paths (DaemonStartupManager
+        // 15 s timer + AccSentry ACC-off + 60 s periodic health check) each
+        // call launchTelegramDaemon and stack watchdogs, producing the
+        // restart-loop symptom (each daemon's killOldInstances kills the
+        // others' daemons, those watchdogs respawn instantly, repeat).
+        val cleanupScript =
+            "rm -f /data/local/tmp/telegram_bot_daemon.disabled 2>/dev/null\n" +
+            "rm -f $watchdogScriptPath 2>/dev/null\n" +
+            psAwkKillLine("start_telegram.sh") +
+            psAwkKillLine("telegram_bot_daemon") +
+            "sleep 1\n" +
+            "rm -f /data/local/tmp/telegram_bot_daemon.lock 2>/dev/null\n" +
+            "echo done\n"
+
+        adbShellExecutor.executeScript(
+            scriptBody = cleanupScript,
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
-                    logManager.info(TAG, "TelegramBotDaemon launch command sent via ADB")
-                    callback.onLog("Launch command sent, verifying...")
-                    
+                    callback.onLog("Old processes cleaned up, writing watchdog script...")
+                    writeTelegramWatchdogScript(apkPath, proxyArgs, watchdogScriptPath, callback)
+                }
+                override fun onError(error: String) {
+                    callback.onLog("Cleanup error (continuing): $error")
+                    writeTelegramWatchdogScript(apkPath, proxyArgs, watchdogScriptPath, callback)
+                }
+            }
+        )
+    }
+
+    private fun writeTelegramWatchdogScript(
+            apkPath: String, proxyArgs: String, scriptPath: String, callback: LaunchCallback) {
+        // Single source of truth for the script body lives in the companion
+        // (buildTelegramWatchdogScript). Same retry policy as cam_daemon:
+        // sentinel-gated, no retry cap, monotonic uptime via /proc/uptime,
+        // healthy-uptime reset at 300s, backoff capped at 60s.
+        val scriptLines = buildTelegramWatchdogScript(apkPath, proxyArgs)
+
+        val writeCmd = buildString {
+            append("rm -f $scriptPath 2>/dev/null; ")
+            scriptLines.forEachIndexed { index, line ->
+                val escaped = line
+                        .replace("\\", "\\\\")
+                        .replace("\"", "\\\"")
+                        .replace("\$", "\\$")
+                        .replace("`", "\\`")
+                if (index == 0) {
+                    append("echo \"$escaped\" > $scriptPath; ")
+                } else {
+                    append("echo \"$escaped\" >> $scriptPath; ")
+                }
+            }
+            append("chmod 755 $scriptPath")
+        }
+
+        adbShellExecutor.execute(
+            command = writeCmd,
+            callback = object : AdbShellExecutor.ShellCallback {
+                override fun onSuccess(output: String) {
+                    logManager.info(TAG, "Telegram watchdog script written")
+                    callback.onLog("Watchdog script ready, launching...")
+                    launchTelegramWatchdogScript(scriptPath, callback)
+                }
+                override fun onError(error: String) {
+                    logManager.error(TAG, "Failed to write Telegram watchdog: $error")
+                    callback.onError("Watchdog script write failed: $error")
+                }
+            }
+        )
+    }
+
+    private fun launchTelegramWatchdogScript(scriptPath: String, callback: LaunchCallback) {
+        val launchCmd = "nohup sh $scriptPath > /dev/null 2>&1 &"
+
+        adbShellExecutor.execute(
+            command = launchCmd,
+            callback = object : AdbShellExecutor.ShellCallback {
+                override fun onSuccess(output: String) {
+                    logManager.info(TAG, "TelegramBotDaemon watchdog launched")
+                    callback.onLog("Watchdog active, verifying daemon...")
+
                     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                         verifyTelegramDaemonRunning(callback)
                     }, 2000)
@@ -1033,16 +1290,38 @@ class DaemonLauncher(
     fun stopTelegramDaemon(callback: LaunchCallback) {
         logManager.info(TAG, "Stopping TelegramBotDaemon...")
         callback.onLog("Stopping TelegramBotDaemon...")
-        
-        adbShellExecutor.execute(
-            command = "pkill -9 -f 'telegram_bot_daemon' 2>/dev/null; rm -f /data/local/tmp/telegram_bot_daemon.lock 2>/dev/null; echo done",
+
+        // Plant disable sentinel + chmod 666 + rm watchdog script BEFORE
+        // pkill, so any orphan watchdog gates out on its next iteration.
+        // Lock-rm AFTER pkill with settle to avoid lockfile resurrection.
+        // Routed through executeScript (tmpfile) so toybox `pkill -f
+        // 'telegram_bot_daemon'` can't self-match the calling shell.
+        // Also rm the greeting throttle stamp — when user toggles the
+        // daemon back ON, the next start should greet immediately rather
+        // than gate on the prior session's stamp. Throttle is for
+        // crash-loop spam, not user intent.
+        adbShellExecutor.executeScript(
+            scriptBody =
+                "echo \"disabled by ui at \$(date)\" > /data/local/tmp/telegram_bot_daemon.disabled\n" +
+                "chmod 666 /data/local/tmp/telegram_bot_daemon.disabled 2>/dev/null\n" +
+                "rm -f /data/local/tmp/start_telegram.sh 2>/dev/null\n" +
+                // Kill watchdog shells too. The sentinel-gate on next loop
+                // would also stop them, but an explicit kill ensures the
+                // daemon doesn't get respawned in the ~5–10 s window
+                // between this stop and the watchdog's next iteration.
+                psAwkKillLine("start_telegram.sh") +
+                psAwkKillLine("telegram_bot_daemon") +
+                "sleep 1\n" +
+                "rm -f /data/local/tmp/telegram_bot_daemon.lock 2>/dev/null\n" +
+                "rm -f /data/local/tmp/.tg_last_greeted 2>/dev/null\n" +
+                "echo done\n",
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     logManager.info(TAG, "TelegramBotDaemon stopped")
                     callback.onLog("TelegramBotDaemon stopped")
                     callback.onLaunched()
                 }
-                
+
                 override fun onError(error: String) {
                     // pkill returns error if process not found, which is fine
                     callback.onLaunched()
@@ -1155,25 +1434,41 @@ class DaemonLauncher(
     }
     
     /**
-     * Kill processes matching patterns using pkill.
+     * Kill processes matching patterns. Uses ps+awk+kill (not pkill -f)
+     * because adbShellExecutor.execute wraps body in `sh -c "<cmd>"`
+     * whose argv contains the literal pattern — pkill -f would
+     * SIGKILL the calling shell and drop the trailing `sleep 1; echo done`
+     * → onSuccess never fires → caller's onComplete only fires via
+     * onError after AdbShellExecutor's read-side fails.
+     *
+     * Routed through executeScript (tmpfile) so the calling shell's
+     * argv is just `sh /tmp/<script>`, no pattern self-match.
      */
     private fun killProcessesByPattern(patterns: List<String>, onComplete: () -> Unit) {
         if (patterns.isEmpty()) {
             onComplete()
             return
         }
-        
-        // Build pkill commands for each pattern
-        val killCmds = patterns.joinToString("; ") { "pkill -9 -f '$it' 2>/dev/null" }
-        adbShellExecutor.execute(
-            command = "$killCmds; sleep 1; echo done",
+
+        // Build a script body that ps+greps each pattern, excluding our PID.
+        val killBody = buildString {
+            append("MY_PID=\$\$\n")
+            for (p in patterns) {
+                append("ps -A -o PID,ARGS | grep -F '$p' | grep -v grep ")
+                append("| awk '{print \$1}' | while read pid; do ")
+                append("if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done\n")
+            }
+            append("sleep 1\n")
+            append("echo done\n")
+        }
+        adbShellExecutor.executeScript(
+            scriptBody = killBody,
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     onComplete()
                 }
-                
+
                 override fun onError(error: String) {
-                    // pkill returns non-zero if no process found - that's OK
                     onComplete()
                 }
             }
@@ -1294,18 +1589,31 @@ class DaemonLauncher(
     fun stopProxyDaemon(callback: LaunchCallback) {
         logManager.info(TAG, "Stopping ProxyDaemon...")
         callback.onLog("Stopping ProxyDaemon...")
-        
-        // Kill process and clear proxy settings
-        val cmd = "pkill -9 -f '$PROXY_DAEMON_PROCESS'; " +
-                "pkill -9 -f 'sing-box'; " +
-                "settings delete global http_proxy 2>/dev/null; " +
-                "settings put global global_http_proxy_host '' 2>/dev/null; " +
-                "settings put global global_http_proxy_port '' 2>/dev/null; " +
-                "settings delete global global_http_proxy_exclusion_list 2>/dev/null; " +
-                "echo done"
-        
-        adbShellExecutor.execute(
-            command = cmd,
+
+        // Routed through executeScript (tmpfile) so the calling shell's
+        // argv is `sh /tmp/<script>` — no pkill -f self-match. The
+        // previous `sh -c "pkill -9 -f '$PROXY_DAEMON_PROCESS'; …"` form
+        // had `sentry_proxy` and `sing-box` in the wrapper's argv;
+        // toybox pkill -f would SIGKILL the calling shell before the
+        // `settings delete` block ran. Functionally users saw "proxy
+        // stopped" but global_http_proxy settings persisted.
+        val script = buildString {
+            append("MY_PID=\$\$\n")
+            append("ps -A -o PID,ARGS | grep -F '$PROXY_DAEMON_PROCESS' | grep -v grep ")
+            append("| awk '{print \$1}' | while read pid; do ")
+            append("if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done\n")
+            append("ps -A -o PID,ARGS | grep -F 'sing-box' | grep -v grep ")
+            append("| awk '{print \$1}' | while read pid; do ")
+            append("if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done\n")
+            append("settings delete global http_proxy 2>/dev/null\n")
+            append("settings put global global_http_proxy_host '' 2>/dev/null\n")
+            append("settings put global global_http_proxy_port '' 2>/dev/null\n")
+            append("settings delete global global_http_proxy_exclusion_list 2>/dev/null\n")
+            append("echo done\n")
+        }
+
+        adbShellExecutor.executeScript(
+            scriptBody = script,
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     logManager.info(TAG, "ProxyDaemon stopped and settings cleared")
@@ -1387,28 +1695,45 @@ class DaemonLauncher(
     private fun killDaemonViaPrivilegedShell(processName: String, callback: LaunchCallback) {
         val killCmd = if (processName == CAMERA_DAEMON_PROCESS) {
             // Hard kill the whole cam_daemon family FIRST — single pkill on the
-            // broad pattern catches start_cam_daemon (watchdog), byd_cam_daemon
-            // (daemon), and any orphans in one syscall. Then write the disable
-            // sentinel and clean up state files. No sleep needed because nothing
-            // is left alive to respawn anything.
-            "pkill -9 -f 'cam_daemon' 2>/dev/null; echo 'disabled by ui at \$(date)' > /data/local/tmp/camera_daemon.disabled; rm -f /data/local/tmp/start_cam_daemon.sh /data/local/tmp/cam_watchdog.pid /data/local/tmp/camera_daemon.lock 2>/dev/null"
+            // Privileged-shell path runs as UID 1000 via nc localhost:1234.
+            // The privileged-shell daemon does its own `sh -c` of whatever
+            // we send, so the toybox `pkill -f 'cam_daemon'` self-match
+            // priv-shell wraps the received string in its own `sh -c`,
+            // so a literal pkill -f pattern would self-match on that
+            // side too. Use ps+awk+kill: the priv-shell's argv will
+            // contain the variable assignment text but the kill
+            // operates on a PID list, so $$ filtering correctly
+            // excludes the priv-shell's PID.
+            "echo \"disabled by ui at \$(date)\" > /data/local/tmp/camera_daemon.disabled; " +
+            "chmod 666 /data/local/tmp/camera_daemon.disabled 2>/dev/null; " +
+            "rm -f /data/local/tmp/start_cam_daemon.sh /data/local/tmp/cam_watchdog.pid 2>/dev/null; " +
+            "MY_PID=\$\$; ps -A -o PID,ARGS | grep -F cam_daemon | grep -v grep " +
+            "| awk '{print \$1}' | while read pid; do " +
+            "if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done; " +
+            "sleep 1; rm -f /data/local/tmp/camera_daemon.lock 2>/dev/null"
         } else {
-            "pkill -9 -f '$processName'"
+            "MY_PID=\$\$; ps -A -o PID,ARGS | grep -F '$processName' | grep -v grep " +
+            "| awk '{print \$1}' | while read pid; do " +
+            "if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done"
         }
         val escapedCmd = killCmd.replace("'", "'\\''")
         val ncCmd = "echo '$escapedCmd' | nc localhost 1234"
-        
-        adbShellExecutor.execute(
-            command = ncCmd,
+
+        // Route via executeScript: the ncCmd string contains the daemon
+        // pattern literally. If we used a plain `sh -c "<ncCmd>"`, the
+        // calling ADB shell would self-match its own pkill before the
+        // pipe to nc completes. Tmpfile form keeps the calling shell's
+        // argv free of the pattern.
+        adbShellExecutor.executeScript(
+            scriptBody = "$ncCmd\n",
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     logManager.info(TAG, "$processName killed via privileged shell")
                     callback.onLog("$processName stopped (via privileged shell)")
                     callback.onLaunched()
                 }
-                
+
                 override fun onError(error: String) {
-                    // Privileged shell failed, try ADB as fallback
                     logManager.warn(TAG, "Privileged shell kill failed: $error, trying ADB")
                     killDaemonViaAdb(processName, callback)
                 }
@@ -1420,37 +1745,97 @@ class DaemonLauncher(
      * Kill daemon via ADB shell (for UID 2000 processes).
      */
     private fun killDaemonViaAdb(processName: String, callback: LaunchCallback) {
-        // For AccSentryDaemon, use broader pattern 'acc_sentry' to kill both daemon AND watchdog
-        val killCmd = if (processName == ACC_SENTRY_DAEMON_PROCESS) {
-            "pkill -9 -f 'acc_sentry' 2>/dev/null; " +
-            "rm -f /data/local/tmp/acc_sentry_daemon.lock 2>/dev/null; " +
-            "rm -f /data/local/tmp/start_acc_sentry.sh 2>/dev/null; " +
-            "echo done"
-        } else if (processName == CAMERA_DAEMON_PROCESS) {
-            // Hard kill the whole cam_daemon family FIRST in one syscall — pkill
-            // -f 'cam_daemon' matches start_cam_daemon (watchdog), byd_cam_daemon
-            // (daemon), and any orphans simultaneously, so nothing survives to
-            // respawn anything. Then clean up script + lock files.
-            "pkill -9 -f 'cam_daemon' 2>/dev/null; " +
-            "killall -9 $processName 2>/dev/null; " +
-            "rm -f /data/local/tmp/start_cam_daemon.sh /data/local/tmp/camera_daemon.lock 2>/dev/null; " +
-            "echo done"
-        } else {
-            "pkill -9 -f '$processName' 2>/dev/null; killall -9 $processName 2>/dev/null; echo done"
+        // For cam/acc-sentry/zrok we route through executeScript so toybox
+        // `pkill -f '<pattern>'` can't self-match the calling shell's argv
+        // (which would otherwise contain the literal pattern). Order:
+        //   1. Sentinel + chmod (defense; only on user-initiated kills).
+        //   2. rm watchdog script.
+        //   3. pkill cascade.
+        //   4. settle + rm lock file (post-pkill so the daemon can't
+        //      resurrect the lock between rm and kill).
+        val isCamOrAccOrZrok =
+            processName == ACC_SENTRY_DAEMON_PROCESS ||
+            processName == CAMERA_DAEMON_PROCESS ||
+            processName == ZROK_PROCESS
+
+        if (!isCamOrAccOrZrok) {
+            // Other daemons (sentry_daemon, telegram_bot_daemon,
+            // sentry_proxy, cloudflared, sing-box, tailscaled). Was
+            // previously a `sh -c "pkill -9 -f '$processName'; killall -9
+            // $processName; echo done"`, but the wrapper's argv contained
+            // the literal `processName` → toybox pkill -f SIGKILLed the
+            // calling shell, dropping `killall` and `echo done`. The
+            // callback then only fired via `onError` after the
+            // AdbShellExecutor read-side timed out (~5 s per daemon).
+            // AppUpdater.stopAllDaemons step-2 iterated over 7 daemons
+            // → up to 35 s wasted on every app-process update.
+            //
+            // Routed through executeScript (tmpfile) → calling shell argv
+            // is `sh /tmp/<script>`, no self-match. ps+awk+kill belt-and-
+            // braces in case the daemon was launched without --nice-name
+            // and only matches `killall` by comm.
+            val script = buildString {
+                append("MY_PID=\$\$\n")
+                append("ps -A -o PID,ARGS | grep -F '$processName' | grep -v grep ")
+                append("| awk '{print \$1}' | while read pid; do ")
+                append("if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done\n")
+                append("killall -9 $processName 2>/dev/null\n")
+                append("echo done\n")
+            }
+            adbShellExecutor.executeScript(
+                scriptBody = script,
+                callback = object : AdbShellExecutor.ShellCallback {
+                    override fun onSuccess(output: String) {
+                        logManager.info(TAG, "$processName stopped via ADB")
+                        callback.onLog("$processName stopped"); callback.onLaunched()
+                    }
+                    override fun onError(error: String) {
+                        logManager.info(TAG, "$processName stopped (or was not running)")
+                        callback.onLog("$processName stopped"); callback.onLaunched()
+                    }
+                }
+            )
+            return
         }
 
-        adbShellExecutor.execute(
-            command = killCmd,
+        val killScript = when (processName) {
+            ACC_SENTRY_DAEMON_PROCESS ->
+                "echo \"disabled by killDaemon at \$(date)\" > /data/local/tmp/acc_sentry_daemon.disabled\n" +
+                "chmod 666 /data/local/tmp/acc_sentry_daemon.disabled 2>/dev/null\n" +
+                "rm -f /data/local/tmp/start_acc_sentry.sh 2>/dev/null\n" +
+                psAwkKillLine("acc_sentry") +
+                "sleep 1\n" +
+                "rm -f /data/local/tmp/acc_sentry_daemon.lock 2>/dev/null\n" +
+                "echo done\n"
+            CAMERA_DAEMON_PROCESS ->
+                // No sentinel here — this generic kill path is non-user-initiated
+                // (e.g. mutual exclusion). cam_daemon's user stops live in
+                // CameraDaemonController which DOES plant the sentinel.
+                "rm -f /data/local/tmp/start_cam_daemon.sh 2>/dev/null\n" +
+                psAwkKillLine("cam_daemon") +
+                "killall -9 $processName 2>/dev/null\n" +
+                "sleep 1\n" +
+                "rm -f /data/local/tmp/camera_daemon.lock 2>/dev/null\n" +
+                "echo done\n"
+            else -> // ZROK_PROCESS
+                "echo \"disabled by killDaemon at \$(date)\" > /data/local/tmp/zrok.disabled\n" +
+                "chmod 666 /data/local/tmp/zrok.disabled 2>/dev/null\n" +
+                "rm -f /data/local/tmp/start_zrok.sh 2>/dev/null\n" +
+                psAwkKillLine("zrok") +
+                "killall -9 $processName 2>/dev/null\n" +
+                "echo done\n"
+        }
+
+        adbShellExecutor.executeScript(
+            scriptBody = killScript,
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
-                    logManager.info(TAG, "$processName stopped via ADB")
+                    logManager.info(TAG, "$processName stopped via ADB script")
                     callback.onLog("$processName stopped")
                     callback.onLaunched()
                 }
-                
                 override fun onError(error: String) {
-                    // killall returns error if no process - that's fine
-                    logManager.info(TAG, "$processName stopped (or was not running)")
+                    logManager.info(TAG, "$processName stopped (or was not running): $error")
                     callback.onLog("$processName stopped")
                     callback.onLaunched()
                 }
@@ -1462,42 +1847,77 @@ class DaemonLauncher(
      * Kill daemon via both shells (when UID is unknown).
      */
     private fun killDaemonViaBothShells(processName: String, callback: LaunchCallback) {
-        // First try privileged shell
+        // Privileged-shell path — priv daemon wraps the received string in
+        // its own `sh -c`. ps+awk+kill keeps the priv-shell alive (PID
+        // exclusion via $$) so the trailing lock-rm runs.
         val privKillCmd = if (processName == CAMERA_DAEMON_PROCESS) {
-            // Hard kill the whole cam_daemon family FIRST in one syscall, then
-            // write the disable sentinel and clean up. See killDaemonViaPrivilegedShell
-            // for the rationale — broad pkill -f 'cam_daemon' matches watchdog
-            // and daemon together so neither has time to respawn the other.
-            "pkill -9 -f 'cam_daemon' 2>/dev/null; echo 'disabled by ui at \$(date)' > /data/local/tmp/camera_daemon.disabled; rm -f /data/local/tmp/start_cam_daemon.sh /data/local/tmp/cam_watchdog.pid /data/local/tmp/camera_daemon.lock 2>/dev/null"
+            "echo \"disabled by ui at \$(date)\" > /data/local/tmp/camera_daemon.disabled; " +
+            "chmod 666 /data/local/tmp/camera_daemon.disabled 2>/dev/null; " +
+            "rm -f /data/local/tmp/start_cam_daemon.sh /data/local/tmp/cam_watchdog.pid 2>/dev/null; " +
+            "MY_PID=\$\$; ps -A -o PID,ARGS | grep -F cam_daemon | grep -v grep " +
+            "| awk '{print \$1}' | while read pid; do " +
+            "if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done; " +
+            "sleep 1; rm -f /data/local/tmp/camera_daemon.lock 2>/dev/null"
         } else {
-            "pkill -9 -f '$processName'"
+            "MY_PID=\$\$; ps -A -o PID,ARGS | grep -F '$processName' | grep -v grep " +
+            "| awk '{print \$1}' | while read pid; do " +
+            "if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done"
         }
         val escapedCmd = privKillCmd.replace("'", "'\\''")
         val ncCmd = "echo '$escapedCmd' | nc localhost 1234 2>/dev/null"
-        
-        // For AccSentryDaemon, use broader pattern 'acc_sentry' to kill both daemon AND watchdog
+
+        // ADB path — runs through the outer executeScript at the bottom,
+        // so the tmpfile wrapper insulates the calling shell from
+        // self-match. Within the script body, ps+awk+kill is still
+        // safer (avoids an unnecessary 137 exit on the inner sh that
+        // runs the script body).
         val adbKillCmd = if (processName == ACC_SENTRY_DAEMON_PROCESS) {
-            "pkill -9 -f 'acc_sentry' 2>/dev/null; " +
-            "rm -f /data/local/tmp/acc_sentry_daemon.lock 2>/dev/null; " +
-            "rm -f /data/local/tmp/start_acc_sentry.sh 2>/dev/null"
+            "echo \"disabled by killDaemon at \$(date)\" > /data/local/tmp/acc_sentry_daemon.disabled; " +
+            "chmod 666 /data/local/tmp/acc_sentry_daemon.disabled 2>/dev/null; " +
+            "rm -f /data/local/tmp/start_acc_sentry.sh 2>/dev/null; " +
+            "MY_PID=\$\$; ps -A -o PID,ARGS | grep -F acc_sentry | grep -v grep " +
+            "| awk '{print \$1}' | while read pid; do " +
+            "if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done; " +
+            "sleep 1; " +
+            "rm -f /data/local/tmp/acc_sentry_daemon.lock 2>/dev/null"
         } else if (processName == CAMERA_DAEMON_PROCESS) {
-            // Hard kill the cam_daemon family in one syscall, then clean state.
-            "pkill -9 -f 'cam_daemon' 2>/dev/null; " +
+            "rm -f /data/local/tmp/start_cam_daemon.sh 2>/dev/null; " +
+            "MY_PID=\$\$; ps -A -o PID,ARGS | grep -F cam_daemon | grep -v grep " +
+            "| awk '{print \$1}' | while read pid; do " +
+            "if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done; " +
             "killall -9 $processName 2>/dev/null; " +
-            "rm -f /data/local/tmp/start_cam_daemon.sh /data/local/tmp/camera_daemon.lock 2>/dev/null"
+            "sleep 1; " +
+            "rm -f /data/local/tmp/camera_daemon.lock 2>/dev/null"
+        } else if (processName == ZROK_PROCESS) {
+            "echo \"disabled by killDaemon at \$(date)\" > /data/local/tmp/zrok.disabled; " +
+            "chmod 666 /data/local/tmp/zrok.disabled 2>/dev/null; " +
+            "rm -f /data/local/tmp/start_zrok.sh 2>/dev/null; " +
+            "MY_PID=\$\$; ps -A -o PID,ARGS | grep -F zrok | grep -v grep " +
+            "| awk '{print \$1}' | while read pid; do " +
+            "if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done; " +
+            "killall -9 $processName 2>/dev/null"
         } else {
-            "pkill -9 -f '$processName' 2>/dev/null; killall -9 $processName 2>/dev/null"
+            "MY_PID=\$\$; ps -A -o PID,ARGS | grep -F '$processName' | grep -v grep " +
+            "| awk '{print \$1}' | while read pid; do " +
+            "if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done; " +
+            "killall -9 $processName 2>/dev/null"
         }
         
-        adbShellExecutor.execute(
-            command = "$ncCmd; $adbKillCmd; echo done",
+        // Both the nc command (which contains the priv kill payload) and
+        // the adbKillCmd contain the daemon pattern literally. Sending them
+        // as a `sh -c "ncCmd; adbKillCmd"` payload would let the calling
+        // shell self-match its own pkill. Route through executeScript
+        // (tmpfile + sh path) so the calling shell's argv is just `sh
+        // <tmpPath>` and pkill cannot self-match.
+        adbShellExecutor.executeScript(
+            scriptBody = "$ncCmd\n$adbKillCmd\necho done\n",
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     logManager.info(TAG, "$processName stopped (tried both shells)")
                     callback.onLog("$processName stopped")
                     callback.onLaunched()
                 }
-                
+
                 override fun onError(error: String) {
                     logManager.info(TAG, "$processName stopped (or was not running)")
                     callback.onLog("$processName stopped")

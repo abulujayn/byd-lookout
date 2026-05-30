@@ -77,6 +77,15 @@ public class QualitySettingsApiHandler {
             handleTelemetryOverlayPost(out, body);
             return true;
         }
+        // Audio recording toggle (mic capture in app process, muxed into clips)
+        if (path.equals("/api/settings/audio-recording") && method.equals("GET")) {
+            sendAudioRecordingSettings(out);
+            return true;
+        }
+        if (path.equals("/api/settings/audio-recording") && method.equals("POST")) {
+            handleAudioRecordingPost(out, body);
+            return true;
+        }
         // Web-shell appearance (theme picker shipped on every page).
         // Same UnifiedConfigManager-backed pattern as the rest of /api/settings.
         if (path.equals("/api/settings/appearance") && method.equals("GET")) {
@@ -1127,6 +1136,150 @@ public class QualitySettingsApiHandler {
         response.put("success", true);
         response.put("enabled", overlayConfig.optBoolean("enabled", false));
         HttpResponse.sendJson(out, response.toString());
+    }
+
+    /**
+     * GET /api/settings/audio-recording — read audioEnabled flag from the
+     * recording section. Default off; the toggle is opt-in for legal/privacy
+     * reasons and only takes effect for ACC-on recording modes (CONTINUOUS /
+     * DRIVE_MODE / PROXIMITY_GUARD), never for surveillance recordings.
+     */
+    private static void sendAudioRecordingSettings(OutputStream out) throws Exception {
+        JSONObject recording = com.overdrive.app.config.UnifiedConfigManager.getRecording();
+        JSONObject response = new JSONObject();
+        response.put("success", true);
+        response.put("enabled", recording.optBoolean("audioEnabled", false));
+        HttpResponse.sendJson(out, response.toString());
+    }
+
+    /**
+     * POST /api/settings/audio-recording — set audioEnabled. Hot-reload
+     * applies at the next segment rotation (~2 min) or next event trigger;
+     * we don't try to add audio tracks to a live MediaMuxer because
+     * MediaMuxer rejects addTrack post-start. On an OFF→ON transition
+     * we force-rotate the live segment so the user sees audio in the
+     * very next clip they review instead of waiting up to ~2 min.
+     */
+    private static void handleAudioRecordingPost(OutputStream out, String body) throws Exception {
+        try {
+            JSONObject settings = new JSONObject(body);
+            boolean enabled = settings.optBoolean("enabled", false);
+
+            // Read current value BEFORE writing so we can detect an OFF→ON
+            // transition. getRecording() returns the live shared JSONObject
+            // reference — read-only access is fine, but we deliberately
+            // avoid mutating it (see delta-write below).
+            JSONObject recording = com.overdrive.app.config.UnifiedConfigManager.getRecording();
+            boolean wasEnabled = recording.optBoolean("audioEnabled", false);
+            boolean transitioning = !wasEnabled && enabled;
+
+            // Write only the delta. setRecording → updateSection performs a
+            // synchronized merge (existing.put for each key in data), so a
+            // single-key delta updates audioEnabled without touching other
+            // recording keys. Mutating the shared reference returned by
+            // getRecording() would race with concurrent POSTs (e.g. quality
+            // change) — JSONObject is not thread-safe under concurrent put().
+            // Mirrors the convention in handleTelemetryOverlayPost.
+            JSONObject delta = new JSONObject();
+            delta.put("audioEnabled", enabled);
+            com.overdrive.app.config.UnifiedConfigManager.setRecording(delta);
+
+            // OFF→ON: force-rotate the live segment so the next clip the
+            // user reviews actually has audio. MediaMuxer can't add tracks
+            // mid-stream so the running segment will remain video-only —
+            // closing it now and opening a fresh one is the only way to
+            // avoid up-to-2-min staleness.
+            // OFF→ON force-rotate is DEFERRED, not immediate. If we
+            // rotated now, the new segment opens before the app process
+            // has reconnected to AacIngestServer and re-applied its
+            // CONFIG, so the new segment gets audioTrackIndex=-1 and
+            // is video-only — exactly the bug the rotation was meant to
+            // avoid. Wait up to 5 s in a background thread for
+            // hasAudioConfig() to flip true (i.e. the app reconnected,
+            // CONFIG was applied), THEN rotate. If audio never arrives
+            // (app crash, mic claimed) we skip the rotation; the next
+            // natural rotation at 2 min picks up audio if it's back.
+            boolean rotateScheduled = false;
+            if (transitioning) {
+                final com.overdrive.app.surveillance.GpuSurveillancePipeline pipeline =
+                    CameraDaemon.getGpuPipeline();
+                if (pipeline != null) {
+                    final com.overdrive.app.surveillance.HardwareEventRecorderGpu enc =
+                        pipeline.getEncoder();
+                    if (enc != null && enc.isWritingToFile()) {
+                        rotateScheduled = true;
+                        new Thread(() -> {
+                            // Poll up to 5 s at 100 ms cadence for the app
+                            // to ship its CONFIG. AppAudioCaptureController
+                            // start() takes ~30-100 ms once a poll fires;
+                            // StatusOverlayService polls every 1 s in the
+                            // fast-poll window after ACC ON, every 3 s
+                            // otherwise. 5 s covers both.
+                            long deadline = System.currentTimeMillis() + 5000;
+                            while (System.currentTimeMillis() < deadline) {
+                                if (enc.hasAudioConfig()) break;
+                                try { Thread.sleep(100); }
+                                catch (InterruptedException ie) {
+                                    Thread.currentThread().interrupt();
+                                    return;
+                                }
+                            }
+                            // Re-resolve the encoder at fire time. A
+                            // recording-mode switch (CONTINUOUS → DRIVE_MODE,
+                            // user-triggered restart, etc.) can tear down
+                            // the encoder + create a fresh one during the
+                            // 5 s wait above; the captured `enc` reference
+                            // would then point at a dead-but-not-yet-released
+                            // instance. forceSegmentRotation on that would
+                            // either no-op silently or throw inside the
+                            // muxerLock. Identity-check against the live
+                            // pipeline encoder before firing.
+                            com.overdrive.app.surveillance.HardwareEventRecorderGpu liveEnc =
+                                pipeline.getEncoder();
+                            if (liveEnc != enc) {
+                                CameraDaemon.log("audio-recording: deferred rotation skipped — "
+                                    + "encoder identity changed");
+                                return;
+                            }
+                            if (!liveEnc.isWritingToFile()) return;  // mode changed
+                            if (!liveEnc.hasAudioConfig()) {
+                                // Either the audio config never arrived
+                                // within 5 s, or it landed and was
+                                // subsequently reverted (app stopped,
+                                // mic claimed). Skip — natural rotation
+                                // at the next 2 min boundary will pick
+                                // up audio if it comes back.
+                                CameraDaemon.log("audio-recording: deferred rotation skipped — "
+                                    + "audio config not present at fire time");
+                                return;
+                            }
+                            try {
+                                liveEnc.forceSegmentRotation();
+                                CameraDaemon.log("audio-recording: deferred rotation fired "
+                                    + "after audio config landed");
+                            } catch (Exception e) {
+                                CameraDaemon.log("audio-recording: deferred rotation failed: "
+                                    + e.getMessage());
+                            }
+                        }, "AudioRecordingRotate").start();
+                    }
+                }
+            }
+
+            JSONObject response = new JSONObject();
+            response.put("success", true);
+            response.put("enabled", enabled);
+            // UI hint. "scheduled" means we'll force-rotate the segment
+            // once the app's audio config lands (within ~5 s); the next
+            // clip after that has audio. "next-event" means there's no
+            // active recording so audio just applies to the next event
+            // trigger naturally.
+            response.put("appliesAt", rotateScheduled ? "next-clip" : "next-event");
+            HttpResponse.sendJson(out, response.toString());
+        } catch (Exception e) {
+            CameraDaemon.log("Error setting audio-recording: " + e.getMessage());
+            HttpResponse.sendJsonError(out, e.getMessage());
+        }
     }
 
     /**

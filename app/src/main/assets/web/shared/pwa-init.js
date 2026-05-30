@@ -100,6 +100,53 @@
         return r.json();
     }
 
+    // DOMException stringifies as "[object DOMException]" in older WebViews;
+    // we want the name + message so toasts read as "NotAllowedError:
+    // Registration failed - push service error" rather than a generic blob.
+    function errString(e) {
+        if (!e) return '';
+        if (e.name && e.message) return e.name + ': ' + e.message;
+        if (e.name) return e.name;
+        return String(e.message || e);
+    }
+
+    // Serial chain that serializes all pushManager.subscribe() + POST flows
+    // in this page. Both init()'s silent resubscribe and Enable's
+    // requestAndSubscribe() enqueue their work here; each caller observes
+    // its own fn's return value (no result coupling), but the WORK runs
+    // strictly in FIFO order. This prevents:
+    //   - two concurrent pushManager.subscribe() calls (Samsung Internet
+    //     has been observed to throw InvalidStateError on the second).
+    //   - duplicate /api/push/subscribe POSTs from rapid Enable clicks.
+    // The chain continues past errors (catch in the chain reassignment)
+    // so a failed silent doesn't break a subsequent Enable. Each fn is
+    // wrapped with a 30s watchdog so a hung subscribe can't block the
+    // chain forever (rare on Brave/Edge with WNS connectivity issues).
+    //
+    // CAVEAT: do NOT call runSerial() from inside an enqueued fn — the
+    // inner task would await its own outer continuation and deadlock
+    // until the 30s watchdog fires. No current caller does this.
+    var _subscribeChain = Promise.resolve();
+    function runSerial(fn) {
+        var timerId;
+        var deadline = new Promise(function (_resolve, reject) {
+            timerId = setTimeout(function () { reject(new Error('subscribe-timeout')); }, 30000);
+        });
+        // Suppress unhandledrejection if fn settles first — the deadline
+        // promise will reject 30s later with no consumer otherwise.
+        deadline.catch(function () {});
+        function runOnce() {
+            return Promise.race([fn(), deadline]).finally(function () {
+                if (timerId) clearTimeout(timerId);
+            });
+        }
+        var next = _subscribeChain.then(runOnce, runOnce);
+        // Reassign the chain to the post-error continuation so a failed
+        // task doesn't poison the chain.
+        _subscribeChain = next.catch(function () {});
+        return next;
+    }
+
     function inferLabel() {
         // Best-effort device label from User-Agent; user can rename later.
         var ua = navigator.userAgent || '';
@@ -135,9 +182,43 @@
                 return;
             }
 
-            if (!await reg.pushManager.getSubscription()) {
-                // Don't recreate the subscription on init as the user could have disabled after previous enabling
-                log('push subscription was previously registered');
+            // Permission granted but no live PushSubscription. This happens
+            // when the browser dropped the subscription (Samsung Internet
+            // routinely loses subs across app updates, Brave/Edge can drop
+            // when the push service connection cycles, Chrome on Android
+            // re-issues after FCM token refresh). Self-heal: fetch the
+            // VAPID key and resubscribe transparently so the per-device
+            // toggle UI on /notifications.html accurately reflects state.
+            var existing = await reg.pushManager.getSubscription();
+            if (existing) {
+                log('push subscription is active');
+                return;
+            }
+            log('permission granted but no active subscription — attempting silent resubscribe');
+            try {
+                await runSerial(async function () {
+                    // Re-check inside the serialized slot — if Enable
+                    // already ran first, a sub may now exist.
+                    var live = await reg.pushManager.getSubscription();
+                    if (live) { log('subscription appeared before silent slot ran'); return; }
+                    var meta = await getCategoriesAndKey();
+                    if (!meta || !meta.vapidPublicKey) {
+                        log('silent resubscribe skipped: backend has no VAPID key yet');
+                        return;
+                    }
+                    var sub = await reg.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: urlBase64ToUint8Array(meta.vapidPublicKey)
+                    });
+                    await postSubscription(sub);
+                    log('silent resubscribe succeeded');
+                });
+            } catch (e) {
+                // Don't escalate — the settings page will show the real
+                // error when the user clicks Enable. Common silent-fail
+                // causes: backend 503 (no Zrok yet), browser push service
+                // unreachable, app not installed yet, watchdog timeout.
+                log('silent resubscribe failed:', errString(e));
             }
         } catch (e) {
             log('init failed:', e && e.message ? e.message : e);
@@ -148,15 +229,46 @@
     // and explicit (re)subscribe flow.
     window.OverdrivePush = {
         async requestAndSubscribe() {
+            // Permission prompt happens OUTSIDE the serial chain — it's a
+            // user-gesture-bound API and queueing it would lose the
+            // gesture token on browsers that enforce it.
             var perm = await Notification.requestPermission();
             if (perm !== 'granted') return { ok: false, reason: 'permission-' + perm };
             var reg = await navigator.serviceWorker.register('/sw.js', { scope: '/' });
             await navigator.serviceWorker.ready;
-            var meta = await getCategoriesAndKey();
-            if (!meta || !meta.vapidPublicKey) return { ok: false, reason: 'no-vapid-key' };
-            var sub = await ensureSubscription(reg, meta.vapidPublicKey);
-            var resp = await postSubscription(sub);
-            return { ok: true, id: resp.id };
+            // Run the subscribe + POST inside the serial chain so we
+            // never race init()'s silent path or another rapid Enable
+            // click. ensureSubscription() will return any live sub
+            // produced by an earlier slot (silent or prior Enable),
+            // turning duplicate clicks into a single registration.
+            return runSerial(async function () {
+                var meta;
+                try {
+                    meta = await getCategoriesAndKey();
+                } catch (e) {
+                    return { ok: false, reason: 'backend-unreachable', error: errString(e) };
+                }
+                if (!meta || !meta.vapidPublicKey) return { ok: false, reason: 'no-vapid-key' };
+                // pushManager.subscribe() is the call that fails on
+                // Samsung Internet without GMS, Brave with shields, and
+                // Edge when WNS is unreachable. Capture the DOMException
+                // name+message so the settings page can surface it
+                // instead of a generic "could not enable" toast — these
+                // are browser-level rejections we can't route around
+                // but can at least diagnose.
+                var sub;
+                try {
+                    sub = await ensureSubscription(reg, meta.vapidPublicKey);
+                } catch (e) {
+                    return { ok: false, reason: 'subscribe-failed', error: errString(e) };
+                }
+                try {
+                    var resp = await postSubscription(sub);
+                    return { ok: true, id: resp.id };
+                } catch (e) {
+                    return { ok: false, reason: 'register-failed', error: errString(e) };
+                }
+            });
         },
         async unsubscribe() {
             var reg = await navigator.serviceWorker.getRegistration();

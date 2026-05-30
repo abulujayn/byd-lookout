@@ -108,6 +108,16 @@ class YoloDetector(private val context: Context) {
     private var shapedBuffer: TensorBuffer? = null
     private var floatOutput: FloatArray? = null
 
+    // Pre-extracted box-coords scratch reused across detect() calls. Sized
+    // numBoxes*4 = 33600 floats = 134 KB; allocating it per inference was
+    // ~1 MB/s of short-lived heap garbage feeding into the same GC that
+    // serves the encoder drainer thread. Detector is called on a single
+    // aiExecutor thread; no synchronization needed beyond interpLock.
+    private var boxesScratch: FloatArray? = null
+    // NMS sort working copy. Replaces sortedByDescending(), which allocated
+    // a fresh List + lambda per call.
+    private var nmsScratch: Array<Detection?>? = null
+
     // Model configuration
     private val modelPath = "models/yolo11n.tflite"
     private val inputSize = 640
@@ -162,6 +172,15 @@ class YoloDetector(private val context: Context) {
         const val CLASS_BEAR = 21
         const val CLASS_ZEBRA = 22
         const val CLASS_GIRAFFE = 23
+
+        // No-capture lambda → static singleton; reused across all nms() calls
+        // so the comparator instance never allocates per inference.
+        private val NMS_COMPARATOR: java.util.Comparator<Detection?> =
+            java.util.Comparator { a, b ->
+                val ac = a?.confidence ?: Float.NEGATIVE_INFINITY
+                val bc = b?.confidence ?: Float.NEGATIVE_INFINITY
+                bc.compareTo(ac)
+            }
     }
     
     /**
@@ -402,35 +421,62 @@ class YoloDetector(private val context: Context) {
         detectBike: Boolean,
         minRelativeHeight: Float
     ): List<Detection> {
-        
-        val detections = mutableListOf<Detection>()
+
         val numBoxes = 8400
         val numClasses = 80
-        
+
         val scaleX = imgWidth.toFloat() / inputSize
         val scaleY = imgHeight.toFloat() / inputSize
-        
-        var maxConfSeen = 0f
-        var maxConfClass = -1
-        
-        // SOTA: Cache-friendly parsing
-        // Pre-extract box coordinates (sequential memory access)
-        val boxes = FloatArray(numBoxes * 4)
-        for (i in 0 until numBoxes) {
-            boxes[i * 4 + 0] = output[i]                    // cx
-            boxes[i * 4 + 1] = output[numBoxes + i]         // cy
-            boxes[i * 4 + 2] = output[2 * numBoxes + i]     // w
-            boxes[i * 4 + 3] = output[3 * numBoxes + i]     // h
+        val quadrantHeight = imgHeight / 2
+        val quadrantWidth = imgWidth / 2
+
+        // Class-membership bitmask. Every COCO class we care about has id < 24,
+        // so a single Long bit-tests in O(1) without allocating an IntRange or
+        // a List inside the per-detection loop.
+        var wantedMask = 0L
+        if (detectPerson) wantedMask = wantedMask or (1L shl CLASS_PERSON)
+        if (detectCar) {
+            wantedMask = wantedMask or (1L shl CLASS_CAR) or (1L shl CLASS_BUS) or
+                    (1L shl CLASS_TRUCK) or (1L shl CLASS_TRAIN) or
+                    (1L shl CLASS_BOAT) or (1L shl CLASS_AIRPLANE) or
+                    (1L shl CLASS_MOTORCYCLE)
         }
-        
-        // Parse detections with cache-friendly access
+        if (detectBike) wantedMask = wantedMask or (1L shl CLASS_BICYCLE)
+        if (detectAnimal) {
+            // 14..23 inclusive
+            for (c in CLASS_BIRD..CLASS_GIRAFFE) wantedMask = wantedMask or (1L shl c)
+        }
+
+        // Pre-thresholded distance filter values. minRelativeHeight is the
+        // base; cars use 1.33×, bikes 0.7× — compute once, compare in loop.
+        val carWidthThreshold = minRelativeHeight * 1.33f
+        val bikeHeightThreshold = minRelativeHeight * 0.7f
+
+        // Reuse pre-extracted box-coords scratch (134 KB). Re-allocate only
+        // if numBoxes ever changes (which it can't with a fixed YOLO11n
+        // model, but the guard costs nothing).
+        var boxes = boxesScratch
+        if (boxes == null || boxes.size != numBoxes * 4) {
+            boxes = FloatArray(numBoxes * 4)
+            boxesScratch = boxes
+        }
         for (i in 0 until numBoxes) {
-            val cx = boxes[i * 4 + 0]
-            val cy = boxes[i * 4 + 1]
-            val w = boxes[i * 4 + 2]
-            val h = boxes[i * 4 + 3]
-            
-            // Find best class (still strided, but only once per box)
+            val base = i * 4
+            boxes[base] = output[i]                       // cx
+            boxes[base + 1] = output[numBoxes + i]        // cy
+            boxes[base + 2] = output[2 * numBoxes + i]    // w
+            boxes[base + 3] = output[3 * numBoxes + i]    // h
+        }
+
+        val detections = ArrayList<Detection>(16)
+
+        for (i in 0 until numBoxes) {
+            val base = i * 4
+            val cx = boxes[base]
+            val cy = boxes[base + 1]
+            val w = boxes[base + 2]
+            val h = boxes[base + 3]
+
             var bestConf = 0f
             var bestClass = -1
             for (c in 0 until numClasses) {
@@ -440,142 +486,127 @@ class YoloDetector(private val context: Context) {
                     bestClass = c
                 }
             }
-            
-            if (bestConf > maxConfSeen) {
-                maxConfSeen = bestConf
-                maxConfClass = bestClass
-            }
-            
+
             if (bestConf < confThreshold) continue
-            
-            // Class filtering
-            val wantedClass = when {
-                detectPerson && bestClass == CLASS_PERSON -> true
-                detectCar && bestClass in listOf(CLASS_CAR, CLASS_BUS, CLASS_TRUCK, 
-                    CLASS_TRAIN, CLASS_BOAT, CLASS_AIRPLANE, CLASS_MOTORCYCLE) -> true
-                detectBike && bestClass == CLASS_BICYCLE -> true
-                detectAnimal && bestClass in CLASS_BIRD..CLASS_GIRAFFE -> true
-                else -> false
-            }
-            
-            if (!wantedClass) continue
-            
+            if (bestClass < 0 || bestClass >= 64) continue
+            if ((wantedMask and (1L shl bestClass)) == 0L) continue
+
             // Convert to image coordinates
-            // Model outputs normalized coords [0-1], convert to pixels first
-            val cx_px = cx * inputSize
-            val cy_px = cy * inputSize
-            val w_px = w * inputSize
-            val h_px = h * inputSize
-            
-            // Then scale to actual image size
-            val objX = ((cx_px - w_px / 2) * scaleX).toInt().coerceIn(0, imgWidth)
-            val objY = ((cy_px - h_px / 2) * scaleY).toInt().coerceIn(0, imgHeight)
-            val objW = (w_px * scaleX).toInt().coerceIn(0, imgWidth - objX)
-            val objH = (h_px * scaleY).toInt().coerceIn(0, imgHeight - objY)
-            
-            // SOTA: Quadrant-Relative Distance Filter (for 2x2 mosaic grids)
-            // The 15% rule applies to the CAMERA's view, not the full mosaic
-            // In a 2x2 grid, each quadrant is 50% of total height/width
-            
-            // Determine which quadrant the object center is in
-            val centerX = objX + objW / 2
-            val centerY = objY + objH / 2
-            
-            // Quadrant dimensions (half of total for 2x2 grid)
-            val quadrantHeight = imgHeight / 2
-            val quadrantWidth = imgWidth / 2
-            
-            // Calculate relative dimensions against the QUADRANT
-            val relativeHeightToQuadrant = objH.toFloat() / quadrantHeight
-            val relativeWidthToQuadrant = objW.toFloat() / quadrantWidth
-            
-            // Apply class-specific thresholds (SOTA: automotive lens standards)
-            // Person: 1.7m tall - use HEIGHT (15% rule)
-            // Car: 1.4m tall but 1.8m wide - use WIDTH (cars are wide, not tall!)
-            // Bike: smaller profile - use HEIGHT with lower threshold
-            val passesDistanceFilter = when (bestClass) {
-                CLASS_PERSON -> relativeHeightToQuadrant >= minRelativeHeight  // 15% height = ~5m
-                
-                CLASS_CAR, CLASS_BUS, CLASS_TRUCK, CLASS_TRAIN -> {
-                    // SOTA FIX: Cars are WIDE (1.8m) not tall (1.4m)
-                    // A car at 5m is ~20% of quadrant WIDTH
-                    // Use width-based filter for vehicles
-                    relativeWidthToQuadrant >= (minRelativeHeight * 1.33f)  // 20% width
-                }
-                
-                CLASS_BICYCLE, CLASS_MOTORCYCLE -> {
-                    // Bikes are narrow and short - use height with lower threshold
-                    relativeHeightToQuadrant >= (minRelativeHeight * 0.7f)  // ~10% height
-                }
-                
-                else -> relativeHeightToQuadrant >= minRelativeHeight
+            val cxPx = cx * inputSize
+            val cyPx = cy * inputSize
+            val wPx = w * inputSize
+            val hPx = h * inputSize
+
+            val objX = ((cxPx - wPx / 2) * scaleX).toInt().coerceIn(0, imgWidth)
+            val objY = ((cyPx - hPx / 2) * scaleY).toInt().coerceIn(0, imgHeight)
+            val objW = (wPx * scaleX).toInt().coerceIn(0, imgWidth - objX)
+            val objH = (hPx * scaleY).toInt().coerceIn(0, imgHeight - objY)
+
+            // Quadrant-relative distance filter (2×2 mosaic). Inlined to a
+            // single `when` over bestClass; thresholds were precomputed above.
+            val relH = if (quadrantHeight > 0) objH.toFloat() / quadrantHeight else 0f
+            val relW = if (quadrantWidth > 0) objW.toFloat() / quadrantWidth else 0f
+            val passes = when (bestClass) {
+                CLASS_PERSON -> relH >= minRelativeHeight
+                CLASS_CAR, CLASS_BUS, CLASS_TRUCK, CLASS_TRAIN -> relW >= carWidthThreshold
+                CLASS_BICYCLE, CLASS_MOTORCYCLE -> relH >= bikeHeightThreshold
+                else -> relH >= minRelativeHeight
             }
-            
-            if (!passesDistanceFilter) continue
-            
+            if (!passes) continue
+
             detections.add(Detection(bestClass, bestConf, objX, objY, objW, objH))
         }
-        
-        // Apply NMS
+
+        // Apply NMS (in-place sort + culling, no per-call lambda allocation).
         val filtered = nms(detections, 0.45f)
-        
-        // SOTA: Ghost filter (max 50 detections)
+
+        // Ghost filter
         val final = if (filtered.size > 50) {
             logger.warn("Ghost filter: ${filtered.size} > 50, clearing")
             emptyList()
         } else {
             filtered
         }
-        
-        // Log class distribution
-        val personCount = final.count { it.classId == CLASS_PERSON }
-        val carCount = final.count { it.classId in listOf(CLASS_CAR, CLASS_BUS, CLASS_TRUCK, CLASS_TRAIN, CLASS_BOAT, CLASS_AIRPLANE, CLASS_MOTORCYCLE) }
-        val bikeCount = final.count { it.classId == CLASS_BICYCLE }
-        val animalCount = final.count { it.classId in CLASS_BIRD..CLASS_GIRAFFE }
-        
-        // FIX: Log the max confidence from KEPT detections, not from all 8400 raw boxes.
-        // Previously, maxConfSeen/maxConfClass tracked the highest confidence across ALL
-        // boxes including those that failed the class filter and confidence threshold.
-        // This caused the log to report "person=1 (max_conf=0.660 class=2)" — the person
-        // was the kept detection, but class=2 (car) was the highest raw box confidence.
-        // The EventTimelineCollector uses the same class IDs from the Detection objects
-        // (which are correct), but the misleading log made it look like a bug.
+
+        // Class-distribution counts. Single pass with bitmask membership tests
+        // — replaces four `final.count { ... }` lambda allocations.
+        var personCount = 0
+        var carCount = 0
+        var bikeCount = 0
+        var animalCount = 0
         var bestKeptConf = 0f
         var bestKeptClass = -1
-        for (det in final) {
+        val carMask = (1L shl CLASS_CAR) or (1L shl CLASS_BUS) or
+                (1L shl CLASS_TRUCK) or (1L shl CLASS_TRAIN) or
+                (1L shl CLASS_BOAT) or (1L shl CLASS_AIRPLANE) or
+                (1L shl CLASS_MOTORCYCLE)
+        var animalMask = 0L
+        for (c in CLASS_BIRD..CLASS_GIRAFFE) animalMask = animalMask or (1L shl c)
+        for (idx in final.indices) {
+            val det = final[idx]
+            val cid = det.classId
+            if (cid == CLASS_PERSON) personCount++
+            if (cid == CLASS_BICYCLE) bikeCount++
+            if (cid in 0..63) {
+                val bit = 1L shl cid
+                if ((bit and carMask) != 0L) carCount++
+                if ((bit and animalMask) != 0L) animalCount++
+            }
             if (det.confidence > bestKeptConf) {
                 bestKeptConf = det.confidence
-                bestKeptClass = det.classId
+                bestKeptClass = cid
             }
         }
-        
+
         logger.info("Detected ${final.size} objects: person=$personCount car=$carCount bike=$bikeCount animal=$animalCount (max_conf=${"%.3f".format(bestKeptConf)} class=$bestKeptClass)")
-        
+
         return final
     }
     
     /**
-     * Non-Maximum Suppression
+     * Non-Maximum Suppression. In-place sort into the reused scratch array
+     * + linear cull. Replaces a `sortedByDescending { ... }` allocation
+     * (new ArrayList + lambda capture) on every call.
      */
-    private fun nms(detections: List<Detection>, iouThreshold: Float): List<Detection> {
-        if (detections.size <= 1) return detections
-        
-        val sorted = detections.sortedByDescending { it.confidence }
-        val results = mutableListOf<Detection>()
-        
-        for (det in sorted) {
+    private fun nms(detections: ArrayList<Detection>, iouThreshold: Float): List<Detection> {
+        val n = detections.size
+        if (n <= 1) return detections
+
+        // Borrow / grow the scratch array. Capped via cap-doubling so the
+        // worst-case 50-detection ghost-filter limit doesn't make it grow
+        // unbounded across rare bursts.
+        var scratch = nmsScratch
+        if (scratch == null || scratch.size < n) {
+            val cap = if (scratch == null) maxOf(64, n) else maxOf(scratch.size * 2, n)
+            scratch = arrayOfNulls(cap)
+            nmsScratch = scratch
+        }
+        for (i in 0 until n) scratch[i] = detections[i]
+
+        // Sort descending by confidence on the slice [0, n). Java's
+        // Arrays.sort with a Comparator is mergesort/Timsort and operates
+        // in-place on the array; the Comparator is a singleton lambda
+        // (Kotlin compiles the no-capture lambda to a static instance).
+        @Suppress("UNCHECKED_CAST")
+        java.util.Arrays.sort(scratch as Array<Detection?>, 0, n, NMS_COMPARATOR)
+
+        val results = ArrayList<Detection>(minOf(n, 16))
+        for (i in 0 until n) {
+            val det = scratch[i] ?: continue
             var keep = true
-            for (res in results) {
+            for (j in 0 until results.size) {
+                val res = results[j]
                 if (det.classId == res.classId && iou(det, res) > iouThreshold) {
                     keep = false
                     break
                 }
             }
             if (keep) results.add(det)
+            scratch[i] = null  // help GC release Detection refs after this call
         }
-        
         return results
     }
+
     
     /**
      * Calculate Intersection over Union
@@ -611,7 +642,9 @@ class YoloDetector(private val context: Context) {
             shapedBuffer = null
             shapedBufferW = -1
             shapedBufferH = -1
-            // floatOutput is shape-independent; safe to keep pooled.
+            floatOutput = null
+            boxesScratch = null
+            nmsScratch = null
         }
     }
 }

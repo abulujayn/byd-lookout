@@ -199,6 +199,11 @@ object UnifiedConfigManager {
         if (!surveillance.has("requiredBlocks")) surveillance.put("requiredBlocks", 3)
         if (!surveillance.has("sensitivity")) surveillance.put("sensitivity", 0.04)
         if (!surveillance.has("surveillanceEnabled")) surveillance.put("surveillanceEnabled", false)
+        // ACC-OFF mode: "smart" runs the existing motion + YOLO event pipeline;
+        // "continuous" records a plain rolling 4-cam mosaic with no filters and
+        // no AI. Branched at SurveillanceEngineGpu.enable(). Default smart so
+        // behaviour matches the prior single-mode build.
+        if (!surveillance.has("accOffMode")) surveillance.put("accOffMode", "smart")
         if (!surveillance.has("deterrentAction")) surveillance.put("deterrentAction", "silent")
         if (!surveillance.has("deterrentCooldownSeconds")) surveillance.put("deterrentCooldownSeconds", 15)
         if (!surveillance.has("screenDeterrentEnabled")) surveillance.put("screenDeterrentEnabled", false)

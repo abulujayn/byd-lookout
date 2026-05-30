@@ -273,6 +273,10 @@
             +     '<span class="ev-personalized-label" data-i18n="vehicle.personalized_label">Personalized</span>'
             +     '<span class="ev-personalized-val" id="evPersonalizedRange">-- km</span>'
             +   '</div>'
+            +   '<div class="ev-personalized-range ev-personalized-combined" id="evCombinedRow" style="display:none;">'
+            +     '<span class="ev-personalized-label" data-i18n="vehicle.combined_label">Combined</span>'
+            +     '<span class="ev-personalized-val" id="evCombinedRange">-- km</span>'
+            +   '</div>'
             + '</div>';
         return s;
     }
@@ -291,6 +295,10 @@
             +   '</div>'
             +   '<div class="fuel-bar-track">'
             +     '<div class="fuel-bar-fill" id="fuelBarFill" style="width:0%"></div>'
+            +   '</div>'
+            +   '<div class="ev-personalized-range fuel-personalized-row" id="fuelPersonalizedRow" style="display:none;">'
+            +     '<span class="ev-personalized-label" data-i18n="vehicle.personalized_label">Personalized</span>'
+            +     '<span class="ev-personalized-val" id="fuelPersonalizedRange">-- km</span>'
             +   '</div>'
             + '</div>';
     }

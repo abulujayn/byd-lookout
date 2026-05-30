@@ -439,6 +439,17 @@ public final class ScreenDeterrent {
         }
 
         try {
+            // forceReload() (not loadConfig()) is required here. ext4 mtime
+            // resolution is 1s; this method's caller writes mtime via
+            // publishGate at up to 1 Hz, while AccSentryDaemon may write
+            // screenDeterrentForceStop=true cross-UID. If both writes land
+            // in the same wallclock-second, loadConfig()'s
+            // (fileModified ≤ lastModified) check returns the stale cached
+            // config and shouldStop misses the force-stop signal for up to
+            // ~1s — perceived as user-tap-to-dismiss latency on the
+            // deterrent. forceReload re-parses every call (~10 KB JSON on
+            // a tiny structure) which is cheap enough on this hot path
+            // compared to the deterrent's render cost.
             JSONObject s = UnifiedConfigManager.forceReload().optJSONObject("surveillance");
             if (s == null) return false;
             if (s.optBoolean("screenDeterrentForceStop", false)) return true;
@@ -460,6 +471,10 @@ public final class ScreenDeterrent {
 
     private static boolean isForceStop() {
         try {
+            // forceReload(): same rationale as shouldStop above — a
+            // same-second cross-UID write of screenDeterrentForceStop
+            // would be hidden behind the cached config until the next
+            // mtime bump. cleanup() callers depend on a fresh read.
             JSONObject s = UnifiedConfigManager.forceReload().optJSONObject("surveillance");
             return s != null && s.optBoolean("screenDeterrentForceStop", false);
         } catch (Throwable t) {
@@ -790,6 +805,41 @@ public final class ScreenDeterrent {
 
     // ── SurfaceControl reflection (visual layer at z=Integer.MAX_VALUE) ────
 
+    // Cached reflection metadata for the SurfaceControl path. drawBitmapToSurface
+    // is invoked every GIF_FRAME_INTERVAL_MS (50ms = 20Hz) for the duration of a
+    // deterrent fire, so even cheap Class.forName + getConstructor lookups add
+    // up: a 30s fire = 600 lookups, ~50 fires/day during active sentry use =
+    // ~30k/day. Resolve once at first call, reuse forever. The hidden-API
+    // SurfaceControl class is process-stable on this firmware (the 20Hz draw
+    // loop already proves it works). Volatile for safe publication; we accept
+    // the rare double-resolve race because the resolution is idempotent.
+    //
+    // applyTransaction / releaseSurface / createBufferLayer also touch the same
+    // SurfaceControl Class<?>, so they reuse the cached reference at zero cost.
+    // Their per-fire (not per-frame) Method lookups are left uncached — the
+    // call rate doesn't justify the extra surface area.
+    private static volatile Class<?> surfaceControlClass;
+    private static volatile java.lang.reflect.Constructor<Surface> surfaceCtorFromSc;
+    private static volatile boolean surfaceControlReflectionResolved = false;
+    private static volatile boolean surfaceControlReflectionFailed = false;
+
+    private static void resolveSurfaceControlReflection() {
+        if (surfaceControlReflectionResolved || surfaceControlReflectionFailed) return;
+        try {
+            Class<?> cls = Class.forName("android.view.SurfaceControl");
+            java.lang.reflect.Constructor<Surface> ctor = Surface.class.getConstructor(cls);
+            surfaceControlClass = cls;
+            surfaceCtorFromSc = ctor;
+            surfaceControlReflectionResolved = true;
+        } catch (Throwable t) {
+            // Permanent failure — class or ctor genuinely not present on this
+            // firmware. Mark failed so we stop probing on every 20Hz tick. The
+            // hidden-API surface is fixed at boot.
+            surfaceControlReflectionFailed = true;
+            logger.debug("SurfaceControl reflection unavailable: " + t.getMessage());
+        }
+    }
+
     private static Object createBufferLayer(String name, int w, int h) {
         try {
             Class<?> builderCls = Class.forName("android.view.SurfaceControl$Builder");
@@ -808,7 +858,10 @@ public final class ScreenDeterrent {
 
     private static void applyTransaction(Object surface, int z, boolean show) {
         try {
-            Class<?> sc = Class.forName("android.view.SurfaceControl");
+            resolveSurfaceControlReflection();
+            Class<?> sc = surfaceControlReflectionResolved
+                    ? surfaceControlClass
+                    : Class.forName("android.view.SurfaceControl");
             Class<?> txCls = Class.forName("android.view.SurfaceControl$Transaction");
             Object tx = txCls.getDeclaredConstructor().newInstance();
             try { txCls.getMethod("setLayer", sc, int.class).invoke(tx, surface, z); } catch (Throwable ignored) {}
@@ -822,7 +875,10 @@ public final class ScreenDeterrent {
 
     private static void releaseSurface(Object surface) {
         try {
-            Class<?> sc = Class.forName("android.view.SurfaceControl");
+            resolveSurfaceControlReflection();
+            Class<?> sc = surfaceControlReflectionResolved
+                    ? surfaceControlClass
+                    : Class.forName("android.view.SurfaceControl");
             Class<?> txCls = Class.forName("android.view.SurfaceControl$Transaction");
             Object tx = txCls.getDeclaredConstructor().newInstance();
             try { txCls.getMethod("hide", sc).invoke(tx, surface); } catch (Throwable ignored) {}
@@ -835,11 +891,18 @@ public final class ScreenDeterrent {
     }
 
     private static void drawBitmapToSurface(Object surfaceControl, Bitmap bitmap) {
+        resolveSurfaceControlReflection();
+        if (surfaceControlReflectionFailed) {
+            // Permanent resolution failure — nothing to fall back to here; the
+            // original code would have thrown on Class.forName too. Log once
+            // per call (matches prior behavior) and bail. The renderGifLoop
+            // continues; the deterrent visual will be black for this fire.
+            logger.warn("drawBitmapToSurface skipped: SurfaceControl reflection unavailable");
+            return;
+        }
         Surface surface = null;
         try {
-            Class<?> scClass = Class.forName("android.view.SurfaceControl");
-            java.lang.reflect.Constructor<Surface> ctor = Surface.class.getConstructor(scClass);
-            surface = ctor.newInstance(surfaceControl);
+            surface = surfaceCtorFromSc.newInstance(surfaceControl);
             Canvas canvas = surface.lockCanvas(null);
             try {
                 canvas.drawBitmap(bitmap, 0, 0, null);
@@ -847,6 +910,9 @@ public final class ScreenDeterrent {
                 surface.unlockCanvasAndPost(canvas);
             }
         } catch (Throwable t) {
+            // Per-call invocation failure (e.g. ctor.newInstance throws for a
+            // particular SurfaceControl instance, lockCanvas races a release).
+            // Don't mark reflection failed — the lookup itself succeeded.
             logger.warn("drawBitmapToSurface failed: " + t.getMessage());
         } finally {
             if (surface != null) {

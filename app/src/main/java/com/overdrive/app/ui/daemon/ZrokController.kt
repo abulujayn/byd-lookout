@@ -33,11 +33,21 @@ class ZrokController(
     private val _tunnelUrl = MutableLiveData<String?>()
     val tunnelUrl: LiveData<String?> = _tunnelUrl
     
-    // Lazy init zrok launcher
+    // Lazy init zrok launcher. We hold a separate reference to the
+    // AdbShellExecutor so cleanup() can shut down its non-daemon worker
+    // thread — without this, every Activity recreate (config change /
+    // teardown) leaks the executor + the launcher's reconcileScheduler.
+    @Volatile
+    private var zrokLauncherInitialized = false
+    @Volatile
+    private var zrokAdbShellExecutor: com.overdrive.app.launcher.AdbShellExecutor? = null
     private val zrokLauncher by lazy {
+        val exec = com.overdrive.app.launcher.AdbShellExecutor(context)
+        zrokAdbShellExecutor = exec
+        zrokLauncherInitialized = true
         ZrokLauncher(
             context,
-            com.overdrive.app.launcher.AdbShellExecutor(context),
+            exec,
             com.overdrive.app.logging.LogManager.getInstance()
         )
     }
@@ -82,28 +92,22 @@ class ZrokController(
     
     override fun start(callback: DaemonCallback) {
         callback.onStatusChanged(DaemonStatus.STARTING, "Checking token...")
-        
+
         // First ensure token is loaded
         ensureTokenLoaded { hasToken ->
             if (!hasToken) {
                 callback.onError("❌ No Zrok token configured. Tap to configure.")
                 return@ensureTokenLoaded
             }
-            
+
             callback.onStatusChanged(DaemonStatus.STARTING, "Initializing...")
-            
-            // FIX 2: Aggressive cleanup BEFORE start
-            // This prevents "share already reserved" errors if a zombie process exists
-            adbLauncher.executeShellCommand("pkill -9 -f 'zrok'; sleep 1", object : AdbDaemonLauncher.LaunchCallback {
-                override fun onLaunched() {
-                    startInternal(callback)
-                }
-                override fun onLog(m: String) {}
-                override fun onError(e: String) {
-                    // Even if kill fails (no process), proceed
-                    startInternal(callback)
-                }
-            })
+
+            // Pre-launch sweep happens inside ZrokLauncher.startZrokShareReservedProcess
+            // (and the public-mode equivalent) — both clear the disable sentinel,
+            // broad-pkill 'zrok' (catching watchdog + share + orphans together),
+            // and remove the stale watchdog script before relaunching. We don't
+            // duplicate that here.
+            startInternal(callback)
         }
     }
     
@@ -242,9 +246,16 @@ class ZrokController(
     }
     
     override fun cleanup() {
-        // Use pkill -f for more reliable process killing (matches full command line)
-        adbLauncher.executeShellCommand(
-            "pkill -9 -f 'zrok'; killall -9 zrok 2>/dev/null; echo done",
+        // Same single-syscall family kill as stop() above. cleanup() runs on
+        // ViewModel teardown so we don't plant the disable sentinel here —
+        // the user is exiting the app, not telling the tunnel to stay dead.
+        // Use executeShellScript so toybox `pkill -f 'zrok'` can't
+        // self-match the calling shell's argv and drop trailing commands.
+        adbLauncher.executeShellScript(
+            "rm -f ${ZrokLauncher.ZROK_WATCHDOG_SCRIPT} 2>/dev/null\n" +
+                    com.overdrive.app.launcher.DaemonLauncher.psAwkKillLine("zrok") +
+                    "killall -9 zrok 2>/dev/null\n" +
+                    "echo done\n",
             object : AdbDaemonLauncher.LaunchCallback {
                 override fun onLog(message: String) {}
                 override fun onLaunched() {}
@@ -252,6 +263,31 @@ class ZrokController(
             }
         )
         _tunnelUrl.postValue(null)
+        // Resource shutdown moved to releaseResources() — see override below.
+        // cleanup() is the user-initiated full-stop; releaseResources is
+        // the no-pkill resource-only teardown invoked from
+        // DaemonsViewModel.onCleared. Both call shutdown so that an
+        // explicit cleanup() ALSO releases the threads.
+        releaseResources()
+    }
+
+    /**
+     * Shut down the controller-owned ZrokLauncher's reconcile scheduler
+     * AND its dedicated AdbShellExecutor. Without this, every Activity
+     * recreate strands two daemon-flagged threads (reconcileScheduler +
+     * AdbShellExecutor's worker, the latter non-daemon → pins JVM on
+     * Robolectric/test scenarios). The init flag avoids forcing the
+     * lazy to allocate just for shutdown. Idempotent.
+     */
+    override fun releaseResources() {
+        if (zrokLauncherInitialized) {
+            try {
+                zrokLauncher.shutdown()
+                zrokAdbShellExecutor?.shutdown()
+            } catch (e: Exception) {
+                // Best-effort; teardown must not throw to the caller.
+            }
+        }
     }
     
     /**

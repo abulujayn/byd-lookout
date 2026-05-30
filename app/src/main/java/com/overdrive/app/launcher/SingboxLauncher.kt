@@ -102,15 +102,22 @@ class SingboxLauncher(
     
     private fun killExistingAndLaunch(callback: SingboxCallback) {
         callback.onLog("Stopping existing sing-box...")
-        
+
+        // ps+awk+kill instead of pkill -f. The latter self-matches because
+        // execute() wraps body in `sh -c "<cmd>"` and the wrapper's argv
+        // contains the literal "sing-box" — toybox pkill SIGKILLs the
+        // calling shell before any subsequent commands run.
         adbShellExecutor.execute(
-            command = "pkill -9 -f sing-box 2>/dev/null || true",
+            command = "MY_PID=\$\$; ps -A -o PID,ARGS | grep -F sing-box | grep -v grep " +
+                "| awk '{print \$1}' | while read pid; do " +
+                "if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done; " +
+                "true",
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     Thread.sleep(500)
                     cleanupAndLaunch(callback)
                 }
-                
+
                 override fun onError(error: String) {
                     cleanupAndLaunch(callback)
                 }
@@ -277,9 +284,14 @@ class SingboxLauncher(
     fun stopSingbox(callback: SingboxCallback) {
         logManager.info(TAG, "Stopping sing-box...")
         callback.onLog("Stopping sing-box...")
-        
+
+        // ps+awk+kill — see killExistingAndLaunch above for self-match
+        // explanation.
         adbShellExecutor.execute(
-            command = "pkill -9 -f sing-box 2>/dev/null || true",
+            command = "MY_PID=\$\$; ps -A -o PID,ARGS | grep -F sing-box | grep -v grep " +
+                "| awk '{print \$1}' | while read pid; do " +
+                "if [ \"\$pid\" != \"\$MY_PID\" ]; then kill -9 \$pid 2>/dev/null; fi; done; " +
+                "true",
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     logManager.info(TAG, "sing-box stopped")

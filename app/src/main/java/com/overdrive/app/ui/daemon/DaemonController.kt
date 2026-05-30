@@ -37,4 +37,18 @@ interface DaemonController {
      * Called during app shutdown or emergency cleanup.
      */
     fun cleanup()
+
+    /**
+     * Release controller-side resources (executor threads, schedulers,
+     * cached buffers) WITHOUT killing the daemon process. Called from
+     * `DaemonsViewModel.onCleared` so the ViewModel can be torn down on
+     * Activity recreate / process exit without (a) leaking the
+     * controller's executor threads or (b) killing the daemons that are
+     * deliberately persistent (run as UID 2000 in their own processes).
+     *
+     * Default impl is a no-op for controllers that own no extra threads.
+     * ZrokController overrides to shut down its dedicated reconcile
+     * scheduler + AdbShellExecutor.
+     */
+    fun releaseResources() {}
 }

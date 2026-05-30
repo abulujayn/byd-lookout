@@ -814,15 +814,33 @@ public class AccSentryDaemon {
                 Method getPowerLevel = deviceClass.getMethod("getPowerLevel");
                 int level = (Integer) getPowerLevel.invoke(device);
                 log("Initial power level: " + powerLevelToString(level));
-                lastPowerLevel = level;
 
-                if (level == POWER_LEVEL_OFF) {
-                    log("Started with ACC OFF - entering sentry mode");
-                    enterSentryMode();
+                if (level < 0 || level > 3) {
+                    // HAL is bluffing on first probe (FAKE_OK=4, INVALID=255,
+                    // or anything else). Don't seed lastPowerLevel with
+                    // garbage and don't push a misleading IPC. The first
+                    // real onPowerLevelChanged event will set the correct
+                    // initial value; until then the daemon defers to its
+                    // own conservative defaults (no sentry, no notify).
+                    // lastPowerLevel stays at its class-default (-1, see
+                    // field declaration above). On the first real event:
+                    //   - real OFF(0) → 0 != -1 → enterSentryMode (correct)
+                    //   - real ON(2/3) → 2 >= 2 && -1 < 2 → exitSentryMode,
+                    //     which is a no-op because !inSentryMode (correct)
+                    // Both branches converge on the right state via the
+                    // existing idempotency guards in enter/exitSentryMode.
+                    log("Initial power level is sentinel — deferring state seed; "
+                            + "first real onPowerLevelChanged event will initialize");
                 } else {
-                    // ACC is ON - notify CameraDaemon so AccMonitor has correct state
-                    log("Started with ACC ON - notifying CameraDaemon");
-                    notifyAccState(false);  // accOff=false means ACC is ON
+                    lastPowerLevel = level;
+                    if (level == POWER_LEVEL_OFF) {
+                        log("Started with ACC OFF - entering sentry mode");
+                        enterSentryMode();
+                    } else {
+                        // ACC is ON - notify CameraDaemon so AccMonitor has correct state
+                        log("Started with ACC ON - notifying CameraDaemon");
+                        notifyAccState(false);  // accOff=false means ACC is ON
+                    }
                 }
             } catch (Exception e) {
                 log("Could not get initial power level: " + e.getMessage());
@@ -840,6 +858,28 @@ public class AccSentryDaemon {
         @Override
         public void onPowerLevelChanged(int level) {
             log(">>> POWER LEVEL: " + powerLevelToString(level) + " (was: " + powerLevelToString(lastPowerLevel) + ")");
+
+            // Reject sentinel readings (FAKE_OK=4, INVALID=255, or any
+            // value outside the documented 0..3 range). The HAL emits
+            // these when state is transiently unreliable. Treating them
+            // as ACC=ON (because they satisfy `>= POWER_LEVEL_ON`) would:
+            //   1. Falsely exit sentry mode on a HAL bluff → trigger
+            //      surveillance teardown + IPC to AccMonitor saying
+            //      "ACC ON" → false recording activation downstream.
+            //   2. Cache 255 into `lastPowerLevel` → the NEXT legitimate
+            //      ACC=ON event would silently fail because
+            //      `level >= 2 && lastPowerLevel < 2` evaluates false
+            //      (255 is not < 2). The daemon would stay stuck in
+            //      sentry until the next OFF/ON cycle.
+            // So we drop the event entirely — don't fire any transition,
+            // don't update lastPowerLevel. The next legitimate reading
+            // will compare against the actual prior state.
+            if (level < 0 || level > 3) {
+                log("Sentinel power level " + powerLevelToString(level)
+                        + " — ignoring (lastPowerLevel stays "
+                        + powerLevelToString(lastPowerLevel) + ")");
+                return;
+            }
 
             if (level == POWER_LEVEL_OFF && lastPowerLevel != POWER_LEVEL_OFF) {
                 log("ACC OFF detected");
@@ -1547,37 +1587,51 @@ public class AccSentryDaemon {
         if (appContext != null) {
             try {
                 PowerManager pm = (PowerManager) appContext.getSystemService(Context.POWER_SERVICE);
-                String methodName = on ? "turnBacklightOn" : "turnBacklightOff";
-                try {
-                    Method m = pm.getClass().getMethod(methodName, long.class);
-                    m.invoke(pm, android.os.SystemClock.uptimeMillis());
-                    log("Backlight: PowerManager." + methodName + " SUCCESS");
+                Class<?> pmClass = pm.getClass();
+
+                // First-call probe of lowercase variant; cached thereafter.
+                // Original semantics: lowercase invoke-time exceptions
+                // bubble to the outer catch (then to BYD path), so we let
+                // them propagate naturally.
+                Method lower = getPmBacklightLowerMethod(on, pmClass);
+                if (lower != null) {
+                    lower.invoke(pm, android.os.SystemClock.uptimeMillis());
+                    log("Backlight: PowerManager." + (on ? "turnBacklightOn" : "turnBacklightOff") + " SUCCESS");
                     return;
-                } catch (NoSuchMethodException e) {
-                    // Try PascalCase variant
-                    methodName = on ? "TurnBacklightOn" : "TurnBacklightOff";
+                }
+
+                // Lowercase missing — try PascalCase variant. Original
+                // probe order is preserved on first run; subsequent calls
+                // skip directly to whichever resolved. PascalCase invoke-
+                // time exceptions are swallowed (original code wrapped
+                // [C]+[D] in catch (Exception e2)) so we mirror that with
+                // an inner try.
+                Method pascal = getPmBacklightPascalMethod(on, pmClass);
+                if (pascal != null) {
                     try {
-                        Method m = pm.getClass().getMethod(methodName, long.class);
-                        m.invoke(pm, android.os.SystemClock.uptimeMillis());
-                        log("Backlight: PowerManager." + methodName + " SUCCESS");
+                        pascal.invoke(pm, android.os.SystemClock.uptimeMillis());
+                        log("Backlight: PowerManager." + (on ? "TurnBacklightOn" : "TurnBacklightOff") + " SUCCESS");
                         return;
                     } catch (Exception e2) {
-                        // Fall through
+                        // Fall through to BYD path
                     }
                 }
             } catch (Exception e) {
-                // Fall through
+                // Fall through to BYD path (matches original outer catch).
             }
 
             // Try BYD Hardware Service
             try {
-                Class<?> clazz = Class.forName("android.hardware.bydauto.setting.BYDAutoSettingDevice");
-                Method getInstance = clazz.getMethod("getInstance", Context.class);
-                Object device = getInstance.invoke(null, appContext);
-                String methodName = on ? "turnBacklightOn" : "turnBacklightOff";
-                clazz.getMethod(methodName).invoke(device);
-                log("Backlight: BYDAutoSettingDevice." + methodName + " SUCCESS");
-                return;
+                resolveBydSettingDevice();
+                if (bydSettingDeviceResolved) {
+                    Method bydMethod = getBydSettingBacklightMethod(on);
+                    if (bydMethod != null) {
+                        Object device = bydSettingGetInstanceMethod.invoke(null, appContext);
+                        bydMethod.invoke(device);
+                        log("Backlight: BYDAutoSettingDevice." + (on ? "turnBacklightOn" : "turnBacklightOff") + " SUCCESS");
+                        return;
+                    }
+                }
             } catch (Exception e) {
                 // Fall through
             }
@@ -1697,14 +1751,16 @@ public class AccSentryDaemon {
 
     /**
      * True if a screen deterrent is currently displaying (set by
-     * ScreenDeterrent.fire() in byd_cam_daemon's process). Reads via
-     * forceReload() because the value is written by a different UID/process.
-     * Returns false on any failure so a stuck flag can never disable the
-     * stealth keep-alive permanently.
+     * ScreenDeterrent.fire() in byd_cam_daemon's process). loadConfig()
+     * invalidates its cache against configFile.lastModified() which is
+     * filesystem-wide and therefore visible across UIDs — forceReload()
+     * here would re-parse ~10 KB JSON every 10 s for the same answer
+     * (≈3.6 MB/hour GC churn). Returns false on any failure so a stuck
+     * flag can never disable the stealth keep-alive permanently.
      */
     private static boolean isScreenDeterrentActive() {
         try {
-            org.json.JSONObject s = com.overdrive.app.config.UnifiedConfigManager.forceReload()
+            org.json.JSONObject s = com.overdrive.app.config.UnifiedConfigManager.loadConfig()
                     .optJSONObject("surveillance");
             if (s == null) return false;
             long deadline = s.optLong("screenDeterrentActiveUntilMs", 0L);
@@ -1743,10 +1799,207 @@ public class AccSentryDaemon {
         execShell(CMD_WIFI_ENABLE());
     }
 
+    // ==================== REFLECTION CACHES ====================
+    // injectFakeUserActivity is invoked every SYSTEM_KEEPALIVE_INTERVAL_MS
+    // (10s) while sentry is active — ~360 calls/hr, ~3000/night. Without
+    // caching, each call performed up to three Class.getMethod() lookups
+    // (linear method-table scans) on PowerManager for getPowerScreenStatus,
+    // userActivity(long), and userActivity(long, boolean). The Method
+    // objects are immutable; resolve once and reuse. Volatile for safe
+    // publication; idempotent double-resolve race accepted (matches
+    // RecordingModeManager.resolveBodyworkReflection pattern).
+    //
+    // Per-method resolved/failed flags so that a missing optional method
+    // (e.g., getPowerScreenStatus on older firmware) doesn't poison the
+    // userActivity lookups, and a missing 1-arg userActivity still allows
+    // the 2-arg fallback to be cached.
+    private static volatile Method pmGetPowerScreenStatusMethod;
+    private static volatile boolean pmGetPowerScreenStatusResolved = false;
+    private static volatile boolean pmGetPowerScreenStatusFailed = false;
+
+    private static volatile Method pmUserActivity1ArgMethod;
+    private static volatile boolean pmUserActivity1ArgResolved = false;
+    private static volatile boolean pmUserActivity1ArgFailed = false;
+
+    private static volatile Method pmUserActivity2ArgMethod;
+    private static volatile boolean pmUserActivity2ArgResolved = false;
+    private static volatile boolean pmUserActivity2ArgFailed = false;
+
+    private static void resolvePmGetPowerScreenStatus() {
+        if (pmGetPowerScreenStatusResolved || pmGetPowerScreenStatusFailed) return;
+        try {
+            pmGetPowerScreenStatusMethod = PowerManager.class.getMethod("getPowerScreenStatus");
+            pmGetPowerScreenStatusResolved = true;
+        } catch (NoSuchMethodException e) {
+            pmGetPowerScreenStatusFailed = true;
+        } catch (Exception e) {
+            pmGetPowerScreenStatusFailed = true;
+        }
+    }
+
+    private static void resolvePmUserActivity1Arg() {
+        if (pmUserActivity1ArgResolved || pmUserActivity1ArgFailed) return;
+        try {
+            pmUserActivity1ArgMethod = PowerManager.class.getMethod("userActivity", long.class);
+            pmUserActivity1ArgResolved = true;
+        } catch (NoSuchMethodException e) {
+            pmUserActivity1ArgFailed = true;
+        } catch (Exception e) {
+            pmUserActivity1ArgFailed = true;
+        }
+    }
+
+    private static void resolvePmUserActivity2Arg() {
+        if (pmUserActivity2ArgResolved || pmUserActivity2ArgFailed) return;
+        try {
+            pmUserActivity2ArgMethod = PowerManager.class.getMethod("userActivity", long.class, boolean.class);
+            pmUserActivity2ArgResolved = true;
+        } catch (NoSuchMethodException e) {
+            pmUserActivity2ArgFailed = true;
+        } catch (Exception e) {
+            pmUserActivity2ArgFailed = true;
+        }
+    }
+
+    // setBacklightState reflection cache. The probe order is:
+    //   1. PowerManager lowercase (turnBacklightOn / turnBacklightOff)
+    //   2. PowerManager PascalCase (TurnBacklightOn / TurnBacklightOff)
+    //   3. BYDAutoSettingDevice lowercase (turnBacklightOn / turnBacklightOff)
+    // The on-variant and off-variant are independent methods on the same
+    // class, so each (variant, on/off) tuple has its own scalar volatile
+    // fields. The "which class won" is implicit per variant: subsequent
+    // calls hit whichever resolved first.
+    //
+    // First-call probing is preserved: each variant has its own
+    // resolved/failed pair, so if lowercase is missing, the PascalCase
+    // resolve still runs the first time. Once any one succeeds it short-
+    // circuits subsequent lookups for that (variant, on/off) tuple.
+    //
+    // Scalar volatiles (rather than arrays) used to match the
+    // RecordingModeManager.resolveBodyworkReflection memory-publication
+    // pattern — boolean[] elements are not volatile in Java's MM.
+    private static volatile Method pmBacklightLowerOnMethod;
+    private static volatile Method pmBacklightLowerOffMethod;
+    private static volatile boolean pmBacklightLowerOnResolved = false;
+    private static volatile boolean pmBacklightLowerOnFailed = false;
+    private static volatile boolean pmBacklightLowerOffResolved = false;
+    private static volatile boolean pmBacklightLowerOffFailed = false;
+
+    private static volatile Method pmBacklightPascalOnMethod;
+    private static volatile Method pmBacklightPascalOffMethod;
+    private static volatile boolean pmBacklightPascalOnResolved = false;
+    private static volatile boolean pmBacklightPascalOnFailed = false;
+    private static volatile boolean pmBacklightPascalOffResolved = false;
+    private static volatile boolean pmBacklightPascalOffFailed = false;
+
+    private static volatile Class<?> bydSettingDeviceClass;
+    private static volatile Method bydSettingGetInstanceMethod;
+    private static volatile boolean bydSettingDeviceResolved = false;
+    private static volatile boolean bydSettingDeviceFailed = false;
+
+    private static volatile Method bydSettingBacklightOnMethod;
+    private static volatile Method bydSettingBacklightOffMethod;
+    private static volatile boolean bydSettingBacklightOnResolved = false;
+    private static volatile boolean bydSettingBacklightOnFailed = false;
+    private static volatile boolean bydSettingBacklightOffResolved = false;
+    private static volatile boolean bydSettingBacklightOffFailed = false;
+
+    private static Method getPmBacklightLowerMethod(boolean on, Class<?> pmClass) {
+        if (on) {
+            if (pmBacklightLowerOnResolved) return pmBacklightLowerOnMethod;
+            if (pmBacklightLowerOnFailed) return null;
+            try {
+                pmBacklightLowerOnMethod = pmClass.getMethod("turnBacklightOn", long.class);
+                pmBacklightLowerOnResolved = true;
+                return pmBacklightLowerOnMethod;
+            } catch (Exception e) {
+                pmBacklightLowerOnFailed = true;
+                return null;
+            }
+        } else {
+            if (pmBacklightLowerOffResolved) return pmBacklightLowerOffMethod;
+            if (pmBacklightLowerOffFailed) return null;
+            try {
+                pmBacklightLowerOffMethod = pmClass.getMethod("turnBacklightOff", long.class);
+                pmBacklightLowerOffResolved = true;
+                return pmBacklightLowerOffMethod;
+            } catch (Exception e) {
+                pmBacklightLowerOffFailed = true;
+                return null;
+            }
+        }
+    }
+
+    private static Method getPmBacklightPascalMethod(boolean on, Class<?> pmClass) {
+        if (on) {
+            if (pmBacklightPascalOnResolved) return pmBacklightPascalOnMethod;
+            if (pmBacklightPascalOnFailed) return null;
+            try {
+                pmBacklightPascalOnMethod = pmClass.getMethod("TurnBacklightOn", long.class);
+                pmBacklightPascalOnResolved = true;
+                return pmBacklightPascalOnMethod;
+            } catch (Exception e) {
+                pmBacklightPascalOnFailed = true;
+                return null;
+            }
+        } else {
+            if (pmBacklightPascalOffResolved) return pmBacklightPascalOffMethod;
+            if (pmBacklightPascalOffFailed) return null;
+            try {
+                pmBacklightPascalOffMethod = pmClass.getMethod("TurnBacklightOff", long.class);
+                pmBacklightPascalOffResolved = true;
+                return pmBacklightPascalOffMethod;
+            } catch (Exception e) {
+                pmBacklightPascalOffFailed = true;
+                return null;
+            }
+        }
+    }
+
+    private static void resolveBydSettingDevice() {
+        if (bydSettingDeviceResolved || bydSettingDeviceFailed) return;
+        try {
+            Class<?> cls = Class.forName("android.hardware.bydauto.setting.BYDAutoSettingDevice");
+            Method getInstance = cls.getMethod("getInstance", Context.class);
+            bydSettingDeviceClass = cls;
+            bydSettingGetInstanceMethod = getInstance;
+            bydSettingDeviceResolved = true;
+        } catch (Exception e) {
+            bydSettingDeviceFailed = true;
+        }
+    }
+
+    private static Method getBydSettingBacklightMethod(boolean on) {
+        if (!bydSettingDeviceResolved) return null;
+        if (on) {
+            if (bydSettingBacklightOnResolved) return bydSettingBacklightOnMethod;
+            if (bydSettingBacklightOnFailed) return null;
+            try {
+                bydSettingBacklightOnMethod = bydSettingDeviceClass.getMethod("turnBacklightOn");
+                bydSettingBacklightOnResolved = true;
+                return bydSettingBacklightOnMethod;
+            } catch (Exception e) {
+                bydSettingBacklightOnFailed = true;
+                return null;
+            }
+        } else {
+            if (bydSettingBacklightOffResolved) return bydSettingBacklightOffMethod;
+            if (bydSettingBacklightOffFailed) return null;
+            try {
+                bydSettingBacklightOffMethod = bydSettingDeviceClass.getMethod("turnBacklightOff");
+                bydSettingBacklightOffResolved = true;
+                return bydSettingBacklightOffMethod;
+            } catch (Exception e) {
+                bydSettingBacklightOffFailed = true;
+                return null;
+            }
+        }
+    }
+
     /**
      * Uses Reflection to call PowerManager.userActivity()
      * This mimics the "Fake Touch" to keep CPU awake.
-     * 
+     *
      * CRITICAL: Checks screen status FIRST to avoid exceptions on some BYD firmware
      * where calling userActivity() when screen is OFF causes issues.
      */
@@ -1759,39 +2012,44 @@ public class AccSentryDaemon {
 
             // CRITICAL: Check screen status FIRST ( pattern)
             // On some BYD firmware, calling userActivity() when screen is OFF fails
-            try {
-                Method getScreenStatus = PowerManager.class.getMethod("getPowerScreenStatus");
-                int screenStatus = (Integer) getScreenStatus.invoke(pm);
-                if (screenStatus == 0) {
-                    // Screen is OFF - userActivity may fail or be ignored
-                    // Skip it - the wakeUp call in performSystemWakeUp() handles keeping CPU alive
-                    log("Screen OFF - skipping userActivity");
-                    return;
+            resolvePmGetPowerScreenStatus();
+            if (pmGetPowerScreenStatusResolved) {
+                try {
+                    int screenStatus = (Integer) pmGetPowerScreenStatusMethod.invoke(pm);
+                    if (screenStatus == 0) {
+                        // Screen is OFF - userActivity may fail or be ignored
+                        // Skip it - the wakeUp call in performSystemWakeUp() handles keeping CPU alive
+                        log("Screen OFF - skipping userActivity");
+                        return;
+                    }
+                } catch (Exception e) {
+                    // Per-call invocation failure (transient binder/access issue);
+                    // do NOT mark resolution failed — proceed anyway, matching
+                    // the original try/catch semantics.
                 }
-            } catch (NoSuchMethodException e) {
-                // Method doesn't exist on this firmware - proceed anyway
-            } catch (Exception e) {
-                // Access error - proceed anyway
             }
 
-            // 1-arg version ( style)
-            try {
-                Method method = PowerManager.class.getMethod("userActivity", long.class);
-                method.invoke(pm, android.os.SystemClock.uptimeMillis());
+            // 1-arg version ( style). Original semantics: only
+            // NoSuchMethodException falls through to the 2-arg fallback;
+            // invocation exceptions bubble to the outer catch. We preserve
+            // that by gating only on the resolved flag (NoSuchMethodException
+            // is now captured at resolve-time as failed=true) and letting
+            // any invoke-time exception propagate.
+            resolvePmUserActivity1Arg();
+            if (pmUserActivity1ArgResolved) {
+                pmUserActivity1ArgMethod.invoke(pm, android.os.SystemClock.uptimeMillis());
                 log("userActivity(long) called");
                 return;
-            } catch (NoSuchMethodException e) {
+            } else {
                 log("userActivity: no compatible method found");
             }
 
-            // Fallback: Try 2-arg version first (stealth mode - doesn't turn on screen)
+            // Fallback: Try 2-arg version (stealth mode - doesn't turn on screen)
             // noChangeLights = true means "Reset the sleep timer, but don't turn on the screen"
-            try {
-                Method method = PowerManager.class.getMethod("userActivity", long.class, boolean.class);
-                method.invoke(pm, android.os.SystemClock.uptimeMillis(), true);
+            resolvePmUserActivity2Arg();
+            if (pmUserActivity2ArgResolved) {
+                pmUserActivity2ArgMethod.invoke(pm, android.os.SystemClock.uptimeMillis(), true);
                 log("userActivity(long, boolean) called");
-            } catch (NoSuchMethodException e) {
-                // Fall through to 1-arg version
             }
 
         } catch (Exception e) {
@@ -2336,17 +2594,97 @@ public class AccSentryDaemon {
         
         apkPath = apkPath.trim();
         log("Using APK path: " + apkPath);
-        
-        // Launch via app_process with nice-name (matching DaemonLauncher.kt format)
-        String innerCmd = "CLASSPATH=" + apkPath + " " +
-                         "app_process /system/bin " +
-                         "--nice-name=" + TELEGRAM_DAEMON_PROCESS + " " +
-                         "com.overdrive.app.daemon.TelegramBotDaemon";
-        
-        String cmd = "nohup sh -c '" + innerCmd + "' > /data/local/tmp/telegrambotdaemon.log 2>&1 &";
-        
-        log("Telegram launch command: " + cmd);
-        execShell(cmd);
+
+        // Clear the disable sentinel — ACC OFF path is explicitly starting
+        // the daemon. Without this, the watchdog we're about to deploy
+        // would gate-1 → exit 0 immediately because a previous ACC-on
+        // stop left the sentinel on disk.
+        execShell("rm -f /data/local/tmp/telegram_bot_daemon.disabled 2>/dev/null");
+
+        // Kill any prior watchdog shells before deploying a fresh one. On
+        // boot, this path can race the UI's DaemonStartupManager launch
+        // — both write start_telegram.sh and `nohup sh` it, leaving two
+        // watchdog shells alive. Each spawns the daemon; daemon's
+        // killOldInstances kills the other watchdog's daemon; that
+        // watchdog respawns; restart loop. The sentinel-gate alone can't
+        // catch this because we just cleared the sentinel above.
+        // ALSO kill the daemon itself for the same reason — without it,
+        // an alive daemon from a stale watchdog would refuse our new
+        // daemon's singleton lock.
+        //
+        // We can't use `pkill -f <pattern>` here: pkill -f matches against
+        // /proc/<pid>/cmdline, and execShell wraps each command in
+        // `sh -c "<cmd>"`. The wrapper's cmdline contains the literal
+        // pattern (or the variable assignment text — pkill matches the
+        // bytes regardless), so `pkill -f start_telegram.sh` would
+        // SIGKILL its own parent shell. The "P=…; pkill -f \"$P\""
+        // variable-hop trick was cargo-culted defense; the assignment
+        // text "P=start_telegram.sh" still appears in argv and pkill
+        // catches it.
+        //
+        // Use the ps+awk+kill pattern instead — it filters by PID list
+        // and explicitly excludes the calling shell's own PID. This is
+        // the same pattern TelegramBotDaemon.killOldInstances uses.
+        execShell(
+            "MY_PID=$$; "
+            + "ps -A -o PID,ARGS | grep -F start_telegram.sh | grep -v grep | awk '{print $1}' "
+            + "| while read pid; do if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done; "
+            + "ps -A -o PID,ARGS | grep -F " + TELEGRAM_DAEMON_PROCESS + " | grep -v grep | awk '{print $1}' "
+            + "| while read pid; do if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done"
+        );
+        try { Thread.sleep(500); } catch (InterruptedException ignored) {}
+        execShell("rm -f /data/local/tmp/telegram_bot_daemon.lock 2>/dev/null");
+
+        // Deploy the SAME shell watchdog script the UI uses
+        // (DaemonLauncher.Companion.buildTelegramWatchdogScript). Without
+        // a watchdog, a transient daemon crash leaves it dead until the
+        // next ACC cycle or the next 30s in-process health-check tick
+        // (only fires when MainActivity is alive). The watchdog respawns
+        // on any non-zero exit, sentinel-gated for legitimate stops.
+        String scriptPath = "/data/local/tmp/start_telegram.sh";
+        try {
+            // proxyArgs="" because AccSentry-launched daemon doesn't have
+            // visibility into Android global HTTP proxy from this context.
+            // Direct connection — Telegram bot's OkHttp proxies are
+            // configured via UnifiedTelegramConfig at runtime.
+            java.util.List<String> lines =
+                com.overdrive.app.launcher.DaemonLauncher.Companion
+                    .buildTelegramWatchdogScript(apkPath, "");
+            // Write line-by-line — heredoc through execShell isn't reliable
+            // across all toybox builds. Same pattern as
+            // DaemonCommandHandler.startCameraDaemonWithWatchdog.
+            execShell("rm -f " + scriptPath + " 2>/dev/null");
+            boolean first = true;
+            for (String line : lines) {
+                String escaped = line
+                    .replace("\\", "\\\\")
+                    .replace("\"", "\\\"")
+                    .replace("$", "\\$")
+                    .replace("`", "\\`");
+                String redirect = first ? " > " : " >> ";
+                execShell("echo \"" + escaped + "\"" + redirect + scriptPath);
+                first = false;
+            }
+            execShell("chmod 755 " + scriptPath);
+        } catch (Throwable t) {
+            log("Failed to deploy Telegram watchdog: " + t.getMessage()
+                + " — falling back to bare nohup launch (no supervision)");
+            String innerCmd = "CLASSPATH=" + apkPath + " "
+                + "app_process /system/bin "
+                + "--nice-name=" + TELEGRAM_DAEMON_PROCESS + " "
+                + "com.overdrive.app.daemon.TelegramBotDaemon";
+            String cmd = "nohup sh -c '" + innerCmd
+                + "' > /data/local/tmp/telegrambotdaemon.log 2>&1 &";
+            log("Telegram launch command (fallback): " + cmd);
+            execShell(cmd);
+            return;
+        }
+
+        // Run the watchdog. nohup so it survives the AccSentry shell's
+        // exit; it execs the daemon binary in a loop.
+        String launchCmd = "nohup sh " + scriptPath + " > /dev/null 2>&1 &";
+        log("Telegram launch command (watchdog-supervised): " + launchCmd);
+        execShell(launchCmd);
     }
     
     /**
@@ -2357,16 +2695,54 @@ public class AccSentryDaemon {
             log("Telegram auto-start not enabled, not stopping");
             return;
         }
-        
+
         if (!isTelegramDaemonRunning()) {
             log("Telegram daemon not running");
             return;
         }
-        
+
+        // ACC-driven stop must plant the disable sentinel BEFORE pkill,
+        // OTHERWISE the start_telegram.sh watchdog (deployed by the UI
+        // launchTelegramDaemon path) will respawn the daemon within 60s
+        // — exactly the loop ACC-on is meant to break. The sentinel
+        // signals the watchdog to gate-1 → exit 0 cleanly. ACC-off path
+        // (launchTelegramDaemon below) clears the sentinel before
+        // re-deploying.
+        //
+        // Also rm the watchdog script so any orphan watchdog dies; lock
+        // rm comes AFTER pkill+settle to prevent the lockfile resurrection
+        // race. Mirrors DaemonLauncher.stopTelegramDaemon pattern.
         log("Stopping Telegram daemon (vehicle on)...");
-        execShell("pkill -9 -f " + TELEGRAM_DAEMON_PROCESS + " 2>/dev/null");
+        execShell(
+            "echo \"disabled by ACC-on at $(date)\" > /data/local/tmp/telegram_bot_daemon.disabled; " +
+            "chmod 666 /data/local/tmp/telegram_bot_daemon.disabled 2>/dev/null; " +
+            "rm -f /data/local/tmp/start_telegram.sh 2>/dev/null"
+        );
+        // Kill the watchdog shell first so it can't respawn the daemon
+        // between our pkill and the lock-rm. The sentinel-gate on its
+        // next iteration would also stop it, but the watchdog's outer
+        // 10-60 s sleep would let it spawn a daemon before noticing.
+        //
+        // pkill -f matches the FULL argv. The "P=…; pkill -f \"$P\""
+        // variable-hop trick was cargo-cult: the assignment text is
+        // also in argv and toybox pkill matches it. ps+awk+kill
+        // filters by PID list and excludes the calling shell's own
+        // PID via $$ — the same pattern TelegramBotDaemon's
+        // killOldInstances uses. Mirror of the launchTelegramDaemon
+        // path (line 2620) that we already fixed.
+        execShell(
+            "MY_PID=$$; "
+            + "ps -A -o PID,ARGS | grep -F start_telegram.sh | grep -v grep | awk '{print $1}' "
+            + "| while read pid; do if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done; "
+            + "ps -A -o PID,ARGS | grep -F " + TELEGRAM_DAEMON_PROCESS + " | grep -v grep | awk '{print $1}' "
+            + "| while read pid; do if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done"
+        );
+        // Settle so SIGKILL'd daemon releases its lockfile before we rm
+        // it (otherwise the daemon's still-flushing JVM rewrites the
+        // lock between our rm and its actual death).
+        try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
         execShell("rm -f /data/local/tmp/telegram_bot_daemon.lock 2>/dev/null");
-        log("Telegram daemon stopped");
+        log("Telegram daemon stopped (sentinel-disabled)");
     }
 
     // ==================== CONTEXT HELPERS ====================

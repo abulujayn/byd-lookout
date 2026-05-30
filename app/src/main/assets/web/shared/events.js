@@ -32,6 +32,35 @@ BYD.events = {
     // v3 actor/severity/proximity filter state (item 6). Empty values = no filter.
     actorFilter: { class: '', severity: '', proximity: '' },
 
+    // Last observed player.muted value, used by the volumechange handler in
+    // playVideo() to debounce slider-drag events from actual mute-button
+    // transitions. Initialized lazily on first playVideo so we can tell the
+    // first listener invocation apart from a real transition.
+    _lastMutedState: null,
+
+    /**
+     * Read the recording.audioEnabled setting from the backend on every
+     * call. Used by playVideo() to decide whether to default the mute
+     * state to unmuted on first-ever clip review when the user has audio
+     * recording enabled (so they can actually hear the captured audio
+     * without a second tap).
+     *
+     * Deliberately uncached: the setting is toggled from recording.html,
+     * and a stale init-time cache would leave the events page defaulting
+     * future clips to unmuted after the user disabled audio (and vice
+     * versa). The fetch is a cheap loopback (~5ms) and only fires once
+     * per clip the user opens, so always-fresh is the simpler and safer
+     * default.
+     */
+    async getAudioRecordingEnabled() {
+        try {
+            const resp = await fetch('/api/settings/audio-recording');
+            const data = await resp.json();
+            return data && data.success ? !!data.enabled : false;
+        } catch (e) {
+            return false;
+        }
+    },
 
     async init() {
         const urlParams = new URLSearchParams(window.location.search);
@@ -692,8 +721,72 @@ BYD.events = {
         player.src = rec.videoUrl;
         document.getElementById('videoModal').classList.add('active');
         player.load();
-        player.oncanplay = function() { player.play().catch(function() {}); player.oncanplay = null; };
-        
+        // Browser autoplay needs muted=true. Apply the user's persisted
+        // mute preference once the video is actually playing — BEFORE
+        // that point, mute=true is mandatory; after, we restore.
+        const self = this;
+        player.oncanplay = function() {
+            player.play().catch(function() {});
+            // Decide the mute default. The native <video controls> exposes
+            // its own mute toggle, so we don't render a second one — but we
+            // still set the initial mute state intelligently:
+            //   1. Explicit user choice in localStorage wins (the browser
+            //      persists the native mute control's last state too, but
+            //      we keep our own key for backward compat with any
+            //      clients that read it).
+            //   2. If no explicit choice yet AND the user has audio
+            //      recording enabled, default to UNMUTED — they want to
+            //      hear what was captured.
+            //   3. Otherwise default to muted (safer; matches first-run).
+            try {
+                const stored = localStorage.getItem('byd.events.unmuted');
+                if (stored !== null) {
+                    player.muted = stored !== '1';
+                } else {
+                    // Fetch the live audio-recording flag. Keep the player
+                    // muted while in flight — autoplay is already gated on
+                    // muted=true, and the round-trip is ~5ms loopback so
+                    // the visual flash from muted→unmuted is imperceptible
+                    // for the audio-on case.
+                    player.muted = true;
+                    self.getAudioRecordingEnabled().then(function(enabled) {
+                        if (enabled) player.muted = false;
+                    });
+                }
+            } catch (e) {
+                // localStorage may be denied in some contexts; fall back
+                // to muted (the safer default).
+                player.muted = true;
+            }
+            player.oncanplay = null;
+        };
+
+        // Persist mute changes the user makes via the native <video
+        // controls> mute toggle so the next clip honors it. Without this
+        // listener every clip would re-evaluate the audio-recording
+        // default and ignore the user's last gesture.
+        //
+        // Important: volumechange fires on slider drags too, not just on
+        // mute-button transitions. If the user drops the slider to 0,
+        // player.muted stays false but volume becomes 0 — we'd persist '1'
+        // (unmuted), then the next clip would start unmuted with volume 0,
+        // appearing silent and broken. Track the previous mute state on
+        // BYD.events so the closure persists across slider drags within a
+        // clip AND across reopened modals (each playVideo call rebinds the
+        // listener but reads the same _lastMutedState). Only persist on an
+        // actual mute-state transition.
+        const self2 = this;
+        player.onvolumechange = function() {
+            if (player.muted !== self2._lastMutedState) {
+                self2._lastMutedState = player.muted;
+                try {
+                    localStorage.setItem('byd.events.unmuted', player.muted ? '0' : '1');
+                } catch (e) {
+                    // Persistence failure is fine — current session still honors it.
+                }
+            }
+        };
+
         // SOTA: Load event timeline for this recording
         this.loadTimeline(rec.filename, player);
     },

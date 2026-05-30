@@ -1,5 +1,6 @@
 package com.overdrive.app.trips;
 
+import java.util.concurrent.atomic.AtomicInteger;
 import org.json.JSONObject;
 
 /**
@@ -24,7 +25,24 @@ public class TripRecord {
     public double energyPerKm;         // kWh / km (from BMS kWh readings)
     public double electricityRate;     // Cost per kWh at time of trip
     public String currency;            // Currency symbol (₹, $, €, £)
-    public double tripCost;            // Total trip cost (energyUsed × rate)
+    public double tripCost;            // Total trip cost (electric leg + fuel leg)
+
+    // ── PHEV / hybrid bookkeeping (BEV trips leave these at sentinel) ────
+    // For BEVs: isPhev=false, all fuel* fields are 0/NaN, behavior is
+    // identical to pre-PHEV builds.
+    public boolean isPhev;             // Drivetrain at trip end
+    public double fuelPctStart = -1;   // 0-100, -1 = unavailable
+    public double fuelPctEnd = -1;     // 0-100, -1 = unavailable
+    public double litresUsed;          // Computed litres burned this trip
+    public double fuelPricePerL;       // Price snapshot at trip end
+    public double fuelCost;            // litresUsed × fuelPricePerL
+    public double electricCost;        // energyUsed × electricityRate
+    // Cross-thread: incremented on the TripDetector scheduler thread (1Hz),
+    // read on the gear/ACC thread when the trip finalises. AtomicInteger
+    // gives us a published snapshot without reaching for a synchronized read.
+    public final AtomicInteger iceSecondsAtomic = new AtomicInteger(0);
+    /** Convenience accessor — most call sites only need a plain int. */
+    public int iceSeconds() { return iceSecondsAtomic.get(); }
     public String kinematicState;      // HEAVY_GRIDLOCK, URBAN_FLOW, HIGHWAY_CRUISING
     public String gradientProfile;     // FLAT, HILLY, MOUNTAIN (terrain classification)
     public double elevationGainM;      // Cumulative meters gained (uphill)
@@ -103,6 +121,14 @@ public class TripRecord {
             json.put("efficiencyScore", efficiencyScore);
             json.put("consistencyScore", consistencyScore);
             json.put("overallScore", getOverallScore());
+            json.put("isPhev", isPhev);
+            if (fuelPctStart >= 0) json.put("fuelPctStart", fuelPctStart);
+            if (fuelPctEnd >= 0) json.put("fuelPctEnd", fuelPctEnd);
+            json.put("litresUsed", litresUsed);
+            json.put("fuelPricePerL", fuelPricePerL);
+            json.put("fuelCost", fuelCost);
+            json.put("electricCost", electricCost);
+            json.put("iceSeconds", iceSeconds());
             json.put("microMomentsJson", microMomentsJson != null ? microMomentsJson : "");
             json.put("telemetryFilePath", telemetryFilePath != null ? telemetryFilePath : "");
         } catch (Exception e) {
@@ -150,6 +176,14 @@ public class TripRecord {
             json.put("efficiencyScore", efficiencyScore);
             json.put("consistencyScore", consistencyScore);
             json.put("overallScore", getOverallScore());
+            json.put("isPhev", isPhev);
+            if (fuelPctStart >= 0) json.put("fuelPctStart", fuelPctStart);
+            if (fuelPctEnd >= 0) json.put("fuelPctEnd", fuelPctEnd);
+            json.put("litresUsed", litresUsed);
+            json.put("fuelPricePerL", fuelPricePerL);
+            json.put("fuelCost", fuelCost);
+            json.put("electricCost", electricCost);
+            json.put("iceSeconds", iceSeconds());
         } catch (Exception e) {
             // JSONObject.put only throws on null key
         }

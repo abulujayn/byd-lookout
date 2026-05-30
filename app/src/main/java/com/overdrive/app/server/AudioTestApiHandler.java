@@ -1,6 +1,9 @@
 package com.overdrive.app.server;
 
+import android.media.AudioFormat;
 import android.media.AudioManager;
+import android.media.AudioRecord;
+import android.media.MediaRecorder;
 import android.media.ToneGenerator;
 import android.speech.tts.TextToSpeech;
 
@@ -43,7 +46,670 @@ public class AudioTestApiHandler {
             return true;
         }
 
+        if (cleanPath.equals("/api/audio/probe-mic") && method.equals("GET")) {
+            handleProbeMic(out);
+            return true;
+        }
+
+        if (cleanPath.equals("/api/audio/probe-mic-spoof") && method.equals("GET")) {
+            handleProbeMicSpoof(out);
+            return true;
+        }
+
+        if (cleanPath.equals("/api/audio/probe-mic-introspect") && method.equals("GET")) {
+            handleProbeMicIntrospect(out);
+            return true;
+        }
+
         return false;
+    }
+
+    /**
+     * GET /api/audio/probe-mic-introspect — dump every AudioRecord ctor and
+     * field, plus what AudioSystem looks like, so we can see what reflection
+     * surface is actually available on this firmware. The earlier blind
+     * spoof guesses missed because SDK 29 / BYD's AOSP fork uses different
+     * field names than mainline.
+     */
+    private static void handleProbeMicIntrospect(OutputStream out) throws Exception {
+        JSONObject response = new JSONObject();
+        response.put("uid", android.os.Process.myUid());
+        response.put("pid", android.os.Process.myPid());
+        response.put("sdkInt", android.os.Build.VERSION.SDK_INT);
+        response.put("manufacturer", android.os.Build.MANUFACTURER);
+        response.put("model", android.os.Build.MODEL);
+
+        // All AudioRecord ctors (declared, including hidden)
+        org.json.JSONArray ctors = new org.json.JSONArray();
+        for (java.lang.reflect.Constructor<?> c : AudioRecord.class.getDeclaredConstructors()) {
+            StringBuilder sig = new StringBuilder("AudioRecord(");
+            Class<?>[] params = c.getParameterTypes();
+            for (int i = 0; i < params.length; i++) {
+                if (i > 0) sig.append(", ");
+                sig.append(params[i].getName());
+            }
+            sig.append(")");
+            ctors.put(sig.toString());
+        }
+        response.put("audioRecordCtors", ctors);
+
+        // All AudioRecord fields
+        org.json.JSONArray fields = new org.json.JSONArray();
+        for (java.lang.reflect.Field f : AudioRecord.class.getDeclaredFields()) {
+            String name = f.getName();
+            // Filter to interesting fields — ID/state fields are noise
+            if (name.toLowerCase().contains("package") || name.toLowerCase().contains("attribution")
+                || name.toLowerCase().contains("op") || name.toLowerCase().contains("uid")
+                || name.toLowerCase().contains("source") || name.toLowerCase().contains("native")) {
+                fields.put(f.getType().getSimpleName() + " " + name);
+            }
+        }
+        response.put("interestingFields", fields);
+
+        // Methods related to native init
+        org.json.JSONArray methods = new org.json.JSONArray();
+        for (java.lang.reflect.Method m : AudioRecord.class.getDeclaredMethods()) {
+            String name = m.getName();
+            if (name.startsWith("native_setup") || name.startsWith("native_") && name.contains("init")
+                || name.contains("Setup") || name.contains("setup")) {
+                StringBuilder sig = new StringBuilder(m.getReturnType().getSimpleName());
+                sig.append(" ").append(name).append("(");
+                Class<?>[] params = m.getParameterTypes();
+                for (int i = 0; i < params.length; i++) {
+                    if (i > 0) sig.append(", ");
+                    sig.append(params[i].getSimpleName());
+                }
+                sig.append(")");
+                methods.put(sig.toString());
+            }
+        }
+        response.put("setupMethods", methods);
+
+        // AudioSystem class — look for any method to set opPackageName globally
+        try {
+            Class<?> audioSystem = Class.forName("android.media.AudioSystem");
+            org.json.JSONArray asMethods = new org.json.JSONArray();
+            for (java.lang.reflect.Method m : audioSystem.getDeclaredMethods()) {
+                String name = m.getName();
+                if (name.toLowerCase().contains("uid") || name.toLowerCase().contains("package")
+                    || name.toLowerCase().contains("permission")) {
+                    asMethods.put(name);
+                }
+            }
+            response.put("audioSystemRelevantMethods", asMethods);
+        } catch (Throwable t) {
+            response.put("audioSystemError", t.getMessage());
+        }
+
+        // ActivityThread for opPackageName context
+        try {
+            Class<?> at = Class.forName("android.app.ActivityThread");
+            java.lang.reflect.Method curThread = at.getMethod("currentActivityThread");
+            Object atInst = curThread.invoke(null);
+            if (atInst != null) {
+                try {
+                    java.lang.reflect.Field pkg = at.getDeclaredField("mInitialApplication");
+                    pkg.setAccessible(true);
+                    Object app = pkg.get(atInst);
+                    response.put("activityThreadInitialApp", app != null ? app.getClass().getName() : null);
+                    if (app != null) {
+                        java.lang.reflect.Method getPkg = app.getClass().getMethod("getPackageName");
+                        Object pn = getPkg.invoke(app);
+                        response.put("activityThreadInitialAppPackage", pn);
+                    }
+                } catch (Throwable t) {
+                    response.put("activityThreadInspectError", t.getMessage());
+                }
+            } else {
+                response.put("activityThread", "currentActivityThread returned null");
+            }
+        } catch (Throwable t) {
+            response.put("activityThreadError", t.getMessage());
+        }
+
+        response.put("success", true);
+        HttpResponse.sendJson(out, response.toString());
+    }
+
+    /**
+     * GET /api/audio/probe-mic-spoof — try to construct AudioRecord with
+     * opPackageName spoofed to "com.overdrive.app" so AudioFlinger looks up
+     * the app's RECORD_AUDIO grant instead of the daemon's UID 2000.
+     *
+     * Tries three reflection paths in order:
+     *   A) AudioRecord(AudioAttributes, AudioFormat, int, int, String) — hidden
+     *      ctor present on most AOSP builds; opPackageName is the last arg.
+     *   B) AudioRecord ctor + reflective set of mAttributionSource (Android 12+
+     *      synthesizes one from opPackageName, but on this Android version the
+     *      field may exist alongside the legacy path).
+     *   C) AudioRecord ctor + reflective set of mPackageName field (older
+     *      ROMs that didn't switch to AttributionSource yet).
+     *
+     * Each attempt independently captures ~100 ms of PCM and reports RMS dB.
+     * If any path returns rmsDb > -70, the spoof works and we can capture
+     * cabin audio from the daemon process without an IPC bounce.
+     */
+    private static void handleProbeMicSpoof(OutputStream out) throws Exception {
+        JSONObject response = new JSONObject();
+        org.json.JSONArray attempts = new org.json.JSONArray();
+
+        String spoofPackage = "com.overdrive.app";
+        int sampleRate = 48000;
+        int channelConfig = AudioFormat.CHANNEL_IN_MONO;
+        int audioFormat = AudioFormat.ENCODING_PCM_16BIT;
+        int minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat);
+        int bufSize = Math.max(minBuf * 4, sampleRate / 5);
+
+        // Path A: hidden ctor (AudioAttributes, AudioFormat, int, int, String)
+        attempts.put(tryHiddenCtor(spoofPackage, sampleRate, channelConfig, audioFormat, bufSize));
+        // Path B: post-construct mAttributionSource override
+        attempts.put(tryAttributionSourceOverride(spoofPackage, sampleRate, channelConfig, audioFormat, bufSize));
+        // Path C: post-construct mPackageName override
+        attempts.put(tryPackageNameOverride(spoofPackage, sampleRate, channelConfig, audioFormat, bufSize));
+        // Path D: native_setup direct call with spoofed opPackageName
+        attempts.put(tryNativeSetupSpoof(spoofPackage, sampleRate, channelConfig, audioFormat, bufSize));
+
+        boolean anyWorked = false;
+        String winnerPath = null;
+        double bestRmsDb = Double.NEGATIVE_INFINITY;
+        for (int i = 0; i < attempts.length(); i++) {
+            JSONObject a = attempts.getJSONObject(i);
+            if (a.optBoolean("usable", false)) {
+                double db = a.optDouble("rmsDbValue", Double.NEGATIVE_INFINITY);
+                if (db > bestRmsDb) {
+                    bestRmsDb = db;
+                    winnerPath = a.optString("path", null);
+                    anyWorked = true;
+                }
+            }
+        }
+
+        response.put("success", true);
+        response.put("uid", android.os.Process.myUid());
+        response.put("pid", android.os.Process.myPid());
+        response.put("spoofPackage", spoofPackage);
+        response.put("anyWorked", anyWorked);
+        if (winnerPath != null) {
+            response.put("winningPath", winnerPath);
+            response.put("winningRmsDb",
+                Double.isInfinite(bestRmsDb) ? "-inf"
+                    : String.format(java.util.Locale.US, "%.2f", bestRmsDb));
+        }
+        response.put("attempts", attempts);
+        response.put("note", "If any path's usable=true, the daemon can capture audio "
+            + "by claiming opPackageName=" + spoofPackage + ". If all fail with the "
+            + "same 'permission denied for uid 2000' error, AudioFlinger is "
+            + "cross-checking calling UID against the spoofed package's UID — "
+            + "fall back to in-app capture + IPC.");
+
+        logger.info("Mic spoof probe: anyWorked=" + anyWorked + " winner=" + winnerPath);
+        HttpResponse.sendJson(out, response.toString());
+    }
+
+    private static JSONObject tryHiddenCtor(String pkg, int sr, int ch, int fmt, int bufSize)
+            throws org.json.JSONException {
+        JSONObject a = new JSONObject();
+        try {
+            a.put("path", "hidden_ctor(AudioAttributes,AudioFormat,int,int,String)");
+
+            // setCapturePreset is @hide on the public SDK — reflect through it.
+            android.media.AudioAttributes.Builder attrsBuilder = new android.media.AudioAttributes.Builder();
+            try {
+                java.lang.reflect.Method setCapturePreset =
+                    android.media.AudioAttributes.Builder.class.getMethod("setCapturePreset", int.class);
+                setCapturePreset.invoke(attrsBuilder, MediaRecorder.AudioSource.MIC);
+            } catch (NoSuchMethodException e) {
+                a.put("error", "AudioAttributes.Builder.setCapturePreset not available on this SDK");
+                return a;
+            }
+            android.media.AudioAttributes attrs = attrsBuilder.build();
+            android.media.AudioFormat format = new android.media.AudioFormat.Builder()
+                .setEncoding(fmt)
+                .setSampleRate(sr)
+                .setChannelMask(ch)
+                .build();
+
+            java.lang.reflect.Constructor<AudioRecord> ctor = AudioRecord.class.getDeclaredConstructor(
+                android.media.AudioAttributes.class,
+                android.media.AudioFormat.class,
+                int.class,
+                int.class,
+                String.class);
+            ctor.setAccessible(true);
+            AudioRecord rec = ctor.newInstance(attrs, format, bufSize, 0, pkg);
+            captureAndScore(rec, a);
+        } catch (NoSuchMethodException e) {
+            a.put("error", "ctor not present on this Android version");
+        } catch (Throwable t) {
+            a.put("error", t.getClass().getSimpleName() + ": " + t.getMessage());
+        }
+        return a;
+    }
+
+    private static JSONObject tryAttributionSourceOverride(String pkg, int sr, int ch, int fmt, int bufSize)
+            throws org.json.JSONException {
+        JSONObject a = new JSONObject();
+        a.put("path", "post_ctor_mAttributionSource");
+        AudioRecord rec = null;
+        try {
+            rec = new AudioRecord(MediaRecorder.AudioSource.MIC, sr, ch, fmt, bufSize);
+            // Probe for the field — Android 12+ has it; older ROMs don't.
+            java.lang.reflect.Field f;
+            try {
+                f = AudioRecord.class.getDeclaredField("mAttributionSource");
+            } catch (NoSuchFieldException nf) {
+                a.put("error", "mAttributionSource field not present (pre-A12 ROM)");
+                rec.release();
+                return a;
+            }
+            f.setAccessible(true);
+            Object as = f.get(rec);
+            if (as == null) {
+                a.put("error", "mAttributionSource is null");
+                rec.release();
+                return a;
+            }
+            // Set packageName via reflection on the AttributionSource
+            try {
+                java.lang.reflect.Method setPkg = as.getClass().getMethod("setPackageName", String.class);
+                setPkg.invoke(as, pkg);
+            } catch (NoSuchMethodException nsm) {
+                java.lang.reflect.Field pf = as.getClass().getDeclaredField("mPackageName");
+                pf.setAccessible(true);
+                pf.set(as, pkg);
+            }
+            captureAndScore(rec, a);
+            rec = null;  // captureAndScore released it
+        } catch (Throwable t) {
+            a.put("error", t.getClass().getSimpleName() + ": " + t.getMessage());
+        } finally {
+            if (rec != null) {
+                try { rec.release(); } catch (Exception ignored) {}
+            }
+        }
+        return a;
+    }
+
+    private static JSONObject tryPackageNameOverride(String pkg, int sr, int ch, int fmt, int bufSize)
+            throws org.json.JSONException {
+        JSONObject a = new JSONObject();
+        a.put("path", "post_ctor_mPackageName");
+        AudioRecord rec = null;
+        try {
+            // Some pre-12 builds carry an mPackageName field straight on AudioRecord.
+            java.lang.reflect.Field f;
+            try {
+                f = AudioRecord.class.getDeclaredField("mPackageName");
+            } catch (NoSuchFieldException nf) {
+                a.put("error", "mPackageName field not present");
+                return a;
+            }
+            rec = new AudioRecord(MediaRecorder.AudioSource.MIC, sr, ch, fmt, bufSize);
+            f.setAccessible(true);
+            f.set(rec, pkg);
+            captureAndScore(rec, a);
+            rec = null;
+        } catch (Throwable t) {
+            a.put("error", t.getClass().getSimpleName() + ": " + t.getMessage());
+        } finally {
+            if (rec != null) {
+                try { rec.release(); } catch (Exception ignored) {}
+            }
+        }
+        return a;
+    }
+
+    /**
+     * Path D: bypass the public ctor and call native_setup directly with a
+     * spoofed opPackageName. The Java AudioRecord ctor on SDK 29 ends up
+     * calling:
+     *   native_setup(weakThis, attributes, sampleRateArr, channelMask,
+     *                channelIndexMask, audioFormat, buffSizeInBytes,
+     *                sessionIdArr, opPackageName, nativeRecordInJavaObj)
+     * with opPackageName = ActivityThread.currentOpPackageName() — which is
+     * empty under the daemon. We construct an AudioRecord via the simple
+     * 5-int public ctor (which itself calls native_setup), then immediately
+     * release the native side and re-call native_setup with our chosen pkg.
+     *
+     * If AudioFlinger's permission check is strictly UID-based (no package
+     * cross-check), this works. If it cross-checks calling-UID against the
+     * opPackageName's owning UID, this fails identically to the other paths.
+     */
+    private static JSONObject tryNativeSetupSpoof(String pkg, int sr, int ch, int fmt, int bufSize)
+            throws org.json.JSONException {
+        JSONObject a = new JSONObject();
+        a.put("path", "native_setup_direct(opPackageName=" + pkg + ")");
+        AudioRecord rec = null;
+        try {
+            // Build attributes for native_setup arg 2.
+            android.media.AudioAttributes.Builder attrsBuilder = new android.media.AudioAttributes.Builder();
+            try {
+                java.lang.reflect.Method setCapturePreset =
+                    android.media.AudioAttributes.Builder.class.getMethod("setCapturePreset", int.class);
+                setCapturePreset.invoke(attrsBuilder, MediaRecorder.AudioSource.MIC);
+            } catch (NoSuchMethodException e) {
+                a.put("error", "setCapturePreset hidden API unavailable");
+                return a;
+            }
+            android.media.AudioAttributes attrs = attrsBuilder.build();
+
+            // Allocate via the simple public ctor — this DOES invoke
+            // native_setup with the wrong opPackageName, but we're going to
+            // discard that native side and re-create it.
+            rec = new AudioRecord(MediaRecorder.AudioSource.MIC, sr, ch, fmt, bufSize);
+            // If even the unspoofed ctor failed (state==0), there's no native
+            // handle to release — but the JNI side may have allocated one
+            // anyway. Force a release before re-calling native_setup.
+            try { rec.release(); } catch (Exception ignored) {}
+            // Reconstruct the Java-side instance shell without going through
+            // a public ctor: use Unsafe-style allocation via a no-arg subclass.
+            // SDK 29 AudioRecord has no nullary ctor, so we must invoke
+            // native_setup directly on the existing (just-released) instance.
+            // The instance fields are in a known state after release().
+
+            // Resolve native_setup. Signature from introspect:
+            //   int native_setup(Object weakThis, Object attributes, int[] sampleRate,
+            //                    int channelMask, int channelIndexMask, int audioFormat,
+            //                    int buffSizeInBytes, int[] sessionId, String opPackageName,
+            //                    long nativeRecordInJavaObj)
+            java.lang.reflect.Method nativeSetup = AudioRecord.class.getDeclaredMethod(
+                "native_setup",
+                Object.class, Object.class, int[].class, int.class, int.class, int.class,
+                int.class, int[].class, String.class, long.class);
+            nativeSetup.setAccessible(true);
+
+            int[] sampleRateArr = new int[] { sr };
+            int[] sessionIdArr = new int[] { 0 };
+            int channelMask = ch;  // already CHANNEL_IN_MONO
+            int channelIndexMask = 0;
+            // weakThis: AudioRecord uses WeakReference<AudioRecord>
+            java.lang.ref.WeakReference<AudioRecord> weak = new java.lang.ref.WeakReference<>(rec);
+
+            Object setupResult = nativeSetup.invoke(rec,
+                weak, attrs, sampleRateArr, channelMask, channelIndexMask, fmt,
+                bufSize, sessionIdArr, pkg, 0L);
+            int initStatus = (Integer) setupResult;
+            a.put("native_setup_status", initStatus);
+
+            // Push native_setup's status into mState/mInitializationLooper so
+            // public methods don't blow up.
+            try {
+                java.lang.reflect.Field mState = AudioRecord.class.getDeclaredField("mState");
+                mState.setAccessible(true);
+                mState.setInt(rec, initStatus == 0 ? AudioRecord.STATE_INITIALIZED : AudioRecord.STATE_UNINITIALIZED);
+            } catch (Throwable ignored) {}
+
+            if (initStatus != 0) {
+                a.put("error", "native_setup returned " + initStatus + " (non-zero = failed)");
+                return a;
+            }
+
+            // Wire mNativeBufferSizeInBytes so read() doesn't reject.
+            try {
+                java.lang.reflect.Field mBuf = AudioRecord.class.getDeclaredField("mNativeBufferSizeInBytes");
+                mBuf.setAccessible(true);
+                mBuf.setInt(rec, bufSize);
+            } catch (Throwable ignored) {}
+            try {
+                java.lang.reflect.Field mRec = AudioRecord.class.getDeclaredField("mRecordSource");
+                mRec.setAccessible(true);
+                mRec.setInt(rec, MediaRecorder.AudioSource.MIC);
+            } catch (Throwable ignored) {}
+
+            captureAndScore(rec, a);
+            rec = null;
+        } catch (NoSuchMethodException e) {
+            a.put("error", "native_setup signature mismatch: " + e.getMessage());
+        } catch (Throwable t) {
+            a.put("error", t.getClass().getSimpleName() + ": " + t.getMessage());
+        } finally {
+            if (rec != null) {
+                try { rec.release(); } catch (Exception ignored) {}
+            }
+        }
+        return a;
+    }
+
+    /**
+     * Captures ~100 ms of PCM from a constructed AudioRecord, computes RMS,
+     * stuffs results into the attempt JSON. Always releases the recorder.
+     */
+    private static void captureAndScore(AudioRecord rec, JSONObject attempt)
+            throws org.json.JSONException {
+        try {
+            int state = rec.getState();
+            attempt.put("state", state);
+            if (state != AudioRecord.STATE_INITIALIZED) {
+                attempt.put("error", "STATE_UNINITIALIZED — spoof rejected by AudioFlinger");
+                return;
+            }
+            rec.startRecording();
+            int recState = rec.getRecordingState();
+            attempt.put("recordingState", recState);
+            if (recState != AudioRecord.RECORDSTATE_RECORDING) {
+                attempt.put("error", "RECORDSTATE != RECORDING (got " + recState + ")");
+                return;
+            }
+            short[] samples = new short[4800];
+            long t0 = System.nanoTime();
+            int totalRead = 0;
+            while (totalRead < samples.length) {
+                int n = rec.read(samples, totalRead, samples.length - totalRead);
+                if (n <= 0) {
+                    attempt.put("readError", "read returned " + n);
+                    break;
+                }
+                totalRead += n;
+                if (System.nanoTime() - t0 > 500_000_000L) {
+                    attempt.put("readTimeout", true);
+                    break;
+                }
+            }
+            attempt.put("samplesRead", totalRead);
+            if (totalRead > 0) {
+                double sumSq = 0.0;
+                int peak = 0;
+                int nonZero = 0;
+                for (int s = 0; s < totalRead; s++) {
+                    int v = samples[s];
+                    if (v != 0) nonZero++;
+                    int abs = v < 0 ? -v : v;
+                    if (abs > peak) peak = abs;
+                    sumSq += (double) v * v;
+                }
+                double rms = Math.sqrt(sumSq / totalRead);
+                double rmsDb = rms > 0 ? 20.0 * Math.log10(rms / 32768.0) : Double.NEGATIVE_INFINITY;
+                attempt.put("nonZeroSamples", nonZero);
+                attempt.put("peakAmplitude", peak);
+                attempt.put("rms", rms);
+                attempt.put("rmsDb", Double.isInfinite(rmsDb) ? "-inf"
+                    : String.format(java.util.Locale.US, "%.2f", rmsDb));
+                attempt.put("rmsDbValue", Double.isInfinite(rmsDb) ? -999.0 : rmsDb);
+                attempt.put("usable", !Double.isInfinite(rmsDb) && rmsDb > -70.0);
+            }
+            try { rec.stop(); } catch (Exception ignored) {}
+            attempt.put("ok", true);
+        } catch (Throwable t) {
+            attempt.put("error", t.getClass().getSimpleName() + ": " + t.getMessage());
+        } finally {
+            try { rec.release(); } catch (Exception ignored) {}
+        }
+    }
+
+    /**
+     * GET /api/audio/probe-mic — verify whether AudioRecord can capture PCM
+     * from the cabin microphone under the daemon process (UID 2000 / shell).
+     *
+     * Tries three audio sources in order (MIC, VOICE_RECOGNITION, CAMCORDER),
+     * captures ~100 ms of 48 kHz mono PCM_16, and reports RMS dB. A working
+     * source returns success=true with rmsDb above the silence floor (~-70 dB).
+     *
+     * Failure modes surfaced:
+     *   - getMinBufferSize returns ERROR_BAD_VALUE: format unsupported by HAL
+     *   - AudioRecord ctor throws: permission/policy denial
+     *   - state != STATE_INITIALIZED: AudioFlinger refused (UID/appops)
+     *   - read() returns 0: mic claimed by another client (BT call, voice asst)
+     *   - rmsDb == -inf: opened but silent (policy-muted, common DiLink quirk)
+     */
+    private static void handleProbeMic(OutputStream out) throws Exception {
+        JSONObject response = new JSONObject();
+        org.json.JSONArray attempts = new org.json.JSONArray();
+
+        int[] sources = {
+            MediaRecorder.AudioSource.MIC,
+            MediaRecorder.AudioSource.VOICE_RECOGNITION,
+            MediaRecorder.AudioSource.CAMCORDER
+        };
+        String[] sourceNames = { "MIC", "VOICE_RECOGNITION", "CAMCORDER" };
+
+        int sampleRate = 48000;
+        int channelConfig = AudioFormat.CHANNEL_IN_MONO;
+        int audioFormat = AudioFormat.ENCODING_PCM_16BIT;
+
+        boolean anyWorked = false;
+        String workingSourceName = null;
+        double bestRmsDb = Double.NEGATIVE_INFINITY;
+
+        for (int i = 0; i < sources.length; i++) {
+            JSONObject attempt = new JSONObject();
+            attempt.put("source", sourceNames[i]);
+            attempt.put("sourceId", sources[i]);
+            attempt.put("sampleRate", sampleRate);
+
+            AudioRecord rec = null;
+            try {
+                int minBuf = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat);
+                attempt.put("minBufferSize", minBuf);
+                if (minBuf == AudioRecord.ERROR_BAD_VALUE || minBuf == AudioRecord.ERROR) {
+                    attempt.put("error", "getMinBufferSize=" + minBuf);
+                    attempts.put(attempt);
+                    continue;
+                }
+
+                int bufSize = Math.max(minBuf * 4, sampleRate / 5);  // ~200 ms safety
+                attempt.put("bufferSize", bufSize);
+
+                rec = new AudioRecord(sources[i], sampleRate, channelConfig, audioFormat, bufSize);
+                int state = rec.getState();
+                attempt.put("state", state);
+                if (state != AudioRecord.STATE_INITIALIZED) {
+                    attempt.put("error", "STATE_UNINITIALIZED — AudioFlinger refused (UID/appops/policy)");
+                    attempts.put(attempt);
+                    continue;
+                }
+
+                rec.startRecording();
+                int recState = rec.getRecordingState();
+                attempt.put("recordingState", recState);
+                if (recState != AudioRecord.RECORDSTATE_RECORDING) {
+                    attempt.put("error", "RECORDSTATE != RECORDING (got " + recState + ") — mic likely claimed");
+                    attempts.put(attempt);
+                    continue;
+                }
+
+                // Capture ~100 ms = 4800 samples mono
+                short[] samples = new short[4800];
+                long t0 = System.nanoTime();
+                int totalRead = 0;
+                while (totalRead < samples.length) {
+                    int n = rec.read(samples, totalRead, samples.length - totalRead);
+                    if (n <= 0) {
+                        attempt.put("readError", "read returned " + n + " after " + totalRead + " samples");
+                        break;
+                    }
+                    totalRead += n;
+                    if (System.nanoTime() - t0 > 500_000_000L) {  // 500 ms timeout
+                        attempt.put("readTimeout", true);
+                        break;
+                    }
+                }
+                long elapsedMs = (System.nanoTime() - t0) / 1_000_000L;
+                attempt.put("samplesRead", totalRead);
+                attempt.put("readElapsedMs", elapsedMs);
+
+                if (totalRead > 0) {
+                    double sumSq = 0.0;
+                    int peak = 0;
+                    int nonZero = 0;
+                    for (int s = 0; s < totalRead; s++) {
+                        int v = samples[s];
+                        if (v != 0) nonZero++;
+                        int abs = v < 0 ? -v : v;
+                        if (abs > peak) peak = abs;
+                        sumSq += (double) v * v;
+                    }
+                    double rms = Math.sqrt(sumSq / totalRead);
+                    double rmsDb = rms > 0 ? 20.0 * Math.log10(rms / 32768.0) : Double.NEGATIVE_INFINITY;
+                    attempt.put("nonZeroSamples", nonZero);
+                    attempt.put("peakAmplitude", peak);
+                    attempt.put("rms", rms);
+                    attempt.put("rmsDb", Double.isInfinite(rmsDb) ? "-inf"
+                        : String.format(java.util.Locale.US, "%.2f", rmsDb));
+
+                    // -70 dBFS is roughly the floor of usable speech capture.
+                    // Below that we're either policy-muted or in a silent room
+                    // with a working mic — without a known stimulus we can't
+                    // distinguish, so flag both as worth a follow-up listen.
+                    boolean usable = !Double.isInfinite(rmsDb) && rmsDb > -70.0;
+                    attempt.put("usable", usable);
+
+                    // Pick the strongest source. A usable source always beats
+                    // a non-usable one; among same-tier candidates the higher
+                    // RMS wins. This way the recommendation and the reported
+                    // bestRmsDb always describe the same source.
+                    boolean preferThis;
+                    if (usable && !anyWorked) {
+                        preferThis = true;
+                        anyWorked = true;
+                    } else if (usable == anyWorked
+                            && !Double.isInfinite(rmsDb) && rmsDb > bestRmsDb) {
+                        preferThis = true;
+                    } else {
+                        preferThis = false;
+                    }
+                    if (preferThis) {
+                        workingSourceName = sourceNames[i];
+                        bestRmsDb = rmsDb;
+                    }
+                }
+
+                rec.stop();
+                attempt.put("ok", true);
+            } catch (SecurityException e) {
+                attempt.put("error", "SecurityException: " + e.getMessage()
+                    + " — RECORD_AUDIO not granted to UID " + android.os.Process.myUid());
+            } catch (IllegalStateException e) {
+                attempt.put("error", "IllegalStateException: " + e.getMessage());
+            } catch (Throwable t) {
+                attempt.put("error", t.getClass().getSimpleName() + ": " + t.getMessage());
+            } finally {
+                if (rec != null) {
+                    try { rec.release(); } catch (Exception ignored) {}
+                }
+            }
+            attempts.put(attempt);
+        }
+
+        response.put("success", true);
+        response.put("uid", android.os.Process.myUid());
+        response.put("pid", android.os.Process.myPid());
+        response.put("anyUsableSource", anyWorked);
+        if (workingSourceName != null) {
+            response.put("recommendedSource", workingSourceName);
+            response.put("recommendedRmsDb",
+                Double.isInfinite(bestRmsDb) ? "-inf"
+                    : String.format(java.util.Locale.US, "%.2f", bestRmsDb));
+        }
+        response.put("attempts", attempts);
+        response.put("note", "rmsDb > -70 in a non-silent cabin = mic works. -inf or all-zero "
+            + "samples = policy-muted (need appops fix or capture in app process). "
+            + "ERROR_INVALID_OPERATION on read = mic claimed by BT/voice service.");
+
+        logger.info("Mic probe: anyUsable=" + anyWorked + " best=" + workingSourceName
+            + " bestRmsDb=" + (Double.isInfinite(bestRmsDb) ? "-inf"
+                : String.format(java.util.Locale.US, "%.2f", bestRmsDb)));
+
+        HttpResponse.sendJson(out, response.toString());
     }
 
     /**

@@ -598,21 +598,63 @@ public class H264ByteRingBuffer {
             // ctor's mark/pos/limit invariant check. The consumer thread
             // is the only writer of consumerPayloadView's position/limit,
             // so we can mutate them freely here without locking.
+            //
+            // CRITICAL: reset limit to capacity (budget) BEFORE setting
+            // position. The view persists across flushes — last call left
+            // it at limit=N (some byte offset from a prior packet). If the
+            // new `off` is greater than that stale limit, position(off)
+            // throws IllegalArgumentException ("Bad position off/limit"),
+            // which kills the drainer's flush loop mid-burst and silently
+            // drops every remaining pre-record packet. Always extend limit
+            // to capacity first, then narrow it down. Equivalent to a
+            // Buffer.clear() but spelled explicitly so future readers
+            // understand the load-bearing ordering.
             int dstStart = outDst.position();
             if (off + len <= budget) {
+                consumerPayloadView.limit(budget);
                 consumerPayloadView.position(off);
                 consumerPayloadView.limit(off + len);
                 outDst.put(consumerPayloadView);
             } else {
                 int firstChunk = budget - off;
-                consumerPayloadView.position(off);
                 consumerPayloadView.limit(budget);
+                consumerPayloadView.position(off);
                 outDst.put(consumerPayloadView);
 
                 consumerPayloadView.position(0);
                 consumerPayloadView.limit(len - firstChunk);
                 outDst.put(consumerPayloadView);
             }
+
+            // Post-copy revalidation. The seqlock above only proved the *header*
+            // fields (off, len, pts, flags) were stable at read time. Between
+            // the header read and the byte copy that just finished, a producer
+            // could have evicted past `off` (key-driven pin break) and
+            // overwritten those exact bytes with a newer packet's payload.
+            // Result: a flushed packet with a valid PTS and corrupt bitstream
+            // — muxer accepts it (it's just bytes), player chokes mid-pre-record
+            // with no error log. The fix: re-check the pin AND seq after the
+            // copy. If either changed, the bytes we just wrote are untrusted —
+            // rewind outDst and abort the cursor. The partial flush up to here
+            // is still valid (those bytes were validated when their packets
+            // were emitted; only THIS packet's bytes are suspect).
+            if (pinOffset.get() == Long.MIN_VALUE) {
+                outDst.position(dstStart);
+                aborted = true;
+                return false;
+            }
+            // Tighter check: verify the slot's header didn't change while we
+            // copied. If hOffset/hLength at idx still match what we read, the
+            // producer didn't reuse this slot — the bytes are good. (We can't
+            // re-read seq because the producer's add() advances seq for every
+            // packet whether or not it touched our slot.)
+            long sFinal = seq.get();
+            if ((sFinal & 1L) == 0 && (hOffset[idx] != off || hLength[idx] != len)) {
+                outDst.position(dstStart);
+                aborted = true;
+                return false;
+            }
+
             // Populate metadata. outInfo.offset is the pre-put dst position;
             // most consumers rewind to 0 anyway (MuxerPacket.rewindForWrite).
             outInfo.set(dstStart, len, pts, flags);

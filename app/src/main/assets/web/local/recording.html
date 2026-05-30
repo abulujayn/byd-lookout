@@ -337,6 +337,35 @@
                     </div>
                 </div>
 
+                <!-- Cabin Audio -->
+                <div class="card" data-tab="quality">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                                <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                                <line x1="12" y1="19" x2="12" y2="23"/>
+                                <line x1="8" y1="23" x2="16" y2="23"/>
+                            </svg>
+                            <span data-i18n="recording.audio_title">Cabin Audio</span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="setting-row" style="border-bottom:none;">
+                            <div class="setting-info">
+                                <div class="setting-name" data-i18n="recording.audio_label">Record Cabin Audio</div>
+                                <div class="setting-desc" data-i18n="recording.audio_desc">Captures the cabin microphone alongside video. Active only during ACC-on recording (Continuous, Drive, Proximity Guard); never during Surveillance.</div>
+                            </div>
+                            <div class="setting-control">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="audioRecordingEnabled" onchange="RecSettings.toggleAudioRecording()">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Storage -->
                 <div class="card" data-tab="storage">
                     <div class="card-header">

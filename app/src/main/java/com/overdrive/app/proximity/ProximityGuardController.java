@@ -51,6 +51,11 @@ public class ProximityGuardController implements ProximityRadarMonitor.TriggerCa
     private volatile State currentState = State.IDLE;
     private ScheduledFuture<?> postRecordTimer;
     private final ScheduledExecutorService scheduler;
+    // Tracks whether a RED tier was hit during the CURRENT recording session.
+    // Sticky for the duration of the recording so the post-record window
+    // honours the highest tier seen, not just the latest. Reset when we
+    // return to MONITORING.
+    private volatile boolean redEscalatedThisSession = false;
     
     public ProximityGuardController(Context context, GpuSurveillancePipeline pipeline) {
         this.context = context;
@@ -156,14 +161,22 @@ public class ProximityGuardController implements ProximityRadarMonitor.TriggerCa
     @Override
     public synchronized void onProximityTrigger(int area, int state, String level) {
         logger.info("onProximityTrigger: state=" + currentState + " area=" + area + " level=" + level);
-        
+
+        // Sticky escalation flag — once RED is seen during a recording, it
+        // stays RED for the remainder of that session so the post-record
+        // window uses the elevated value even if the radar drops back to
+        // YELLOW before going safe.
+        if ("RED".equals(level)) {
+            redEscalatedThisSession = true;
+        }
+
         switch (currentState) {
             case MONITORING:
-                // Start new recording
+                // Start new recording. (RED-tracking handled at method top.)
                 transitionTo(State.RECORDING);
                 recordingHandler.startRecording(level);
                 break;
-                
+
             case POST_RECORD:
                 // Smart continuation - cancel timer and extend recording
                 logger.info("Extending recording: radar triggered during post-record countdown");
@@ -172,13 +185,13 @@ public class ProximityGuardController implements ProximityRadarMonitor.TriggerCa
                 // Recording continues - same file, just reset the post-record timer when safe
                 recordingHandler.extendRecording(level);
                 break;
-                
+
             case RECORDING:
                 // Already recording - extend by resetting any pending timers
                 logger.debug("Already recording, extending duration");
                 recordingHandler.extendRecording(level);
                 break;
-                
+
             case IDLE:
                 logger.warn("Received trigger while IDLE - should not happen");
                 break;
@@ -230,6 +243,9 @@ public class ProximityGuardController implements ProximityRadarMonitor.TriggerCa
                 break;
             case MONITORING:
                 logger.info("Entered MONITORING state - waiting for radar triggers");
+                // Reset session-scoped escalation tracking so the next event
+                // starts from YELLOW unless the radar reports RED again.
+                redEscalatedThisSession = false;
                 break;
             case RECORDING:
                 logger.info("Entered RECORDING state");
@@ -244,14 +260,30 @@ public class ProximityGuardController implements ProximityRadarMonitor.TriggerCa
     
     private void startPostRecordTimer() {
         cancelPostRecordTimer();  // Cancel any existing timer
-        
+
+        // RED tier escalation extends the post-record window to the
+        // configured maximum (capped at MAX_POST_RECORD_SECONDS=30) so a
+        // RED-then-YELLOW-then-safe sequence captures more aftermath than
+        // a YELLOW-only event. Without this, the controller honours the
+        // dialled-in YELLOW value regardless of how serious the trigger
+        // got — the user explicitly asked us not to silently equalise
+        // RED and YELLOW outcomes.
         int postRecordSeconds = config.getPostRecordSeconds();
+        if (redEscalatedThisSession) {
+            int redSec = Math.max(postRecordSeconds,
+                    com.overdrive.app.proximity.ProximityGuardConfig.getMaxPostRecordSeconds());
+            logger.info("RED escalation seen this session — extending post-record window: "
+                    + postRecordSeconds + "s → " + redSec + "s");
+            postRecordSeconds = redSec;
+        }
         logger.info("Starting post-record timer: " + postRecordSeconds + " seconds");
-        
+
+        final int countdownSeconds = postRecordSeconds;
         postRecordTimer = scheduler.schedule(() -> {
             synchronized (this) {
                 if (currentState == State.POST_RECORD) {
-                    logger.info("Post-record timer expired - stopping recording");
+                    logger.info("Post-record timer expired (after " + countdownSeconds
+                            + "s) - stopping recording");
                     recordingHandler.stopRecording();
                     transitionTo(State.MONITORING);
                 }

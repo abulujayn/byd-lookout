@@ -9,7 +9,14 @@ import java.util.Map;
  * BYD overseas country-to-node mapping.
  *
  * Based on hass-byd-vehicle custom_components/byd_vehicle/const.py
- * commit 01dc6b18462cb3bb943cfa0563a7d92f05ae271b.
+ * commit 01dc6b18462cb3bb943cfa0563a7d92f05ae271b (MIT).
+ *
+ * Region keys are BYD's own and do not always match the country code of the
+ * default country. The "no" region is the most surprising: it is the Middle
+ * East / Africa node (host: dilinkappoversea-no.byd.auto), NOT Norway —
+ * Norway maps to the "eu" region. The "kr" region is hosted at
+ * dilinkappoversea-kr.byd.auto; the legacy "kr-ali" key (Aliyun-hosted) is
+ * normalized to "kr" by {@link #normalizeRegion(String)}.
  */
 public final class BydCloudRegionCatalog {
     public static final String DEFAULT_REGION = "eu";

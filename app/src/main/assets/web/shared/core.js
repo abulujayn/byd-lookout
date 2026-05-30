@@ -967,19 +967,33 @@ BYD.core = {
     },
 
     /**
-     * Fetch and display personalized range estimate from trip analytics
+     * Fetch and display personalized range estimates from trip analytics.
+     *
+     * Three rows are toggled in the sidebar:
+     *   • EV-card Personalized      — electric km (BEV + PHEV)
+     *   • EV-card Combined          — electric + petrol total (PHEV with petrol bucket)
+     *   • Fuel-card Personalized    — petrol km (PHEV with petrol bucket)
+     *
+     * Session-cached for ~60 s so the sidebar isn't refetching on every
+     * status tick, but expires so a user who just set tankCapacityL sees
+     * the petrol leg appear on the next status refresh rather than after
+     * a full page reload.
      */
     async updatePersonalizedRange() {
         const pRow = document.getElementById('evPersonalizedRow');
         const pVal = document.getElementById('evPersonalizedRange');
+        const cRow = document.getElementById('evCombinedRow');
+        const cVal = document.getElementById('evCombinedRange');
+        const fRow = document.getElementById('fuelPersonalizedRow');
+        const fVal = document.getElementById('fuelPersonalizedRange');
         if (!pRow || !pVal) return;
 
-        // Only fetch once per session, cache the result
-        if (this._personalizedRangeFetched) {
-            if (this._personalizedRangeKm > 0) {
-                pRow.style.display = 'flex';
-                pVal.textContent = BYD.units.dist(this._personalizedRangeKm);
-            }
+        var now = Date.now();
+        var TTL_MS = 60000;
+        if (this._personalizedRangeFetched
+                && this._personalizedRangeFetchedAt
+                && (now - this._personalizedRangeFetchedAt) < TTL_MS) {
+            this._renderPersonalizedRange();
             return;
         }
 
@@ -987,16 +1001,64 @@ BYD.core = {
             const resp = await fetch('/api/trips/range');
             const data = await resp.json();
             this._personalizedRangeFetched = true;
+            this._personalizedRangeFetchedAt = now;
+            this._personalizedRangeKm = 0;
+            this._personalizedFuelKm = 0;
+            this._personalizedTotalKm = 0;
             if (data.success && data.range) {
                 const predicted = Math.round(data.range.predictedRangeKm || data.range.predicted_range_km || 0);
-                if (predicted > 0) {
-                    this._personalizedRangeKm = predicted;
-                    pRow.style.display = 'flex';
-                    pVal.textContent = BYD.units.dist(predicted);
-                }
+                if (predicted > 0) this._personalizedRangeKm = predicted;
             }
+            if (data.success && data.fuelRange) {
+                const petrol = Math.round(data.fuelRange.predictedRangeKm || data.fuelRange.predicted_range_km || 0);
+                if (petrol > 0) this._personalizedFuelKm = petrol;
+            }
+            if (data.success && data.totalRangeKm > 0) {
+                this._personalizedTotalKm = Math.round(data.totalRangeKm);
+            }
+            this._renderPersonalizedRange();
         } catch (e) {
             this._personalizedRangeFetched = true;
+            this._personalizedRangeFetchedAt = now;
+        }
+    },
+
+    /** Apply cached personalized range values to the sidebar DOM. */
+    _renderPersonalizedRange() {
+        const pRow = document.getElementById('evPersonalizedRow');
+        const pVal = document.getElementById('evPersonalizedRange');
+        const cRow = document.getElementById('evCombinedRow');
+        const cVal = document.getElementById('evCombinedRange');
+        const fRow = document.getElementById('fuelPersonalizedRow');
+        const fVal = document.getElementById('fuelPersonalizedRange');
+
+        if (pRow && pVal) {
+            if (this._personalizedRangeKm > 0) {
+                pRow.style.display = 'flex';
+                pVal.textContent = BYD.units.dist(this._personalizedRangeKm);
+            } else {
+                pRow.style.display = 'none';
+            }
+        }
+        if (fRow && fVal) {
+            if (this._personalizedFuelKm > 0) {
+                fRow.style.display = 'flex';
+                fVal.textContent = BYD.units.dist(this._personalizedFuelKm);
+            } else {
+                fRow.style.display = 'none';
+            }
+        }
+        if (cRow && cVal) {
+            // Combined only when BOTH legs are present — otherwise the
+            // single-leg Personalized row already tells the full story.
+            if (this._personalizedTotalKm > 0
+                    && this._personalizedRangeKm > 0
+                    && this._personalizedFuelKm > 0) {
+                cRow.style.display = 'flex';
+                cVal.textContent = BYD.units.dist(this._personalizedTotalKm);
+            } else {
+                cRow.style.display = 'none';
+            }
         }
     },
 

@@ -88,6 +88,22 @@
           inline mode in the Recordings two-pane). Icon flips between
           ic_fullscreen and ic_fullscreen_exit to mirror current state.
         -->
+        <!--
+          Audio mute toggle. Visible whenever the player is loaded; the icon
+          mirrors the current MediaPlayer mute state (set inside
+          setupVideoPlayer's setOnPreparedListener).
+        -->
+        <ImageButton
+            android:id="@+id/btnMute"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:layout_marginStart="8dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/cd_player_mute"
+            android:scaleType="centerInside"
+            android:src="@drawable/ic_volume_off"
+            android:tint="#FFFFFF" />
+
         <ImageButton
             android:id="@+id/btnFullscreen"
             android:layout_width="40dp"

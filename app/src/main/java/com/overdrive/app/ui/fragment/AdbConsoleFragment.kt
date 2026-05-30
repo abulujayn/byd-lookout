@@ -43,9 +43,9 @@ class AdbConsoleFragment : Fragment() {
     
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        
+
         adbLauncher = AdbDaemonLauncher(requireContext())
-        
+
         initViews(view)
         setupPresetCommands()
         setupClickListeners()
@@ -145,7 +145,14 @@ class AdbConsoleFragment : Fragment() {
     
     override fun onDestroyView() {
         super.onDestroyView()
-        adbLauncher?.closePersistentConnection()
+        // Use releasePerInstanceResources — NOT closePersistentConnection.
+        // closePersistentConnection nulls the process-wide shared Dadb in
+        // AdbShellExecutor's companion, which would surface as spurious
+        // onError on every other AdbDaemonLauncher's in-flight tasks
+        // (DaemonStartupManager.adbLauncher's 30s health check, the
+        // DaemonsViewModel.adbLauncher controllers, etc.). We only need to
+        // release THIS fragment's executor + tunnel-poll scheduler.
+        adbLauncher?.releasePerInstanceResources()
         adbLauncher = null
     }
 }

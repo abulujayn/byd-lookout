@@ -26,6 +26,16 @@ const TRIPS = {
     // 0 means the daemon hasn't surfaced one yet; falls through to the
     // legacy 82.56 default per estimateNominalKwh() below.
     nominalKwh: 0,
+    // PHEV / fuel state. tankCapacityL is always stored in litres internally;
+    // the gallon UI mode converts on read/write. fuelPricePerL is in the
+    // currently-selected currency, also always per-litre. isPhev is the
+    // server-side drivetrain probe — gates fuel rows + per-trip breakdown.
+    tankCapacityL: 0,
+    fuelPricePerL: 0,
+    fuelUnit: 'L',
+    isPhev: false,
+    // 1 US gallon — used to convert UI-side gallon entry to/from litres.
+    LITRES_PER_GAL: 3.785411784,
 
     // Canvas paint palette. text / grid / textStrong / dotStroke /
     // arcTrack flip with [data-theme="light"] via _refreshPalette() —
@@ -185,6 +195,15 @@ const TRIPS = {
                 const currSelect = document.getElementById('currencySelect');
                 if (rateInput && this.electricityRate > 0) rateInput.value = this.electricityRate;
                 if (currSelect) currSelect.value = this.currency;
+                // PHEV — server probe drives row visibility. Tank input is
+                // shown in user's chosen unit; we convert L↔gal at the I/O
+                // boundary so internal storage stays in litres.
+                this.isPhev = !!data.config.isPhev;
+                this.tankCapacityL = data.config.tankCapacityL || 0;
+                this.fuelPricePerL = data.config.fuelPricePerL || 0;
+                this.fuelUnit = data.config.fuelUnit === 'gal' ? 'gal' : 'L';
+                this.applyPhevVisibility();
+                this.applyFuelInputs();
                 // Load distance unit preference, refresh button + all labels
                 var distUnit = data.config.distanceUnit || 'km';
                 BYD.units.mode = distUnit;
@@ -216,20 +235,91 @@ const TRIPS = {
     async saveCostConfig() {
         const rateInput = document.getElementById('rateInput');
         const currSelect = document.getElementById('currencySelect');
+        const tankInput = document.getElementById('tankCapacityInput');
+        const fuelPriceInput = document.getElementById('fuelPriceInput');
         const rate = rateInput ? parseFloat(rateInput.value) || 0 : 0;
         const currency = currSelect ? currSelect.value : '$';
         this.electricityRate = rate;
         this.currency = currency;
+
+        // Tank entry is in user's chosen unit; persist as litres so the
+        // backend math stays SI. Gallon entry × 3.78541 = litres.
+        const tankRaw = tankInput ? parseFloat(tankInput.value) || 0 : 0;
+        const fuelPriceRaw = fuelPriceInput ? parseFloat(fuelPriceInput.value) || 0 : 0;
+        const tankCapacityL = this.fuelUnit === 'gal' ? tankRaw * this.LITRES_PER_GAL : tankRaw;
+        const fuelPricePerL = this.fuelUnit === 'gal' ? fuelPriceRaw / this.LITRES_PER_GAL : fuelPriceRaw;
+        this.tankCapacityL = tankCapacityL;
+        this.fuelPricePerL = fuelPricePerL;
+
+        const body = {
+            electricityRate: rate,
+            currency: currency,
+            tankCapacityL: tankCapacityL,
+            fuelPricePerL: fuelPricePerL,
+            fuelUnit: this.fuelUnit
+        };
         try {
             await fetch('/api/trips/config', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ electricityRate: rate, currency: currency })
+                body: JSON.stringify(body)
             });
             this.updateCurrencyIcons();
             this.updatePeriodSummary();
             this.updateCostHero();
+            // Reload the visible trips so detail breakdowns reflect new
+            // tank/price values via the server's enrichTripEnergy path.
+            if (this.currentTrips && this.currentTrips.length > 0) {
+                this.renderTripCards(this.currentTrips);
+            }
         } catch (e) { console.warn('[Trips] Save cost config failed:', e); }
+    },
+
+    /** Toggle visibility of PHEV-only setting rows. Idempotent. */
+    applyPhevVisibility() {
+        const ids = ['phevTankRow', 'phevFuelPriceRow'];
+        ids.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = this.isPhev ? '' : 'none';
+        });
+    },
+
+    /** Populate tank/fuel inputs in the user's chosen unit. */
+    applyFuelInputs() {
+        const tankInput = document.getElementById('tankCapacityInput');
+        const fuelPriceInput = document.getElementById('fuelPriceInput');
+        const fuelUnitL = document.getElementById('fuelUnitL');
+        const fuelUnitGal = document.getElementById('fuelUnitGal');
+        const priceUnitLbl = document.getElementById('fuelPriceUnitLabel');
+        if (tankInput && this.tankCapacityL > 0) {
+            tankInput.value = this.fuelUnit === 'gal'
+                ? (this.tankCapacityL / this.LITRES_PER_GAL).toFixed(1)
+                : this.tankCapacityL.toFixed(1);
+        }
+        if (fuelPriceInput && this.fuelPricePerL > 0) {
+            fuelPriceInput.value = this.fuelUnit === 'gal'
+                ? (this.fuelPricePerL * this.LITRES_PER_GAL).toFixed(2)
+                : this.fuelPricePerL.toFixed(2);
+        }
+        if (fuelUnitL && fuelUnitGal) {
+            if (this.fuelUnit === 'gal') {
+                fuelUnitL.classList.remove('active');
+                fuelUnitGal.classList.add('active');
+            } else {
+                fuelUnitL.classList.add('active');
+                fuelUnitGal.classList.remove('active');
+            }
+        }
+        if (priceUnitLbl) priceUnitLbl.textContent = this.fuelUnit === 'gal' ? '/gal' : '/L';
+    },
+
+    /** Switch tank/price unit between L and gal — preserves stored litres. */
+    setFuelUnit(unit) {
+        const next = unit === 'gal' ? 'gal' : 'L';
+        if (next === this.fuelUnit) return;
+        this.fuelUnit = next;
+        this.applyFuelInputs();
+        this.showApplyNeeded();
     },
 
     async setDistanceUnit(unit) {
@@ -651,25 +741,14 @@ const TRIPS = {
             const data = await resp.json();
             if (!data.success) return;
 
-            // SD card space — show the status section
-            const sdStatus = document.getElementById('tripSdCardStatus');
-            const sdDot = document.getElementById('tripSdStatusDot');
-            const sdText = document.getElementById('tripSdStatusText');
-            const sdSpaceInfo = document.getElementById('tripSdSpaceInfo');
-
-            if (sdStatus) sdStatus.style.display = 'block';
-            if (data.sdCardAvailable) {
-                if (sdDot) { sdDot.classList.add('online'); sdDot.classList.remove('offline'); }
-                if (sdText) sdText.textContent = BYD.i18n.t('trip.sd_card_available');
-                if (sdSpaceInfo && data.sdCardFree !== undefined) {
-                    sdSpaceInfo.style.display = 'block';
-                    this.setEl('tripSdFree', data.sdCardFreeFormatted || ((data.sdCardFree / (1024 * 1024 * 1024)).toFixed(1) + ' GB') + ' free');
-                    this.setEl('tripSdTotal', data.sdCardTotalFormatted || ((data.sdCardTotal / (1024 * 1024 * 1024)).toFixed(1) + ' GB') + ' total');
-                }
-            } else {
-                if (sdDot) { sdDot.classList.add('offline'); sdDot.classList.remove('online'); }
-                if (sdText) sdText.textContent = BYD.i18n.t('trip.sd_card_not_detected');
-            }
+            // SD status row (tripSdCardStatus/tripSdStatusDot/tripSdStatusText/
+            // tripSdSpaceInfo) is owned by loadStorageSettings() and reads from
+            // /api/trips/storage → StorageManager.isSdCardAvailable(). Don't
+            // paint it here: ExternalStorageCleaner keeps its own cached
+            // sdCardAvailable flag and on some firmwares diverges from
+            // StorageManager (the cleaner won't refresh once cached true,
+            // even after StorageManager remounts the volume), which would
+            // flip the row to "SD Card: Not detected" right after Apply.
 
             // CDR info
             this.setEl('tripCdrPath', data.cdrPath || '--');
@@ -1112,6 +1191,20 @@ const TRIPS = {
         const gradIcons = { FLAT: '🛣️', HILLY: '⛰️', MOUNTAIN_CLIMB: '🏔️', MOUNTAIN_DESCENT: '⬇️' };
         const elevStr = elevGain > 0 ? (gradIcons[gradProfile] || '') + ' +' + Math.round(elevGain) + 'm' : '';
 
+        // PHEV fuel% capsule — mirrors the SoC capsule, only when both
+        // fuel readings are present (>= 0). Identical icon shape (battery /
+        // tank) so the row stays visually balanced. BEV trips have
+        // fuelPctStart/End at -1 and skip this entirely.
+        const fuelStart = (trip.fuelPctStart != null) ? trip.fuelPctStart
+            : (trip.fuel_pct_start != null) ? trip.fuel_pct_start : -1;
+        const fuelEnd = (trip.fuelPctEnd != null) ? trip.fuelPctEnd
+            : (trip.fuel_pct_end != null) ? trip.fuel_pct_end : -1;
+        let fuelStr = '';
+        if (fuelStart >= 0 && fuelEnd >= 0) {
+            fuelStr = '<span class="trip-capsule" style="color:var(--warning);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 22h13M5 22V8a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v14"/><path d="M15 6V4a1 1 0 0 1 1-1h0a1 1 0 0 1 1 1v10a2 2 0 0 0 2 2h0a2 2 0 0 0 2-2V8.5"/></svg> ⛽ '
+                + fuelStart.toFixed(0) + '→' + fuelEnd.toFixed(0) + '%</span>';
+        }
+
         card.innerHTML =
             '<div class="trip-card-top">' +
                 '<span class="trip-time" style="font-size: 18px;">' + timeStr + '</span>' +
@@ -1122,6 +1215,7 @@ const TRIPS = {
                 '<span class="trip-capsule"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ' + dur + '</span>' +
                 '<span class="trip-capsule"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg> ' + (energyUsed > 0 ? energyUsed.toFixed(1) + ' kWh' : eff + BYD.units.socPerDistLabel()) + '</span>' +
                 '<span class="trip-capsule"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="7" width="12" height="10" rx="1"/><path d="M18 10h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-2"/></svg> ' + socStart + '→' + socEnd + '%</span>' +
+                fuelStr +
                 (elevStr ? '<span class="trip-capsule" style="color:#0EA5E9;">' + elevStr + '</span>' : '') +
                 (costStr ? '<span class="trip-capsule" style="color:var(--warning);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg> ' + costStr + '</span>' : '') +
             '</div>' +
@@ -1177,6 +1271,12 @@ const TRIPS = {
         let totalDist = 0, totalDur = 0, totalEnergy = 0, totalCost = 0;
         let scoreSum = 0;
         let totalSocDelta = 0;
+        // PHEV aggregates: total petrol burned across the window in litres,
+        // and a flag tracking whether any trip in scope was PHEV (gates the
+        // tile visibility — BEV-only windows hide it entirely).
+        let totalLitres = 0;
+        let totalFuelCost = 0;
+        let anyPhev = false;
         trips.forEach(t => {
             totalDist += t.distanceKm || t.distance_km || 0;
             totalDur += t.durationSeconds || t.duration_seconds || 0;
@@ -1196,6 +1296,12 @@ const TRIPS = {
             const socStart = t.socStart || t.soc_start || 0;
             const socEnd = t.socEnd || t.soc_end || 0;
             if (socStart > socEnd) totalSocDelta += (socStart - socEnd);
+            // Per-trip PHEV roll-up. Trip records persist their own
+            // litresUsed/fuelCost snapshots (computed at trip end), so
+            // aggregation is a pure sum — no live config dependency.
+            if (t.isPhev || t.is_phev) anyPhev = true;
+            totalLitres += t.litresUsed || t.litres_used || 0;
+            totalFuelCost += t.fuelCost || t.fuel_cost || 0;
         });
 
         this.setEl('summaryTrips', trips.length);
@@ -1227,6 +1333,25 @@ const TRIPS = {
             this.setEl('summaryCost', (this.currency || '$') + computed.toFixed(1));
         } else {
             this.setEl('summaryCost', '--');
+        }
+
+        // Petrol roll-up — visible only when at least one PHEV trip is in
+        // scope. Shows aggregate litres (or gallons in user's chosen unit)
+        // with a sub-line of total petrol cost when known.
+        var fuelTile = document.getElementById('summaryFuelTile');
+        if (fuelTile) {
+            if (anyPhev && totalLitres > 0) {
+                var label;
+                if (this.fuelUnit === 'gal') {
+                    label = (totalLitres / this.LITRES_PER_GAL).toFixed(1) + ' gal';
+                } else {
+                    label = totalLitres.toFixed(1) + ' L';
+                }
+                this.setEl('summaryFuel', label);
+                fuelTile.style.display = '';
+            } else {
+                fuelTile.style.display = 'none';
+            }
         }
     },
 
@@ -1495,10 +1620,59 @@ const TRIPS = {
                 const capsule = document.getElementById('rangeDeltaCapsule');
                 if (capsule) capsule.style.display = 'none';
             }
+
+            // PHEV petrol leg — backend returns data.fuelRange when the
+            // vehicle is PHEV-classified, fuel% is readable, and the user
+            // has set tankCapacityL. Renders a sub-line under the hero
+            // circle. BEV / unconfigured PHEV → tile hidden.
+            this.renderPetrolRange(data.fuelRange || null, data.totalRangeKm);
         } catch (e) {
             console.warn('[Trips] Range load failed:', e);
             this.renderCircleGauge('rangeCircleCanvas', 0, 'rgba(14,165,233,0.2)');
+            this.renderPetrolRange(null);
         }
+    },
+
+    /**
+     * Render the petrol-range sub-line under the range hero circle. Lazy-
+     * mounts a div on first PHEV trip and toggles via display:none for
+     * subsequent BEV / no-data refreshes — same pattern as renderCostBreakdown.
+     */
+    renderPetrolRange(fuelRange, totalRangeKm) {
+        var existing = document.getElementById('petrolRangeSubline');
+        if (!fuelRange) {
+            if (existing) existing.style.display = 'none';
+            return;
+        }
+
+        var capsule = document.getElementById('rangeDeltaCapsule');
+        if (!capsule) return;
+
+        var container = existing;
+        if (!container) {
+            container = document.createElement('div');
+            container.id = 'petrolRangeSubline';
+            container.className = 'range-petrol-subline';
+            container.style.cssText = 'margin-top:6px;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;';
+            capsule.parentNode.insertBefore(container, capsule.nextSibling);
+        }
+
+        var petrolKm = fuelRange.predictedRangeKm || fuelRange.predicted_range_km || 0;
+        var petrolDisplay = BYD.units.distVal(petrolKm);
+        var distLbl = BYD.units.distLabel();
+        var totalDisplay = (totalRangeKm != null && totalRangeKm > 0)
+            ? BYD.units.distVal(totalRangeKm) : null;
+
+        var html = '<span style="color:var(--warning);">⛽ '
+            + BYD.i18n.t('trip.range_petrol_label', { km: petrolDisplay, unit: distLbl })
+            + '</span>';
+        if (totalDisplay != null) {
+            html += '<span style="color:var(--text-muted);">'
+                + BYD.i18n.t('trip.range_total_label', { km: totalDisplay, unit: distLbl })
+                + '</span>';
+        }
+        container.innerHTML = html;
+        container.style.display = '';
     },
 
     // ==================== TRIP DETAIL ====================
@@ -1546,6 +1720,38 @@ const TRIPS = {
             this.setEl('detailAvgSpeed', Math.round(BYD.units.speedVal(trip.avgSpeedKmh || trip.avg_speed_kmh || 0)));
             this.setEl('detailMaxSpeed', Math.round(BYD.units.speedVal(trip.maxSpeedKmh || trip.max_speed_kmh || 0)));
             this.setEl('detailSocStart', (trip.socStart || trip.soc_start || 0).toFixed(1) + '%');
+
+            // PHEV fuel tiles — only show when both start and end readings
+            // are present. Mirrors how Start SoC tile is unconditional but
+            // these are gated on data availability (BEV trips fall through).
+            const detailFuelStart = (trip.fuelPctStart != null) ? trip.fuelPctStart
+                : (trip.fuel_pct_start != null) ? trip.fuel_pct_start : -1;
+            const detailFuelEnd = (trip.fuelPctEnd != null) ? trip.fuelPctEnd
+                : (trip.fuel_pct_end != null) ? trip.fuel_pct_end : -1;
+            const detailLitres = trip.litresUsed || trip.litres_used || 0;
+            const fuelStartTile = document.getElementById('detailFuelStartTile');
+            const fuelEndTile = document.getElementById('detailFuelEndTile');
+            const litresTile = document.getElementById('detailLitresUsedTile');
+            if (detailFuelStart >= 0 && detailFuelEnd >= 0) {
+                this.setEl('detailFuelStart', detailFuelStart.toFixed(0) + '%');
+                this.setEl('detailFuelEnd', detailFuelEnd.toFixed(0) + '%');
+                if (fuelStartTile) fuelStartTile.style.display = '';
+                if (fuelEndTile) fuelEndTile.style.display = '';
+                if (detailLitres > 0) {
+                    var litresLabel = this.fuelUnit === 'gal'
+                        ? (detailLitres / this.LITRES_PER_GAL).toFixed(2) + ' gal'
+                        : detailLitres.toFixed(2) + ' L';
+                    this.setEl('detailLitresUsed', litresLabel);
+                    if (litresTile) litresTile.style.display = '';
+                } else if (litresTile) {
+                    litresTile.style.display = 'none';
+                }
+            } else {
+                if (fuelStartTile) fuelStartTile.style.display = 'none';
+                if (fuelEndTile) fuelEndTile.style.display = 'none';
+                if (litresTile) litresTile.style.display = 'none';
+            }
+
             this.setEl('detailTemp', (trip.extTempC || trip.ext_temp_c || '--') + (trip.extTempC || trip.ext_temp_c ? '°C' : ''));
             // Elevation data
             const elevGain = trip.elevationGainM || trip.elevation_gain_m || 0;
@@ -1563,10 +1769,12 @@ const TRIPS = {
             } else if (gradEl) {
                 gradEl.style.display = 'none';
             }
-            // Trip cost
+            // Trip cost — total stays in the existing detail tile, with a
+            // separate breakdown card for PHEV trips that ran ICE.
             const detailCost = trip.tripCost || trip.trip_cost || 0;
             const detailCurrency = trip.currency || this.currency || '$';
             this.setEl('detailCost', detailCost > 0 ? detailCurrency + detailCost.toFixed(1) : '--');
+            this.renderCostBreakdown(trip, detailCurrency);
 
             this.renderScoreBar('scoreAnticipation', 'scoreAnticipationVal', trip.anticipationScore || trip.anticipation_score || 0);
             this.renderScoreBar('scoreSmoothness', 'scoreSmoothnessVal', trip.smoothnessScore || trip.smoothness_score || 0);
@@ -2065,6 +2273,113 @@ const TRIPS = {
             else if (score < 70) fill.classList.add('mid');
         }
         if (val) val.textContent = score;
+    },
+
+    /**
+     * Cost breakdown card. Visible only for PHEV trips with at least one
+     * non-zero leg. Container is created lazily and inserted right after
+     * #detailCost's grid row so it adopts the existing detail-card look.
+     * BEV trips (or PHEV trips that stayed full-EV) hide the container —
+     * no regression vs. the pre-PHEV detail layout.
+     */
+    renderCostBreakdown(trip, currency) {
+        var isPhev = !!(trip.isPhev || trip.is_phev);
+        var fuelCost = trip.fuelCost || trip.fuel_cost || 0;
+        var electricCost = trip.electricCost || trip.electric_cost || 0;
+
+        // Bail early on BEV / pure-EV-mode PHEV before touching the DOM,
+        // so we never mount an empty phantom card on non-PHEV detail views.
+        if (!isPhev || (fuelCost <= 0 && electricCost <= 0)) {
+            var existing = document.getElementById('costBreakdown');
+            if (existing) existing.style.display = 'none';
+            return;
+        }
+
+        var container = document.getElementById('costBreakdown');
+        if (!container) {
+            // Anchor explicitly to #detailSummary so a future class-rename of
+            // .detail-summary-grid doesn't silently shift the placement.
+            var anchor = document.getElementById('detailCost');
+            if (!anchor) return;
+            var summaryHost = document.getElementById('detailSummary')
+                || (anchor.closest ? anchor.closest('.detail-summary-grid') : null)
+                || anchor.parentNode;
+            var card = document.createElement('div');
+            card.id = 'costBreakdown';
+            card.className = 'detail-card cost-breakdown';
+            card.style.cssText = 'margin-top:12px;padding:12px 14px;background:var(--bg-elevated);border:1px solid var(--border-subtle);border-radius:var(--radius-sm);display:none;';
+            // Insert at the end of #detailSummary so the card sits below the
+            // grid and the gradient pill, matching existing detail-card flow.
+            summaryHost.appendChild(card);
+            container = card;
+        }
+
+        var litres = trip.litresUsed || trip.litres_used || 0;
+        var fuelPrice = trip.fuelPricePerL || trip.fuel_price_per_l || 0;
+        var energyKwh = trip.energyUsedKwh || trip.energy_used_kwh || 0;
+        var rate = trip.electricityRate || trip.electricity_rate || 0;
+        var iceSec = trip.iceSeconds || trip.ice_seconds || 0;
+        var dur = trip.durationSeconds || trip.duration_seconds || 0;
+        var distKm = trip.distanceKm || trip.distance_km || 0;
+        var totalCost = trip.tripCost || trip.trip_cost || 0;
+
+        // Escape the currency symbol — every other interpolated value is a
+        // numeric .toFixed string that can't contain HTML metacharacters.
+        var esc = (function () {
+            var d = document.createElement('div');
+            return function (s) { d.textContent = s == null ? '' : String(s); return d.innerHTML; };
+        })();
+        var curEsc = esc(currency);
+
+        var rows = [];
+        var title = '<div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.6px;margin-bottom:8px;">'
+            + esc(BYD.i18n.t('trip.cost_breakdown_title')) + '</div>';
+
+        if (electricCost > 0) {
+            rows.push('<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text-secondary);margin-bottom:4px;">'
+                + '<span>⚡ ' + esc(BYD.i18n.t('trip.cost_electric_line', {
+                    kwh: energyKwh.toFixed(1),
+                    rate: currency + rate.toFixed(2)
+                  })) + '</span>'
+                + '<span style="color:var(--text-primary);">' + curEsc + electricCost.toFixed(2) + '</span>'
+                + '</div>');
+        }
+        if (fuelCost > 0) {
+            rows.push('<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text-secondary);margin-bottom:4px;">'
+                + '<span>⛽ ' + esc(BYD.i18n.t('trip.cost_petrol_line', {
+                    litres: litres.toFixed(2),
+                    rate: currency + fuelPrice.toFixed(2)
+                  })) + '</span>'
+                + '<span style="color:var(--text-primary);">' + curEsc + fuelCost.toFixed(2) + '</span>'
+                + '</div>');
+        } else if (isPhev && this.tankCapacityL <= 0) {
+            // PHEV without tank size set — surface a one-line nudge so
+            // users know why the petrol leg is absent.
+            rows.push('<div style="font-size:11px;color:var(--text-muted);margin-top:4px;">'
+                + esc(BYD.i18n.t('trip.cost_set_tank_hint')) + '</div>');
+        }
+        rows.push('<div style="display:flex;justify-content:space-between;font-size:13px;color:var(--text-primary);font-weight:600;border-top:1px solid var(--border-subtle);padding-top:6px;margin-top:6px;">'
+            + '<span>' + esc(BYD.i18n.t('trip.cost_total_line')) + '</span>'
+            + '<span>' + curEsc + totalCost.toFixed(2) + '</span>'
+            + '</div>');
+
+        // l/100km capsule + HEV mode share — these are useful diagnostics
+        // for a PHEV trip and only render when meaningful.
+        var foot = [];
+        if (litres > 0 && distKm > 0.1) {
+            var lp100 = (litres * 100) / distKm;
+            foot.push(BYD.i18n.t('trip.consumption_l_per_100km', { value: lp100.toFixed(1) }));
+        }
+        if (iceSec > 0 && dur > 0) {
+            var pct = Math.round((iceSec / dur) * 100);
+            if (pct > 0) foot.push(BYD.i18n.t('trip.ice_share_label', { pct: pct }));
+        }
+        var footHtml = foot.length > 0
+            ? '<div style="font-size:11px;color:var(--text-muted);margin-top:8px;">' + foot.join(' · ') + '</div>'
+            : '';
+
+        container.innerHTML = title + rows.join('') + footHtml;
+        container.style.display = '';
     },
 
     renderMicroMoments(json) {

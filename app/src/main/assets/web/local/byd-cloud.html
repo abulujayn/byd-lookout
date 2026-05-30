@@ -101,9 +101,9 @@
                             <div class="md-field-box">
                                 <select class="md-input" id="bydCountryCode" onchange="BydCloud.onCountryChange(this.value)">
                                 </select>
-                                <label class="md-label" for="bydCountryCode">Country</label>
+                                <label class="md-label" for="bydCountryCode" data-i18n="byd_cloud.country">Country</label>
                             </div>
-                            <span class="md-supporting">Use the country your BYD app account was registered under.</span>
+                            <span class="md-supporting" data-i18n="byd_cloud.country_supporting">Use the country your BYD app account was registered under.</span>
                         </div>
 
                         <!-- Derived server region. Kept visible so users can
@@ -120,18 +120,22 @@
                                     <option value="jp" data-i18n="surveillance.byd_region_jp">🇯🇵 Japan</option>
                                     <option value="kr" data-i18n="surveillance.byd_region_kr">🇰🇷 Korea</option>
                                     <option value="sa" data-i18n="surveillance.byd_region_sa">🇸🇦 Saudi Arabia</option>
-                                    <option value="om">🇴🇲 Oman</option>
-                                    <option value="kz">🇰🇿 Kazakhstan</option>
+                                    <option value="om" data-i18n="surveillance.byd_region_om">🇴🇲 Oman</option>
+                                    <option value="kz" data-i18n="surveillance.byd_region_kz">🇰🇿 Kazakhstan</option>
                                     <option value="tr" data-i18n="surveillance.byd_region_tr">🇹🇷 Turkey</option>
                                     <option value="mx" data-i18n="surveillance.byd_region_mx">🇲🇽 Mexico</option>
                                     <option value="id" data-i18n="surveillance.byd_region_id">🇮🇩 Indonesia</option>
                                     <option value="vn" data-i18n="surveillance.byd_region_vn">🇻🇳 Vietnam</option>
-                                    <option value="no">🇦🇪 Middle East / Africa</option>
+                                    <!-- BYD's server uses the "no" key for MENA (legacy from when
+                                         the region originally launched in North-Africa-Oman). The
+                                         hostname is dilinkappoversea-no.byd.auto. Don't read "no"
+                                         as Norway here — Norway maps to the "eu" node. -->
+                                    <option value="no" data-i18n="surveillance.byd_region_mena">🇦🇪 Middle East / Africa</option>
                                     <option value="uz" data-i18n="surveillance.byd_region_uz">🇺🇿 Uzbekistan</option>
                                 </select>
                                 <label class="md-label" for="bydRegion" data-i18n="surveillance.byd_region">Server Region</label>
                             </div>
-                            <span class="md-supporting" id="bydRegionDerived">Selected automatically from country code.</span>
+                            <span class="md-supporting" id="bydRegionDerived" data-i18n="byd_cloud.region_derived_default">Selected automatically from country code.</span>
                         </div>
 
                         <!-- Email -->

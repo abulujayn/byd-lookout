@@ -62,6 +62,7 @@ BYD.recording = {
         await this.loadStorageSettings();
         await this.loadStorageStats();
         await this.loadTelemetryOverlay();
+        await this.loadAudioRecording();
         this.savedConfig = JSON.parse(JSON.stringify(this.config));
         this.updateUI();
         
@@ -166,6 +167,7 @@ BYD.recording = {
         
         // Reload telemetry overlay state
         await this.loadTelemetryOverlay();
+        await this.loadAudioRecording();
         
         // Update UI with all reloaded settings
         this.savedConfig = JSON.parse(JSON.stringify(this.config));
@@ -1136,6 +1138,52 @@ BYD.recording = {
         } catch (e) {
             toggle.checked = !enabled;
             if (BYD.utils && BYD.utils.toast) BYD.utils.toast(BYD.i18n.t('recording.overlay_update_failed'), 'error');
+        }
+    },
+
+    // ==================== Audio Recording ====================
+    //
+    // Toggles cabin-mic capture in the app process. Capture only fires
+    // while the daemon is in an ACC-on recording mode; surveillance
+    // recordings are never audio-muxed regardless of this toggle.
+
+    async loadAudioRecording() {
+        try {
+            const resp = await fetch('/api/settings/audio-recording');
+            const data = await resp.json();
+            if (data.success) {
+                const toggle = document.getElementById('audioRecordingEnabled');
+                if (toggle) toggle.checked = data.enabled || false;
+            }
+        } catch (e) {
+            console.warn('Failed to load audio-recording state:', e);
+        }
+    },
+
+    async toggleAudioRecording() {
+        const toggle = document.getElementById('audioRecordingEnabled');
+        if (!toggle) return;
+        const enabled = toggle.checked;
+        try {
+            const resp = await fetch('/api/settings/audio-recording', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled })
+            });
+            const data = await resp.json();
+            if (data.success) {
+                toggle.checked = data.enabled;
+                if (BYD.utils && BYD.utils.toast) {
+                    const key = data.enabled ? 'recording.audio_enabled_toast' : 'recording.audio_disabled_toast';
+                    BYD.utils.toast(BYD.i18n.t(key), 'success');
+                }
+            } else {
+                toggle.checked = !enabled;
+                if (BYD.utils && BYD.utils.toast) BYD.utils.toast(BYD.i18n.t('recording.audio_update_failed'), 'error');
+            }
+        } catch (e) {
+            toggle.checked = !enabled;
+            if (BYD.utils && BYD.utils.toast) BYD.utils.toast(BYD.i18n.t('recording.audio_update_failed'), 'error');
         }
     }
 };

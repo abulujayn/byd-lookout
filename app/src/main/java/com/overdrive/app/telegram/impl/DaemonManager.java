@@ -67,18 +67,38 @@ public class DaemonManager implements IDaemonManager {
         // For camera daemon, kill the watchdog script FIRST so it can't
         // respawn the daemon, then sleep briefly, then kill the daemon and
         // clean up the singleton lock file.
+        //
+        // ps+awk+kill, NOT pkill -f. execShell wraps each call in
+        // `sh -c "<cmd>"`, and pkill -f matches the calling shell's
+        // argv on any literal pattern in the command — SIGKILLing the
+        // wrapper. With ps+awk+kill we filter by PID and exclude
+        // $MY_PID so the wrapper survives.
         if ("camera".equals(name.toLowerCase())) {
-            execShell("pkill -9 -f start_cam_daemon 2>/dev/null");
+            execShell(
+                "MY_PID=$$; ps -A -o PID,ARGS | grep -F start_cam_daemon | grep -v grep "
+                + "| awk '{print $1}' | while read pid; do "
+                + "if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done"
+            );
             execShell("rm -f /data/local/tmp/start_cam_daemon.sh 2>/dev/null");
             try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
-            execShell("pkill -9 -f byd_cam_daemon 2>/dev/null");
+            execShell(
+                "MY_PID=$$; ps -A -o PID,ARGS | grep -F byd_cam_daemon | grep -v grep "
+                + "| awk '{print $1}' | while read pid; do "
+                + "if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done"
+            );
             execShell("killall -9 byd_cam_daemon 2>/dev/null");
             execShell("rm -f /data/local/tmp/camera_daemon.lock 2>/dev/null");
             return true;
         }
-        
-        String cmd = "pkill -f " + entry.className;
-        execShell(cmd);
+
+        // Same ps+awk+kill pattern — entry.className is interpolated
+        // raw so the calling shell's argv contains it; pkill -f would
+        // self-match.
+        execShell(
+            "MY_PID=$$; ps -A -o PID,ARGS | grep -F " + entry.className + " | grep -v grep "
+            + "| awk '{print $1}' | while read pid; do "
+            + "if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done"
+        );
         return true;
     }
     

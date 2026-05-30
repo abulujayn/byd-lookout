@@ -22,6 +22,7 @@
     <string name="cd_expand_collapse">Expansão/Collapso</string>
     <string name="cd_recording_status">Status de gravação</string>
     <string name="cd_trip_tracking_status">Estatuto do rastreamento de viagens</string>
+    <string name="cd_mic_status">Status de captura do microfone</string>
     <string name="cd_video_thumbnail">Miniatura de vídeo</string>
     <string name="cd_play">Reproduzir</string>
     <string name="cd_back">Voltar</string>
@@ -30,6 +31,7 @@
     <string name="cd_player_next">Próxima gravação</string>
     <string name="cd_player_maximize">Maximizar o jogador</string>
     <string name="cd_player_minimize">Saída em tela completa</string>
+    <string name="cd_player_mute">O áudio é alterado</string>
     <string name="cd_delete">Excluir</string>
     <string name="cd_expand">Expandir</string>
     <string name="cd_configure">Configuração</string>
@@ -40,6 +42,7 @@
     <string name="cd_permission_granted">Permissão concedida</string>
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">TRIP</string>
+    <string name="overlay_mic_inactive_label">MIC</string>
     <string name="log_entry_default_timestamp">12:34:56</string>
     <string name="log_entry_default_tag">Não, não.</string>
     <string name="log_entry_default_message">Mensagem de registro aqui</string>
@@ -333,6 +336,7 @@
     <string name="toast_fetching_log">Trazendo o registro %1$s...</string>
     <string name="toast_log_empty_or_missing">Arquivo de registro está vazio ou não encontrado</string>
     <string name="toast_log_empty">Arquivo de registro está vazio</string>
+    <string name="toast_daemon_manager_unavailable">Gerente Daemon não está pronto, tente novamente em um momento</string>
     <string name="toast_log_save_failed">Falha em salvar registro: %1$s</string>
     <string name="toast_log_not_found">Arquivo de registro não encontrado ou ilegível</string>
     <string name="log_share_title">%1$s Log - %2$s</string>
@@ -350,6 +354,12 @@
     <string name="play_with_chooser">Jogar com</string>
     <string name="setup_version_banner">Atualizado para v%1$s  reconfirmar auto-iniciação, BYD apagá-lo em cada instalação</string>
     <string name="setup_overlay_already_granted">Já concedido</string>
+    <string name="setup_tips_header">Dicas e solução de problemas</string>
+    <string name="setup_traffic_title">Desativar o monitor de tráfego BYD</string>
+    <string name="setup_traffic_body">O Monitor de tráfego BYD bloqueia os aplicativos de terceiros de alcançar a internet. Desativando-o permite que o OverDrive e quaisquer outros aplicativos que você instale realmente usem a rede. Uma reinicialização dura é necessária depois.</string>
+    <string name="setup_traffic_button">Monitor de tráfego aberto</string>
+    <string name="setup_camera_fix_title">A câmera está em preto ou incorreta?</string>
+    <string name="setup_camera_fix_body">Abra Diagnostics → sonda da câmera, configure o ID da câmera para 0, toque em Salvar, e reinicie o daemon da câmera. Se os feeds ainda estiverem errados, repita com o ID da câmera 1. Deixe a seção de mapeamento intocada.</string>
     <string name="camera_current_manual">Atual: Câmara %1$d (Manual)</string>
     <string name="camera_current_auto_label">Corrente: Auto</string>
     <string name="soh_estimation_active">Atividade de estimativa</string>

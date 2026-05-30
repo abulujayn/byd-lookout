@@ -49,7 +49,13 @@
     // the same `view` (e.g. sidebar EV-card and dashboard hero, both
     // 'side') stop trampling each other's sprites. v1 entries lack the
     // size segment and become unreachable — eviction reclaims them.
-    var SPRITE_VERSION = 2;
+    // v3: sizeBucket() no longer falls back to canvas.width/.height and
+    // get()/put() bail when the canvas has no CSS box. v2 sprites taken
+    // mid-layout (after a daemon-restart-driven page reload) are keyed
+    // by the wrong bucket and re-painting them stretches the car —
+    // bumping the version evicts those poisoned entries. The next live
+    // 3D render after this ships writes a clean v3 sprite.
+    var SPRITE_VERSION = 3;
 
     // Keep the cache from growing unbounded as the user tries paint
     // colours. The realistic upper bound is:
@@ -118,11 +124,35 @@
     // separating the sidebar (~280) from the hero (~1180).
     function sizeBucket(canvasEl) {
         if (!canvasEl) return '0x0';
-        var w = canvasEl.clientWidth  || canvasEl.width  || 0;
-        var h = canvasEl.clientHeight || canvasEl.height || 0;
+        // CSS-box ONLY — never fall back to canvas.width/.height. The
+        // backing-buffer size is whatever was last set by paintInto / the
+        // three.js renderer, so reading it conflates "this canvas is
+        // 280×200 in the layout" with "the last sprite painted into this
+        // canvas was 280×200" — fine on warm reloads, but after a daemon
+        // restart the page reload can hit get()/buildKey while the
+        // sidebar is still mid-layout (XHR to /api/models/selected
+        // returns before the flex tree finishes resolving). Falling back
+        // to canvas.width=300 (the HTML default) in that window picks
+        // the WRONG bucket — either a miss key, or worse a key collision
+        // with an aux surface — and either way paintInto re-stretches
+        // a sprite into a canvas that later resizes around it.
+        var w = canvasEl.clientWidth  || 0;
+        var h = canvasEl.clientHeight || 0;
         var bw = Math.round(w / 32) * 32;
         var bh = Math.round(h / 32) * 32;
         return bw + 'x' + bh;
+    }
+
+    // Layout-readiness gate. The canvas has a real CSS box only after
+    // its parent flex tree has resolved — until then clientWidth/Height
+    // read 0 and any sprite painted now will be stretched once layout
+    // catches up. Callers that want the cache should bail on `false`
+    // and either defer or fall through to the live 3D pipeline (which
+    // observes its own ResizeObserver and re-autoFits on visibility).
+    function hasLayoutSize(canvasEl) {
+        if (!canvasEl) return false;
+        return (canvasEl.clientWidth || 0) > 0
+            && (canvasEl.clientHeight || 0) > 0;
     }
 
     function buildKey(modelId, color, view, canvasEl) {
@@ -135,6 +165,12 @@
     }
 
     function get(modelId, color, view, canvasEl) {
+        // Bail before hitting IndexedDB if the canvas hasn't laid out
+        // yet. Reporting "miss" here makes app-shell take the live 3D
+        // path, which auto-fits the moment layout resolves. Returning
+        // a sprite for whatever 0x0 (or stale-backing-size) bucket
+        // happened to match would paint at the wrong aspect.
+        if (!hasLayoutSize(canvasEl)) return Promise.resolve(null);
         var key = buildKey(modelId, color, view, canvasEl);
         return openDb().then(function (db) {
             return new Promise(function (resolve, reject) {
@@ -147,6 +183,11 @@
     }
 
     function put(modelId, color, view, canvasEl, blob, w, h) {
+        // Don't write a sprite keyed by a 0x0 bucket. Mirror the gate
+        // in get() so a snapshot taken from a hidden / pre-layout
+        // canvas can't pollute the cache with a key that nothing will
+        // ever match anyway.
+        if (!hasLayoutSize(canvasEl)) return Promise.resolve(false);
         var key = buildKey(modelId, color, view, canvasEl);
         return openDb().then(function (db) {
             return new Promise(function (resolve) {
@@ -240,9 +281,21 @@
                     } else {
                         // Fallback for layout drift between pages
                         // (e.g. sidebar has a different padding under
-                        // a media query). Stretch-to-fit; the cached
-                        // sprite's auto-fit framing is preserved.
-                        ctx.drawImage(img, 0, 0, bw, bh);
+                        // a media query). Aspect-preserving CONTAIN —
+                        // never stretch. Stretching across an aspect
+                        // mismatch turned a 280×200 sprite into a
+                        // 280×130 canvas after a daemon restart and
+                        // squashed the car vertically; a hard refresh
+                        // happened to land both sides on the same
+                        // aspect and so masked the bug.
+                        var sw = entry.w || img.naturalWidth  || bw;
+                        var sh = entry.h || img.naturalHeight || bh;
+                        var sScale = Math.min(bw / sw, bh / sh);
+                        var dw = sw * sScale;
+                        var dh = sh * sScale;
+                        var dx = Math.round((bw - dw) / 2);
+                        var dy = Math.round((bh - dh) / 2);
+                        ctx.drawImage(img, dx, dy, dw, dh);
                     }
                     resolve(true);
                 } catch (e) {

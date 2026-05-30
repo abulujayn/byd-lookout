@@ -77,18 +77,31 @@ class CameraDaemonController(
             // sleep race, no kill-order dependency. Related binaries
             // (ffmpeg, mediamtx) get their own pass since they don't match
             // the cam_daemon pattern.
-            val killCommands = buildString {
-                append("echo 'disabled by ui at \$(date)' > /data/local/tmp/camera_daemon.disabled; ")
-                append("pkill -9 -f 'cam_daemon' 2>/dev/null; ")
+            // ps+awk+kill (via DaemonLauncher.psAwkKillLine) instead of
+            // pkill -f. The script body is fed to executeShellScript
+            // (tmpfile, no calling-shell self-match) but we use
+            // ps+awk+kill anyway for consistency with the rest of the
+            // codebase and to avoid 137 exit codes on the inner sh that
+            // runs the script body. Order: sentinel first (defense),
+            // then watchdog/lock cleanup, then kill cascade.
+            val killScript = buildString {
+                append("echo \"disabled by ui at \$(date)\" > /data/local/tmp/camera_daemon.disabled\n")
+                append("chmod 666 /data/local/tmp/camera_daemon.disabled 2>/dev/null\n")
+                append("rm -f /data/local/tmp/start_cam_daemon.sh /data/local/tmp/cam_watchdog.pid 2>/dev/null\n")
+                append(com.overdrive.app.launcher.DaemonLauncher.psAwkKillLine("cam_daemon"))
                 RELATED_PROCESSES.forEach { proc ->
-                    append("pkill -9 -f '$proc' 2>/dev/null; ")
-                    append("killall -9 $proc 2>/dev/null; ")
+                    append(com.overdrive.app.launcher.DaemonLauncher.psAwkKillLine(proc))
+                    append("killall -9 $proc 2>/dev/null\n")
                 }
-                append("rm -f /data/local/tmp/start_cam_daemon.sh /data/local/tmp/cam_watchdog.pid /data/local/tmp/camera_daemon.lock 2>/dev/null; ")
-                append("echo done")
+                // Sleep so SIGKILL'd daemon releases its lockfile, then rm it.
+                // rm-after-pkill prevents the lockfile resurrection race
+                // (daemon writes PID back into lock between rm and kill).
+                append("sleep 1\n")
+                append("rm -f /data/local/tmp/camera_daemon.lock 2>/dev/null\n")
+                append("echo done\n")
             }
-            adbLauncher.executeShellCommand(
-                killCommands,
+            adbLauncher.executeShellScript(
+                killScript,
                 object : AdbDaemonLauncher.LaunchCallback {
                     override fun onLog(message: String) {}
                     override fun onLaunched() {
@@ -129,20 +142,22 @@ class CameraDaemonController(
     
     override fun cleanup() {
         sendShutdownCommand()
-        // Same single-syscall family kill as stop() above. cleanup() runs on
-        // ViewModel teardown so we don't need the disable sentinel here —
-        // the user is exiting the app, not telling the daemon to stay dead.
-        val killCommands = buildString {
-            append("pkill -9 -f 'cam_daemon' 2>/dev/null; ")
+        // Same kill cascade as stop() above. cleanup() runs on ViewModel
+        // teardown so we don't need the disable sentinel here — the user
+        // is exiting the app, not telling the daemon to stay dead.
+        val killScript = buildString {
+            append("rm -f /data/local/tmp/start_cam_daemon.sh /data/local/tmp/cam_watchdog.pid 2>/dev/null\n")
+            append(com.overdrive.app.launcher.DaemonLauncher.psAwkKillLine("cam_daemon"))
             RELATED_PROCESSES.forEach { proc ->
-                append("pkill -9 -f '$proc' 2>/dev/null; ")
-                append("killall -9 $proc 2>/dev/null; ")
+                append(com.overdrive.app.launcher.DaemonLauncher.psAwkKillLine(proc))
+                append("killall -9 $proc 2>/dev/null\n")
             }
-            append("rm -f /data/local/tmp/start_cam_daemon.sh /data/local/tmp/cam_watchdog.pid /data/local/tmp/camera_daemon.lock 2>/dev/null; ")
-            append("echo done")
+            append("sleep 1\n")
+            append("rm -f /data/local/tmp/camera_daemon.lock 2>/dev/null\n")
+            append("echo done\n")
         }
-        adbLauncher.executeShellCommand(
-            killCommands,
+        adbLauncher.executeShellScript(
+            killScript,
             object : AdbDaemonLauncher.LaunchCallback {
                 override fun onLog(message: String) {}
                 override fun onLaunched() {}

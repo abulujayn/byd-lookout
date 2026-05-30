@@ -35,6 +35,16 @@ class ZrokLauncher(
         private const val ZROK_TMP_PATH = "/data/local/tmp/zrok"
         private const val ZROK_LOG = "/data/local/tmp/zrok.log"
         private const val ZROK_HOME = "/data/local/tmp"
+
+        // Watchdog state. Mirrors the CameraDaemon pattern: a shell wrapper
+        // that re-execs `zrok share` if it ever exits, with a sentinel file
+        // the UI/update flows can plant to tell the watchdog to stop.
+        // Without this, app-process death (OOM during long parks) leaves
+        // zrok unsupervised — if the share process then drops its session
+        // the public URL stays registered at the edge but routes to
+        // nothing, and the user sees 502 until the next manual restart.
+        const val ZROK_WATCHDOG_SCRIPT = "/data/local/tmp/start_zrok.sh"
+        const val ZROK_DISABLED_SENTINEL = "/data/local/tmp/zrok.disabled"
         
         // Identity file - THIS IS THE KEY FILE that proves device is enabled
         private const val ZROK_IDENTITY_FILE = "/data/local/tmp/.zrok/environment.json"
@@ -73,6 +83,173 @@ class ZrokLauncher(
         private const val PROXY_HOST = "127.0.0.1"
         private const val PROXY_PORT = "8119"
         
+        /**
+         * Build the start_zrok.sh watchdog script body (one element per line).
+         * Static so the Telegram bot daemon — which lives in a separate
+         * process and can't easily own a ZrokLauncher instance — can emit
+         * the SAME watchdog the UI uses, instead of running zrok unsupervised.
+         *
+         * The watchdog is sentinel-gated, has no retry cap (sentinel is the
+         * only legitimate stop), uses /proc/uptime for monotonic uptime,
+         * and applies exponential backoff capped at 60s. See
+         * [[feedback_watchdog_no_retry_cap]] for the no-cap rationale.
+         *
+         * Edge-stale probe (in-shell): a background curl loop runs alongside
+         * `zrok share` and kills the share PID after 2 consecutive 502/503/504
+         * responses from the public URL. This catches the failure mode where
+         * the OpenZiti SDK swallows apiSession auth errors and never exits —
+         * process stays alive, public URL returns 502 forever. The in-process
+         * checkTunnelHealth() detector handles the same case while the app is
+         * alive; the in-shell probe makes recovery survive MainActivity OOM
+         * during long parks (the original 8–9hr 502 outage on 2026-05-29 was
+         * exactly this: app dead, share alive, edge stale, watchdog blind).
+         *
+         * CURL_FAIL (transport error) is intentionally NOT counted as a strike
+         * — it indicates network loss, where killing+respawning zrok would
+         * thrash without helping.
+         */
+        fun buildZrokWatchdogScriptStatic(reserved: Boolean, shareToken: String, useProxy: Boolean): List<String> {
+            val proxyExports = if (useProxy) {
+                val proxyUrl = "socks5://$PROXY_HOST:$PROXY_PORT"
+                "ALL_PROXY=$proxyUrl HTTP_PROXY=$proxyUrl HTTPS_PROXY=$proxyUrl NO_PROXY=localhost,127.0.0.1 "
+            } else ""
+
+            val zrokInvocation = if (reserved) {
+                "HOME=$ZROK_HOME ${proxyExports}$ZROK_TMP_PATH share reserved $shareToken --headless"
+            } else {
+                "HOME=$ZROK_HOME ${proxyExports}$ZROK_TMP_PATH share public http://localhost:8080 --headless"
+            }
+
+            return listOf(
+                "#!/system/bin/sh",
+                "# Zrok Tunnel Watchdog Script",
+                "LOG_FILE=\"$ZROK_LOG\"",
+                "SENTINEL=\"$ZROK_DISABLED_SENTINEL\"",
+                "UNIQUE_NAME_FILE=\"/data/local/tmp/.zrok/unique_name\"",
+                "RETRY_COUNT=0",
+                "HEALTHY_UPTIME_SEC=300",
+                "PROBE_INTERVAL_SEC=60",
+                "PROBE_INITIAL_DELAY_SEC=60",
+                "PROBE_STRIKES=2",
+                "",
+                "while true; do",
+                "  if [ -f \"\$SENTINEL\" ]; then",
+                "    echo \"[\$(date)] Tunnel disabled by user (sentinel file exists). Exiting watchdog.\" >> \"\$LOG_FILE\"",
+                "    exit 0",
+                "  fi",
+                // Truncate log if it has grown past 2MB. Mirrors the
+                // AccSentry watchdog's rotation guard. Without this, a
+                // long-running watchdog where the edge flaps frequently
+                // (one log line per failed probe) can let zrok.log grow
+                // unbounded across multi-day parks. Truncate (not delete)
+                // so any tooling tail-watching the file keeps its handle.
+                "  if [ -f \"\$LOG_FILE\" ]; then",
+                "    SIZE=\$(stat -c%s \"\$LOG_FILE\" 2>/dev/null || echo 0)",
+                "    if [ \"\$SIZE\" -gt 2097152 ]; then",
+                "      echo \"[\$(date)] Log rotated (was \${SIZE} bytes)\" > \"\$LOG_FILE\"",
+                "    fi",
+                "  fi",
+                "  echo \"[\$(date)] Starting zrok share...\" >> \"\$LOG_FILE\"",
+                "  START_EPOCH=\$(awk '{print int(\$1)}' /proc/uptime 2>/dev/null || date +%s)",
+                "",
+                // Run zrok in background so we can supervise it with a probe.
+                // Backgrounded directly (no subshell wrapper) so \$! is zrok's
+                // own PID — `kill \$ZROK_PID` then signals the share process,
+                // not a wrapper shell whose death would orphan zrok to init.
+                "  $zrokInvocation >> \"\$LOG_FILE\" 2>&1 &",
+                "  ZROK_PID=\$!",
+                "",
+                // Edge-stale probe loop. Lives only as long as ZROK_PID.
+                // Reads unique_name fresh each tick (it can change after a
+                // factory-reset / re-reserve while the watchdog is running).
+                // Kills the share PID on 2 consecutive HTTP 502/503/504 from
+                // the public URL — outer while loop respawns it with a fresh
+                // apiSession. Routes through sing-box socks5 if present so
+                // the probe traverses the same network path zrok itself uses.
+                "  (",
+                "    PROBE_FAILS=0",
+                "    sleep \$PROBE_INITIAL_DELAY_SEC",
+                "    while kill -0 \$ZROK_PID 2>/dev/null; do",
+                "      if [ -f \"\$SENTINEL\" ]; then break; fi",
+                "      NAME=\$(cat \"\$UNIQUE_NAME_FILE\" 2>/dev/null)",
+                "      if [ -z \"\$NAME\" ]; then sleep \$PROBE_INTERVAL_SEC; continue; fi",
+                "      if pgrep -f 'sing-box' >/dev/null 2>&1; then",
+                "        STATUS=\$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 --socks5-hostname 127.0.0.1:$PROXY_PORT \"https://\${NAME}.share.zrok.io\" 2>/dev/null || echo CURL_FAIL)",
+                "      else",
+                "        STATUS=\$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \"https://\${NAME}.share.zrok.io\" 2>/dev/null || echo CURL_FAIL)",
+                "      fi",
+                "      case \"\$STATUS\" in",
+                "        502|503|504)",
+                "          PROBE_FAILS=\$((PROBE_FAILS + 1))",
+                "          echo \"[\$(date)] Edge probe got HTTP \$STATUS for \$NAME (consecutive=\$PROBE_FAILS)\" >> \"\$LOG_FILE\"",
+                "          if [ \$PROBE_FAILS -ge \$PROBE_STRIKES ]; then",
+                // PID-recycle guard: confirm /proc/<pid>/cmdline still
+                // contains "zrok" before signalling. On Android PID
+                // recycle within a 60-second window is statistically
+                // rare but possible — without this guard a worst-case
+                // race could SIGKILL an unrelated process. Same defensive
+                // pattern used by acquireSingletonLock for daemon locks.
+                "            if grep -aq zrok \"/proc/\$ZROK_PID/cmdline\" 2>/dev/null; then",
+                "              echo \"[\$(date)] Edge stale confirmed — killing zrok pid \$ZROK_PID for respawn\" >> \"\$LOG_FILE\"",
+                "              kill \$ZROK_PID 2>/dev/null",
+                "              sleep 2",
+                "              if grep -aq zrok \"/proc/\$ZROK_PID/cmdline\" 2>/dev/null; then",
+                "                kill -9 \$ZROK_PID 2>/dev/null",
+                "              fi",
+                "            else",
+                "              echo \"[\$(date)] PID \$ZROK_PID no longer zrok (recycled or already exited) — skipping kill, exiting probe\" >> \"\$LOG_FILE\"",
+                "            fi",
+                "            break",
+                "          fi",
+                "          ;;",
+                "        *)",
+                // CURL_FAIL falls into this bucket on purpose: don't count
+                // network loss as a strike, but also don't reset the strike
+                // counter on it — preserve any prior 5xx evidence across a
+                // brief offline blip. Reset only on a real successful probe.
+                "          if [ \"\$STATUS\" != \"CURL_FAIL\" ] && [ -n \"\$STATUS\" ] && [ \"\$STATUS\" != \"000\" ]; then",
+                "            if [ \$PROBE_FAILS -gt 0 ]; then",
+                "              echo \"[\$(date)] Edge probe recovered (HTTP \$STATUS), resetting strike counter\" >> \"\$LOG_FILE\"",
+                "            fi",
+                "            PROBE_FAILS=0",
+                "          fi",
+                "          ;;",
+                "      esac",
+                "      sleep \$PROBE_INTERVAL_SEC",
+                "    done",
+                "  ) &",
+                "  PROBE_PID=\$!",
+                "",
+                // Wait for zrok to exit — either naturally (apiSession
+                // exhausted, OOM, etc.) or because the probe killed it on
+                // confirmed edge-stale.
+                "  wait \$ZROK_PID",
+                "  EXIT_CODE=\$?",
+                // Probe may already have exited via kill -0 returning 1;
+                // kill is harmless on dead pid. wait reaps the zombie.
+                "  kill \$PROBE_PID 2>/dev/null",
+                "  wait \$PROBE_PID 2>/dev/null",
+                "",
+                "  END_EPOCH=\$(awk '{print int(\$1)}' /proc/uptime 2>/dev/null || date +%s)",
+                "  UPTIME_SEC=\$((END_EPOCH - START_EPOCH))",
+                "  if [ \$UPTIME_SEC -lt 0 ]; then UPTIME_SEC=0; fi",
+                "  if [ -f \"\$SENTINEL\" ]; then",
+                "    echo \"[\$(date)] Tunnel disabled by user (sentinel written during shutdown). Exiting watchdog.\" >> \"\$LOG_FILE\"",
+                "    exit 0",
+                "  fi",
+                "  if [ \$UPTIME_SEC -ge \$HEALTHY_UPTIME_SEC ] && [ \$RETRY_COUNT -gt 0 ]; then",
+                "    echo \"[\$(date)] Tunnel ran healthy for \${UPTIME_SEC}s before exit \$EXIT_CODE — resetting retry counter\" >> \"\$LOG_FILE\"",
+                "    RETRY_COUNT=0",
+                "  fi",
+                "  RETRY_COUNT=\$((RETRY_COUNT + 1))",
+                "  DELAY=\$((RETRY_COUNT * 3))",
+                "  if [ \$DELAY -gt 60 ]; then DELAY=60; fi",
+                "  echo \"[\$(date)] Tunnel exited with code \$EXIT_CODE after \${UPTIME_SEC}s (attempt \$RETRY_COUNT), retrying in \${DELAY}s...\" >> \"\$LOG_FILE\"",
+                "  sleep \$DELAY",
+                "done"
+            )
+        }
+
         /**
          * Generate a unique name for this device.
          * Format: overdrive<6-char-random>
@@ -125,21 +302,38 @@ class ZrokLauncher(
                 // Then check if zrok tunnel is already running
                 isTunnelRunning { isRunning ->
                     if (isRunning) {
-                        // Tunnel already running, try to get existing URL
                         logManager.info(TAG, "Zrok already running, checking for URL...")
                         callback.onLog("Tunnel already running, getting URL...")
-                        getTunnelUrl { existingUrl ->
-                            if (existingUrl != null) {
-                                logManager.info(TAG, "Reusing existing tunnel: $existingUrl")
-                                callback.onLog("Reusing existing tunnel")
-                                callback.onTunnelUrl(existingUrl)
-                            } else {
-                                // Running but no URL - wait for it
-                                logManager.info(TAG, "Tunnel running but no URL yet, waiting...")
-                                callback.onLog("Waiting for tunnel URL...")
-                                waitForTunnelUrl(callback, 1)
+                        // Clear the disable sentinel synchronously: report
+                        // "running" to the caller only after the rm has
+                        // landed. If we proceeded asynchronously, a daemon
+                        // exit racing the rm could let the watchdog gate-2
+                        // see the still-present sentinel and exit 0
+                        // (silent permanent stop). The continuation runs
+                        // inside the rm callback so ordering is guaranteed.
+                        val proceedAfterSentinelClear = {
+                            getTunnelUrl { existingUrl ->
+                                if (existingUrl != null) {
+                                    logManager.info(TAG, "Reusing existing tunnel: $existingUrl")
+                                    callback.onLog("Reusing existing tunnel")
+                                    callback.onTunnelUrl(existingUrl)
+                                } else {
+                                    logManager.info(TAG, "Tunnel running but no URL yet, waiting...")
+                                    callback.onLog("Waiting for tunnel URL...")
+                                    waitForTunnelUrl(callback, 1)
+                                }
                             }
                         }
+                        adbShellExecutor.execute(
+                            command = "rm -f $ZROK_DISABLED_SENTINEL 2>/dev/null; echo done",
+                            callback = object : AdbShellExecutor.ShellCallback {
+                                override fun onSuccess(o: String) { proceedAfterSentinelClear() }
+                                override fun onError(e: String) {
+                                    logManager.warn(TAG, "Sentinel rm failed on already-running fast path: $e")
+                                    proceedAfterSentinelClear()
+                                }
+                            }
+                        )
                     } else {
                         // Not running, check if binary is installed
                         callback.onLog("Setting up zrok...")
@@ -168,14 +362,28 @@ class ZrokLauncher(
                 if (isRunning) {
                     logManager.info(TAG, "Zrok already running")
                     callback.onLog("Tunnel already running")
-                    // Even on the fast path, reconcile against the running
-                    // tunnel's actual URL — the zrok process from a previous
-                    // boot may have bound a name that disagrees with the
-                    // permanentUrl the app cached. Same drift case as the
-                    // fresh-launch path above.
-                    reconcileTunnelUrl(permanentUrl, attempt = 1) { actualUrl ->
-                        callback.onTunnelUrl(actualUrl)
+                    // Clear the disable sentinel synchronously, then
+                    // reconcile. The reconcile + onTunnelUrl callback runs
+                    // inside the rm's onSuccess so ordering is guaranteed.
+                    val proceedAfterSentinelClear = {
+                        // Reconcile against the running tunnel's actual URL —
+                        // the zrok process from a previous boot may have
+                        // bound a name that disagrees with the permanentUrl
+                        // the app cached.
+                        reconcileTunnelUrl(permanentUrl, attempt = 1) { actualUrl ->
+                            callback.onTunnelUrl(actualUrl)
+                        }
                     }
+                    adbShellExecutor.execute(
+                        command = "rm -f $ZROK_DISABLED_SENTINEL 2>/dev/null; echo done",
+                        callback = object : AdbShellExecutor.ShellCallback {
+                            override fun onSuccess(o: String) { proceedAfterSentinelClear() }
+                            override fun onError(e: String) {
+                                logManager.warn(TAG, "Sentinel rm failed on reserved fast path: $e")
+                                proceedAfterSentinelClear()
+                            }
+                        }
+                    )
                 } else {
                     callback.onLog("Setting up zrok...")
                     checkAndInstallZrokForReserved(shareToken, permanentUrl, callback)
@@ -450,8 +658,11 @@ class ZrokLauncher(
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     logManager.info(TAG, "Enable output: $output")
-                    Thread.sleep(500)
-                    launchZrokShareReserved(shareToken, permanentUrl, callback)
+                    // Settle on reconcileScheduler instead of parking the
+                    // ADB executor for 500ms.
+                    reconcileScheduler.schedule({
+                        launchZrokShareReserved(shareToken, permanentUrl, callback)
+                    }, 500, java.util.concurrent.TimeUnit.MILLISECONDS)
                 }
                 
                 override fun onError(error: String) {
@@ -485,21 +696,120 @@ class ZrokLauncher(
     }
     
     private fun startZrokShareReservedProcess(shareToken: String, permanentUrl: String, useProxy: Boolean, callback: ZrokCallback) {
-        // Clear old log
-        adbShellExecutor.execute(
-            command = "rm -f $ZROK_LOG",
+        // Pre-launch sweep via script-tmpfile form (executeScript) so the
+        // toybox pkill -f self-match doesn't drop trailing commands. The
+        // running shell's argv is `sh <tmpPath>`, no "zrok" pattern visible.
+        val cleanupScript =
+            "rm -f $ZROK_DISABLED_SENTINEL $ZROK_WATCHDOG_SCRIPT $ZROK_LOG 2>/dev/null\n" +
+            com.overdrive.app.launcher.DaemonLauncher.psAwkKillLine("zrok") +
+            "echo done\n"
+        adbShellExecutor.executeScript(
+            scriptBody = cleanupScript,
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
-                    launchReservedProcess(shareToken, permanentUrl, useProxy, callback)
+                    writeAndLaunchWatchdog(reserved = true, shareToken = shareToken,
+                            permanentUrl = permanentUrl, useProxy = useProxy, callback = callback)
                 }
                 override fun onError(error: String) {
-                    launchReservedProcess(shareToken, permanentUrl, useProxy, callback)
+                    writeAndLaunchWatchdog(reserved = true, shareToken = shareToken,
+                            permanentUrl = permanentUrl, useProxy = useProxy, callback = callback)
                 }
             }
         )
     }
-    
-    private fun launchReservedProcess(shareToken: String, permanentUrl: String, useProxy: Boolean, callback: ZrokCallback) {
+
+    /**
+     * Write `start_zrok.sh` and launch it. The watchdog re-execs the share
+     * binary on exit (with retry-counter reset after HEALTHY_UPTIME_SEC of
+     * uptime, exactly like start_cam_daemon.sh) and bails out if the
+     * disable sentinel exists. Used by both reserved and public mode.
+     */
+    private fun writeAndLaunchWatchdog(
+            reserved: Boolean,
+            shareToken: String,
+            permanentUrl: String,
+            useProxy: Boolean,
+            callback: ZrokCallback
+    ) {
+        val scriptLines = buildZrokWatchdogScript(reserved, shareToken, useProxy)
+        val writeCmd = buildString {
+            append("rm -f $ZROK_WATCHDOG_SCRIPT 2>/dev/null; ")
+            scriptLines.forEachIndexed { index, line ->
+                val escaped = line
+                        .replace("\\", "\\\\")
+                        .replace("\"", "\\\"")
+                        .replace("\$", "\\$")
+                        .replace("`", "\\`")
+                if (index == 0) {
+                    append("echo \"$escaped\" > $ZROK_WATCHDOG_SCRIPT; ")
+                } else {
+                    append("echo \"$escaped\" >> $ZROK_WATCHDOG_SCRIPT; ")
+                }
+            }
+            append("chmod 755 $ZROK_WATCHDOG_SCRIPT")
+        }
+
+        adbShellExecutor.execute(
+            command = writeCmd,
+            callback = object : AdbShellExecutor.ShellCallback {
+                override fun onSuccess(output: String) {
+                    launchWatchdog(reserved, permanentUrl, callback)
+                }
+                override fun onError(error: String) {
+                    logManager.error(TAG, "Failed to write zrok watchdog script: $error")
+                    // Fall back to bare nohup launch — better than nothing.
+                    // Route by mode: public-mode would otherwise be invoked
+                    // with shareToken="" and produce a malformed
+                    // `zrok share reserved  --headless` invocation.
+                    if (reserved) {
+                        launchReservedProcessBare(shareToken, permanentUrl, useProxy, callback)
+                    } else {
+                        launchPublicProcessBare(useProxy, callback)
+                    }
+                }
+            }
+        )
+    }
+
+    private fun buildZrokWatchdogScript(reserved: Boolean, shareToken: String, useProxy: Boolean): List<String> =
+            buildZrokWatchdogScriptStatic(reserved, shareToken, useProxy)
+
+    private fun launchWatchdog(reserved: Boolean, permanentUrl: String, callback: ZrokCallback) {
+        val launchCmd = "nohup sh $ZROK_WATCHDOG_SCRIPT > /dev/null 2>&1 &"
+        logManager.debug(TAG, "Launching zrok watchdog: $launchCmd")
+        adbShellExecutor.execute(
+            command = launchCmd,
+            callback = object : AdbShellExecutor.ShellCallback {
+                override fun onSuccess(output: String) {
+                    logManager.info(TAG, "✅ Zrok watchdog launched (reserved=$reserved)")
+                    callback.onLog("✅ Tunnel started!")
+                    if (reserved) {
+                        // Reconcile against the actual URL zrok bound — token
+                        // may resolve server-side to a name that disagrees
+                        // with the local unique_name file.
+                        reconcileTunnelUrl(permanentUrl, attempt = 1) { actualUrl ->
+                            callback.onLog("Permanent URL: $actualUrl")
+                            callback.onTunnelUrl(actualUrl)
+                        }
+                    } else {
+                        callback.onLog("Waiting for tunnel URL...")
+                        waitForTunnelUrl(callback, 1)
+                    }
+                }
+                override fun onError(error: String) {
+                    logManager.error(TAG, "Failed to launch zrok watchdog: $error")
+                    callback.onError("Watchdog launch failed: $error")
+                }
+            }
+        )
+    }
+
+    /**
+     * Last-resort fallback when the watchdog script can't be written —
+     * launch zrok bare, no supervisor. Same shape as the pre-watchdog
+     * code path.
+     */
+    private fun launchReservedProcessBare(shareToken: String, permanentUrl: String, useProxy: Boolean, callback: ZrokCallback) {
         val cmd = buildString {
             append("nohup sh -c '")
             append("HOME=$ZROK_HOME ")
@@ -512,19 +822,18 @@ class ZrokLauncher(
                 append("NO_PROXY=localhost,127.0.0.1 ")
             }
 
-            // RESERVED mode: uses token instead of public
             append("$ZROK_TMP_PATH share reserved $shareToken --headless")
             append("' > $ZROK_LOG 2>&1 &")
         }
 
-        logManager.debug(TAG, "Executing reserved share: $cmd")
+        logManager.debug(TAG, "Executing reserved share (bare fallback): $cmd")
 
         adbShellExecutor.execute(
             command = cmd,
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
-                    logManager.info(TAG, "✅ Reserved tunnel started!")
-                    callback.onLog("✅ Tunnel started!")
+                    logManager.warn(TAG, "Reserved tunnel started without watchdog (fallback)")
+                    callback.onLog("✅ Tunnel started (no watchdog)!")
                     // The reserved token's URL is decided by zrok server-side, NOT
                     // by this client's local `uniqueName` field. If the local file
                     // ever drifted from the token's actual reserved name (manual
@@ -549,6 +858,50 @@ class ZrokLauncher(
     }
 
     /**
+     * Public-mode bare fallback. Mirrors launchReservedProcessBare but emits
+     * `zrok share public http://localhost:8080` instead of the reserved-token
+     * form. Without a public-specific bare path, the script-write-failure
+     * fallback for public mode would route into the reserved variant with
+     * shareToken="" and produce `zrok share reserved  --headless` (empty
+     * token), which zrok rejects.
+     */
+    private fun launchPublicProcessBare(useProxy: Boolean, callback: ZrokCallback) {
+        val cmd = buildString {
+            append("nohup sh -c '")
+            append("HOME=$ZROK_HOME ")
+
+            if (useProxy) {
+                val proxyUrl = "socks5://$PROXY_HOST:$PROXY_PORT"
+                append("ALL_PROXY=$proxyUrl ")
+                append("HTTP_PROXY=$proxyUrl ")
+                append("HTTPS_PROXY=$proxyUrl ")
+                append("NO_PROXY=localhost,127.0.0.1 ")
+            }
+
+            append("$ZROK_TMP_PATH share public http://localhost:8080 --headless")
+            append("' > $ZROK_LOG 2>&1 &")
+        }
+
+        logManager.debug(TAG, "Executing public share (bare fallback): $cmd")
+
+        adbShellExecutor.execute(
+            command = cmd,
+            callback = object : AdbShellExecutor.ShellCallback {
+                override fun onSuccess(output: String) {
+                    logManager.warn(TAG, "Public tunnel started without watchdog (fallback)")
+                    callback.onLog("✅ Tunnel started (no watchdog)!")
+                    waitForTunnelUrl(callback, 1)
+                }
+
+                override fun onError(error: String) {
+                    logManager.error(TAG, "Failed to launch public share: $error")
+                    callback.onError("Launch failed: $error")
+                }
+            }
+        )
+    }
+
+    /**
      * Dedicated scheduler for reconcile retries. Using a separate thread
      * means the inter-attempt wait does NOT hold the shared AdbShellExecutor
      * hostage — DaemonLauncher (which uses the same executor to start
@@ -559,6 +912,21 @@ class ZrokLauncher(
             java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
                 Thread(r, "zrok-reconcile").apply { isDaemon = true }
             }
+
+    /**
+     * Shut down the reconcile scheduler. Call from cleanup paths to prevent
+     * the stranded daemon thread on instance teardown. The scheduler thread
+     * is daemon-flagged so the JVM doesn't block on it at exit, but on
+     * Android the process keeps running across Activity teardowns and we
+     * accumulate stranded threads otherwise.
+     */
+    fun shutdown() {
+        try {
+            reconcileScheduler.shutdownNow()
+        } catch (e: Exception) {
+            logManager.warn(TAG, "reconcileScheduler shutdown failed: ${e.message}")
+        }
+    }
 
     /**
      * Read zrok's log to discover the actual tunnel URL it bound, then
@@ -640,8 +1008,11 @@ class ZrokLauncher(
                             command = "killall -9 cloudflared 2>/dev/null; echo done",
                             callback = object : AdbShellExecutor.ShellCallback {
                                 override fun onSuccess(o: String) {
-                                    Thread.sleep(300)
-                                    onComplete()
+                                    // Settle on the reconcile scheduler, NOT on the ADB
+                                    // executor — Thread.sleep here parks the shared
+                                    // single-thread executor, blocking every other
+                                    // queued shell command for 300ms.
+                                    reconcileScheduler.schedule({ onComplete() }, 300, java.util.concurrent.TimeUnit.MILLISECONDS)
                                 }
                                 override fun onError(e: String) { onComplete() }
                             }
@@ -1057,10 +1428,12 @@ class ZrokLauncher(
                         }
                         else -> {
                             callback.onLog("✅ Zrok environment enabled")
-                            // Small delay before checking reserve
-                            Thread.sleep(500)
-                            // After enable, check for reserve
-                            checkReserveAndLaunch(callback)
+                            // Small delay before checking reserve. Schedule
+                            // the continuation on reconcileScheduler — calling
+                            // Thread.sleep(500) here parks the ADB executor.
+                            reconcileScheduler.schedule({
+                                checkReserveAndLaunch(callback)
+                            }, 500, java.util.concurrent.TimeUnit.MILLISECONDS)
                         }
                     }
                 }
@@ -1098,52 +1471,22 @@ class ZrokLauncher(
     }
     
     private fun launchZrokShareWithConfig(callback: ZrokCallback, useProxy: Boolean) {
-        // Clear old log first
-        adbShellExecutor.execute(
-            command = "rm -f $ZROK_LOG",
+        // Same pre-launch sweep as the reserved-mode path, via script-tmpfile
+        // form to avoid pkill self-match.
+        val cleanupScript =
+            "rm -f $ZROK_DISABLED_SENTINEL $ZROK_WATCHDOG_SCRIPT $ZROK_LOG 2>/dev/null\n" +
+            com.overdrive.app.launcher.DaemonLauncher.psAwkKillLine("zrok") +
+            "echo done\n"
+        adbShellExecutor.executeScript(
+            scriptBody = cleanupScript,
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
-                    startZrokShareProcess(callback, useProxy)
+                    writeAndLaunchWatchdog(reserved = false, shareToken = "",
+                            permanentUrl = "", useProxy = useProxy, callback = callback)
                 }
                 override fun onError(error: String) {
-                    startZrokShareProcess(callback, useProxy)
-                }
-            }
-        )
-    }
-    
-    private fun startZrokShareProcess(callback: ZrokCallback, useProxy: Boolean) {
-        val cmd = buildString {
-            append("nohup sh -c '")
-            append("HOME=$ZROK_HOME ")
-            
-            if (useProxy) {
-                // Zrok uses socks5 proxy
-                val proxyUrl = "socks5://$PROXY_HOST:$PROXY_PORT"
-                append("ALL_PROXY=$proxyUrl ")
-                append("HTTP_PROXY=$proxyUrl ")
-                append("HTTPS_PROXY=$proxyUrl ")
-                append("NO_PROXY=localhost,127.0.0.1 ")
-            }
-            
-            append("$ZROK_TMP_PATH share public http://localhost:8080 --headless")
-            append("' > $ZROK_LOG 2>&1 &")
-        }
-        
-        logManager.debug(TAG, "Executing share: $cmd")
-        
-        adbShellExecutor.execute(
-            command = cmd,
-            callback = object : AdbShellExecutor.ShellCallback {
-                override fun onSuccess(output: String) {
-                    logManager.info(TAG, "Zrok share command sent")
-                    callback.onLog("Waiting for tunnel URL...")
-                    waitForTunnelUrl(callback, 1)
-                }
-                
-                override fun onError(error: String) {
-                    logManager.error(TAG, "Failed to launch zrok share: $error")
-                    callback.onError("Launch failed: $error")
+                    writeAndLaunchWatchdog(reserved = false, shareToken = "",
+                            permanentUrl = "", useProxy = useProxy, callback = callback)
                 }
             }
         )
@@ -1160,7 +1503,7 @@ class ZrokLauncher(
                         logManager.error(TAG, "Zrok timed out. Log: ${output.takeLast(500)}")
                         callback.onError("Failed to get URL. Log tail:\n${output.takeLast(500)}")
                     }
-                    
+
                     override fun onError(error: String) {
                         callback.onError("Timed out waiting for tunnel URL")
                     }
@@ -1168,9 +1511,22 @@ class ZrokLauncher(
             )
             return
         }
-        
-        Thread.sleep(1000)
-        
+
+        // Schedule the next poll on reconcileScheduler instead of doing
+        // `Thread.sleep(1000)` here. This function is invoked from inside
+        // an adbShellExecutor callback, so a sleep parks the SHARED ADB
+        // worker thread for 1s — every queued shell command (UI Stop/Start
+        // taps, the 30s health check) sits behind. Across 30 attempts
+        // that's up to 30s of executor blackout while a single zrok
+        // handshake completes. reconcileScheduler is a separate single
+        // thread dedicated to delayed work, so the ADB executor stays
+        // free to service other calls during the wait.
+        reconcileScheduler.schedule({
+            doWaitForTunnelUrlPoll(callback, attempt)
+        }, 1, java.util.concurrent.TimeUnit.SECONDS)
+    }
+
+    private fun doWaitForTunnelUrlPoll(callback: ZrokCallback, attempt: Int) {
         adbShellExecutor.execute(
             command = "cat $ZROK_LOG 2>/dev/null",
             callback = object : AdbShellExecutor.ShellCallback {
@@ -1236,17 +1592,28 @@ class ZrokLauncher(
     fun stopTunnel(callback: ZrokCallback) {
         logManager.info(TAG, "Stopping zrok tunnel...")
         callback.onLog("Stopping tunnel...")
-        
-        // Kill zrok process and clear the log file so stale URLs don't cause false positives
-        adbShellExecutor.execute(
-            command = "pkill -9 -f 'zrok' 2>/dev/null; rm -f $ZROK_LOG; echo stopped",
+
+        // Use the script-via-tmp-file form so toybox `pkill -f 'zrok'` can't
+        // self-match the calling shell's argv (which contains "zrok"). The
+        // running shell's argv with executeScript is `sh <tmpPath>`, so
+        // pkill cannot kill the shell mid-stream and EVERY command runs
+        // including the trailing killall.
+        val killScript =
+            "echo \"disabled by ui at \$(date)\" > $ZROK_DISABLED_SENTINEL\n" +
+            "chmod 666 $ZROK_DISABLED_SENTINEL 2>/dev/null\n" +
+            "rm -f $ZROK_WATCHDOG_SCRIPT $ZROK_LOG 2>/dev/null\n" +
+            com.overdrive.app.launcher.DaemonLauncher.psAwkKillLine("zrok") +
+            "killall -9 zrok 2>/dev/null\n" +
+            "echo stopped\n"
+        adbShellExecutor.executeScript(
+            scriptBody = killScript,
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     logManager.info(TAG, "Zrok tunnel stopped")
                     callback.onLog("Tunnel stopped")
                     callback.onTunnelUrl("")
                 }
-                
+
                 override fun onError(error: String) {
                     // Even on error, consider it stopped
                     logManager.info(TAG, "Zrok tunnel stopped (with warning: $error)")
@@ -1271,7 +1638,7 @@ class ZrokLauncher(
                     logManager.debug(TAG, "isTunnelRunning check: $isRunning (output: '${output.trim().take(50)}')")
                     callback(isRunning)
                 }
-                
+
                 override fun onError(error: String) {
                     // grep returns exit code 1 when no match - that's expected when not running
                     logManager.debug(TAG, "isTunnelRunning: not running (grep found nothing)")
@@ -1280,7 +1647,171 @@ class ZrokLauncher(
             }
         )
     }
-    
+
+    /**
+     * Edge-session-stale detection. The original 8–9 hour 502 bug: the
+     * `zrok share` process is alive (so isTunnelRunning returns true) but
+     * the underlay session at the zrok edge has gone stale, so external
+     * requests to the public URL return HTTP 502. The watchdog never
+     * triggers because zrok never exits; the in-process health-check
+     * passes because pgrep finds the alive process. Result: tunnel is
+     * dead at the user-visible level forever.
+     *
+     * This method does an HTTP probe against the public URL (or any
+     * `https://<name>.share.zrok.io` we can find in the log) and returns:
+     *   - HEALTHY    : process alive AND probe got a non-502/503/504 response
+     *   - PROCESS_DEAD: zrok share process not running
+     *   - EDGE_STALE : process alive but probe got 502/503/504, or curl
+     *                  errored out repeatedly (consecutive-failure counter)
+     *
+     * Stickiness: a single 502 is not enough — the zrok edge can blip
+     * during a transient network event. We keep a per-instance counter
+     * of consecutive failed probes; treat as EDGE_STALE only after 2
+     * consecutive failures, matching the recommendation in the audit.
+     */
+    enum class TunnelHealth { HEALTHY, PROCESS_DEAD, EDGE_STALE }
+
+    private var consecutiveProbeFailures: Int = 0
+
+    fun checkTunnelHealth(callback: (TunnelHealth) -> Unit) {
+        isTunnelRunning { processAlive ->
+            if (!processAlive) {
+                consecutiveProbeFailures = 0
+                callback(TunnelHealth.PROCESS_DEAD)
+                return@isTunnelRunning
+            }
+            // Re-read the unique_name file before each probe. The
+            // `uniqueName` companion-object var defaults to "overdrive"
+            // (a name we don't own); a freshly-revived MainActivity that
+            // hits this tick before any launchZrok flow has populated
+            // `uniqueName` would otherwise probe the wrong host. The
+            // unique_name file is the cross-UID source of truth.
+            //
+            // If the file is absent AND the in-memory name is still the
+            // default UNIQUE_NAME_PREFIX placeholder, we have no real URL
+            // to probe — report HEALTHY (no-op) rather than send a probe
+            // to a hostname we don't own. The in-shell watchdog also
+            // skips probing when unique_name is empty, so the layered
+            // behavior is consistent.
+            loadSavedUniqueName { savedName ->
+                if (savedName != null && savedName != uniqueName) {
+                    logManager.debug(TAG, "checkTunnelHealth: refreshing in-memory uniqueName ${uniqueName} -> $savedName")
+                    uniqueName = savedName
+                }
+                if (savedName == null && uniqueName == UNIQUE_NAME_PREFIX) {
+                    logManager.debug(TAG, "checkTunnelHealth: no reserved unique_name yet, skipping probe (HEALTHY no-op)")
+                    callback(TunnelHealth.HEALTHY)
+                    return@loadSavedUniqueName
+                }
+                doHealthProbe(callback)
+            }
+        }
+    }
+
+    private fun doHealthProbe(callback: (TunnelHealth) -> Unit) {
+            // Process alive — probe the public URL. Two attempts: first
+            // try the cached `uniqueName`-based URL (cheap, no log read).
+            // If that's empty, fall back to the URL grep used by
+            // getTunnelUrl. Probe with curl from the DEVICE so we test
+            // the same network path the user does.
+            val probeUrl = "https://${uniqueName}.share.zrok.io"
+            // `curl -s -o /dev/null -w '%{http_code}' --max-time 5 <url>`
+            // emits just the HTTP status code. Codes that mean "tunnel
+            // reachable, backend may or may not respond":
+            //   200/2xx (HttpServer responded), 401 (auth required),
+            //   404 (path not found), other 4xx — all healthy from the
+            //   tunnel-perspective.
+            // Codes that mean "tunnel dead at zrok edge":
+            //   502 (Bad Gateway — edge has no underlay session)
+            //   503 (Service Unavailable)
+            //   504 (Gateway Timeout)
+            // curl exit non-zero (DNS / connect / SSL fail) is also
+            // counted as a probe failure — could be transient network,
+            // so the consecutive-failure counter handles it.
+            //
+            // Sing-box-aware routing: if sing-box is running on
+            // 127.0.0.1:8119 (the same socks5 proxy the zrok-share
+            // process is using on this device), route the probe through
+            // it. Otherwise we'd test direct egress to the public
+            // internet, which on sing-box-only-egress deployments
+            // (some BYD setups) returns CURL_FAIL → 2-strike →
+            // false-positive EDGE_STALE → relaunch loop every minute.
+            // The probe should mirror the same network path the
+            // tunnel itself uses.
+            //
+            // Inline `pgrep -f sing-box` adds the --socks5h flag only
+            // when present; one shell call instead of two ADB round
+            // trips. Direct egress is the fallback when no sing-box.
+            val probeCmd =
+                "if pgrep -f 'sing-box' >/dev/null 2>&1; then " +
+                "  curl -s -o /dev/null -w '%{http_code}' --max-time 5 " +
+                "    --socks5-hostname 127.0.0.1:$PROXY_PORT '$probeUrl' 2>/dev/null || echo CURL_FAIL; " +
+                "else " +
+                "  curl -s -o /dev/null -w '%{http_code}' --max-time 5 '$probeUrl' 2>/dev/null || echo CURL_FAIL; " +
+                "fi"
+            adbShellExecutor.execute(
+                command = probeCmd,
+                callback = object : AdbShellExecutor.ShellCallback {
+                    override fun onSuccess(output: String) {
+                        val status = output.trim()
+                        // Three buckets, mirroring the in-shell probe:
+                        //   - STALE: 502/503/504 from the zrok edge → strike
+                        //   - INCONCLUSIVE: CURL_FAIL / empty / 000
+                        //     (transport error — could be transient network
+                        //     loss; killing+respawning zrok wouldn't fix it).
+                        //     Don't strike, don't reset.
+                        //   - HEALTHY: any other code (2xx/3xx/4xx) — tunnel
+                        //     reachable through the edge → reset counter.
+                        val isStale = status == "502" || status == "503" || status == "504"
+                        val isInconclusive = status == "CURL_FAIL" || status.isEmpty() || status == "000"
+                        if (isStale) {
+                            consecutiveProbeFailures += 1
+                            logManager.warn(
+                                TAG,
+                                "Zrok edge probe failed (status='$status', consecutive=$consecutiveProbeFailures): $probeUrl"
+                            )
+                            if (consecutiveProbeFailures >= 2) {
+                                logManager.warn(
+                                    TAG,
+                                    "Zrok edge stale confirmed after $consecutiveProbeFailures consecutive probe failures — relaunch needed"
+                                )
+                                consecutiveProbeFailures = 0
+                                callback(TunnelHealth.EDGE_STALE)
+                            } else {
+                                callback(TunnelHealth.HEALTHY)
+                            }
+                        } else if (isInconclusive) {
+                            // Transport error — preserve any prior strike
+                            // evidence across an offline blip but don't
+                            // escalate. Logged at debug to avoid spam.
+                            logManager.debug(
+                                TAG,
+                                "Zrok edge probe inconclusive (status='$status', preserved consecutive=$consecutiveProbeFailures): $probeUrl"
+                            )
+                            callback(TunnelHealth.HEALTHY)
+                        } else {
+                            // 2xx / 3xx / 4xx — tunnel is healthy from the edge's perspective.
+                            if (consecutiveProbeFailures > 0) {
+                                logManager.info(TAG, "Zrok edge probe recovered (status=$status), resetting failure counter")
+                            }
+                            consecutiveProbeFailures = 0
+                            callback(TunnelHealth.HEALTHY)
+                        }
+                    }
+                    override fun onError(error: String) {
+                        // ADB-side failure (NOT a 5xx from the zrok edge)
+                        // — usually executor timeout or shell write error.
+                        // Treat as inconclusive: preserve prior strike
+                        // counter but don't escalate. Killing+respawning
+                        // zrok over an ADB executor hiccup would just
+                        // thrash.
+                        logManager.warn(TAG, "Zrok edge probe ADB error (inconclusive, preserved consecutive=$consecutiveProbeFailures): $error")
+                        callback(TunnelHealth.HEALTHY)
+                    }
+                }
+            )
+    }
+
     /**
      * Get current tunnel URL from log file.
      * SOTA FIX: Only read last 50 lines to avoid loading entire log into memory.

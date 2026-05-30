@@ -126,6 +126,14 @@ public class TripTelemetryRecorder {
 
         recording = true;
 
+        // Mark this file as in-flight so StorageManager.ensureTripsSpace
+        // won't unlink it during a limit-change cleanup mid-trip.
+        try {
+            StorageManager.getInstance().setActiveTripFile(outputFile);
+        } catch (Exception e) {
+            logger.warn("Failed to mark active trip file: " + e.getMessage());
+        }
+
         executor = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "TripTelemetry-" + tripId);
             t.setDaemon(true);
@@ -174,8 +182,11 @@ public class TripTelemetryRecorder {
             executor = null;
         }
 
-        // Notify StorageManager
+        // Notify StorageManager — clear the in-flight marker first so the
+        // post-save cleanup it triggers can reap this file if a downward
+        // limit change made it the oldest over-limit file.
         try {
+            StorageManager.getInstance().setActiveTripFile(null);
             StorageManager.getInstance().onTripFileSaved();
         } catch (Exception e) {
             logger.warn("Failed to notify StorageManager: " + e.getMessage());
@@ -458,46 +469,100 @@ public class TripTelemetryRecorder {
     }
 
     /**
-     * If the output file's parent directory has become unavailable (typical
-     * cause: SD card unmounted mid-trip), re-resolve against the live
-     * StorageManager.getTripsDir(). If the live dir differs, copy any bytes
-     * already written at the stale path to the new path before continuing.
+     * Re-resolve the output file against the live {@link StorageManager#getTripsDir()}
+     * before each flush. Two distinct cases trigger a migration:
+     * <ol>
+     *   <li>The original parent volume is gone (SD unmounted mid-trip).</li>
+     *   <li>The user explicitly switched the trips storage type via the UI;
+     *       the original volume may still be writable, but continuing on it
+     *       silently ignores the user's intent. We honor the new selection
+     *       on the next flush boundary.</li>
+     * </ol>
      *
-     * <p>Returns the file the caller should open. {@link #outputFile} is also
-     * updated to the new path so subsequent flushes (and stopRecording's path
-     * report) see the live location.
+     * <p>When the live dir differs from the current parent, any prior chunk
+     * bytes are copied to the new path before continuing, the source file is
+     * removed (otherwise it would survive on the old volume as an orphan),
+     * and {@link #outputFile} plus the cleanup-protection marker are
+     * rebound to the new path so subsequent flushes and stopRecording's
+     * path report see the live location.
      */
     private File resolveOutputFileForFlush() {
         if (outputFile == null) return outputFile;
         File parent = outputFile.getParentFile();
-        if (parent != null && parent.exists() && parent.canWrite()) {
-            return outputFile;
-        }
         File liveDir = StorageManager.getInstance().getTripsDir();
-        if (liveDir == null || liveDir.equals(parent)) {
+        if (liveDir == null) return outputFile;
+
+        // Same volume: nothing to do. The canWrite() check covers the rare
+        // case where the live dir == current parent but has gone read-only
+        // (FUSE-bridged SD under heavy GL contention occasionally drops to
+        // RO until vold catches up); we let the next flush retry.
+        if (liveDir.equals(parent)) {
             return outputFile;
         }
+
         File newPath = new File(liveDir, outputFile.getName());
-        if (!newPath.equals(outputFile)) {
-            // Best-effort migration of any prior chunk bytes. If migration fails
-            // (e.g. stale file truly gone with the volume), we still proceed —
-            // the new flush will create a fresh file at the live path.
+        if (newPath.equals(outputFile)) {
+            return outputFile;
+        }
+
+        File oldPath = outputFile;
+        boolean migrated = false;
+        if (oldPath.exists() && oldPath.length() > 0
+                && parent != null && parent.exists()) {
             try {
-                if (outputFile.exists() && outputFile.length() > 0
-                        && (parent == null || parent.exists())) {
-                    java.nio.file.Files.copy(
-                            outputFile.toPath(),
-                            newPath.toPath(),
-                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                    logger.info("Trip telemetry migrated: " + outputFile.getAbsolutePath()
-                            + " -> " + newPath.getAbsolutePath());
-                }
+                java.nio.file.Files.copy(
+                        oldPath.toPath(),
+                        newPath.toPath(),
+                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                migrated = true;
+                logger.info("Trip telemetry migrated: " + oldPath.getAbsolutePath()
+                        + " -> " + newPath.getAbsolutePath());
             } catch (Exception e) {
                 logger.warn("Trip telemetry migration failed: " + e.getMessage()
                         + " — continuing at " + newPath.getAbsolutePath());
             }
-            outputFile = newPath;
+        } else {
+            // Silent-skip cases (old volume unmounted, file not yet created).
+            // Log so operators can correlate "trip ended on a different
+            // path than it started" with a known volume event.
+            logger.info("Trip telemetry rebinding without copy ("
+                    + (oldPath.exists() ? "empty file" : "old parent gone")
+                    + "): " + (parent == null ? "<no parent>" : parent.getAbsolutePath())
+                    + " -> " + liveDir.getAbsolutePath());
         }
+
+        // Update the cleanup-protection marker BEFORE rebinding outputFile.
+        // Order matters: between assigning outputFile=newPath and calling
+        // setActiveTripFile(newPath), a concurrent ensureTripsSpace would
+        // see activeTripFilePath still pointing at oldPath, leaving newPath
+        // unprotected. Cleanup runs from the 30s periodic tick so the race
+        // window was sub-µs in practice, but the simpler invariant is to
+        // mark the destination protected first; only after that commit do
+        // we point outputFile at it.
+        boolean markerUpdated = false;
+        try {
+            StorageManager.getInstance().setActiveTripFile(newPath);
+            markerUpdated = true;
+        } catch (Exception e) {
+            logger.warn("Failed to update active trip file marker after migration: "
+                    + e.getMessage());
+        }
+        outputFile = newPath;
+
+        // Remove the source so the old volume doesn't accumulate an orphan
+        // .jsonl.gz that would only get reaped when ensureTripsSpace next
+        // walks the inactive volume. Skipped when:
+        //   - copy failed → source is the only surviving copy of those bytes.
+        //   - marker update failed → cleanup still sees oldPath as the
+        //     protected file, so newPath is unprotected. Deleting the source
+        //     here would trade one corruption window for another. Leave both
+        //     files until the next flush retries the marker update.
+        if (migrated && markerUpdated && oldPath.exists()) {
+            if (!oldPath.delete()) {
+                logger.warn("Failed to remove migrated source: " + oldPath.getAbsolutePath());
+            }
+        }
+
         return outputFile;
     }
 }

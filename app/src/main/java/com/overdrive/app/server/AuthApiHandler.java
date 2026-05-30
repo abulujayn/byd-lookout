@@ -33,6 +33,20 @@ public class AuthApiHandler {
 
     private static final ConcurrentHashMap<String, RateLimitBucket> rateLimits = new ConcurrentHashMap<>();
 
+    // Inline GC counter for the rateLimits map. Without this, a publicly
+    // tunneled instance accumulates a permanent entry per scanner IP that
+    // ever hits /auth/token (typical: 10²–10⁴ unique IPs/week per public
+    // endpoint). pruneStaleRateLimits walks the map opportunistically every
+    // RATE_LIMIT_GC_EVERY checkRateLimit calls to keep it bounded.
+    private static final java.util.concurrent.atomic.AtomicInteger rateLimitOps =
+        new java.util.concurrent.atomic.AtomicInteger(0);
+    private static final int RATE_LIMIT_GC_EVERY = 64;
+    // Stop bucket-keep growth at a hard cap so a burst of fresh IPs faster
+    // than the GC cadence can't push the map above this. Far above the
+    // legitimate per-tunnel concurrent client count (hundreds) but well
+    // below "leak" territory.
+    private static final int RATE_LIMIT_MAX_BUCKETS = 1024;
+
     private static class RateLimitBucket {
         final Deque<Long> attempts = new ArrayDeque<>();
         long lockedUntil = 0L;
@@ -84,6 +98,11 @@ public class AuthApiHandler {
      */
     private static String checkRateLimit(String identity) {
         long now = System.currentTimeMillis();
+        // Opportunistic GC to bound the map under public-tunnel scanner load.
+        // Runs on every Nth invocation so the steady-state cost is negligible.
+        if ((rateLimitOps.incrementAndGet() & (RATE_LIMIT_GC_EVERY - 1)) == 0) {
+            pruneStaleRateLimits(now);
+        }
         RateLimitBucket bucket = rateLimits.computeIfAbsent(identity, k -> new RateLimitBucket());
         synchronized (bucket) {
             if (bucket.lockedUntil > now) {
@@ -112,6 +131,56 @@ public class AuthApiHandler {
      */
     private static void clearRateLimit(String identity) {
         if (identity != null) rateLimits.remove(identity);
+    }
+
+    /**
+     * Walks the rateLimits map and removes buckets that are no longer
+     * useful: lockout has expired AND the attempt window holds no entries.
+     * Then enforces RATE_LIMIT_MAX_BUCKETS as a hard ceiling by dropping
+     * the oldest-by-attempt bucket if we're over the cap. CHM iteration is
+     * weakly consistent and the per-bucket synchronized block in
+     * checkRateLimit keeps state-machine consistency, so concurrent
+     * iteration here is safe.
+     */
+    private static void pruneStaleRateLimits(long now) {
+        long stalenessCutoff = now - RATE_LIMIT_LOCKOUT_MS - RATE_LIMIT_WINDOW_MS;
+        java.util.Iterator<java.util.Map.Entry<String, RateLimitBucket>> it =
+            rateLimits.entrySet().iterator();
+        while (it.hasNext()) {
+            java.util.Map.Entry<String, RateLimitBucket> e = it.next();
+            RateLimitBucket b = e.getValue();
+            synchronized (b) {
+                // Only drop buckets that have a HISTORY (most recent attempt
+                // older than stalenessCutoff) or a fully-expired lockout.
+                // Critical: do NOT drop a bucket that is empty + lockedUntil=0
+                // — that's the freshly-created state from computeIfAbsent
+                // before the caller has entered its synchronized block. The
+                // caller (checkRateLimit) holds the bucket reference but the
+                // map lookup hasn't been synchronized; if we evict here, the
+                // caller adds attempts to an orphaned bucket and the next
+                // checkRateLimit for the same identity creates a new bucket,
+                // silently losing the rate-limit state. Brute-force attackers
+                // could time-attack the prune cadence to bypass protection.
+                if (b.lockedUntil > 0 && b.lockedUntil < now && b.attempts.isEmpty()) {
+                    it.remove();
+                } else if (!b.attempts.isEmpty() && b.attempts.peekLast() < stalenessCutoff
+                        && b.lockedUntil < now) {
+                    it.remove();
+                }
+            }
+        }
+        // Hard cap. Under a sustained scanner burst the prune above may not
+        // keep up; this enforces a ceiling regardless of bucket recency.
+        if (rateLimits.size() > RATE_LIMIT_MAX_BUCKETS) {
+            int over = rateLimits.size() - RATE_LIMIT_MAX_BUCKETS;
+            java.util.Iterator<java.util.Map.Entry<String, RateLimitBucket>> dropIt =
+                rateLimits.entrySet().iterator();
+            while (over > 0 && dropIt.hasNext()) {
+                dropIt.next();
+                dropIt.remove();
+                over--;
+            }
+        }
     }
     
     /**

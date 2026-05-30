@@ -18,7 +18,33 @@ class DaemonStartupManager(
 ) {
     private val log = LogManager.getInstance()
     private val handler = Handler(Looper.getMainLooper())
-    private val adbLauncher = AdbDaemonLauncher(context)
+    // Public so MainActivity / fragments / one-shot callers can route their
+    // ADB-shell commands through this single shared launcher instead of
+    // allocating fresh `AdbDaemonLauncher(this)` instances each call.
+    // Each fresh AdbDaemonLauncher allocates a non-daemon single-thread
+    // AdbShellExecutor + a tunnelLauncher.pollScheduler + nested launchers
+    // that hold Activity Context refs — those leak when the caller never
+    // calls closePersistentConnection().
+    val adbLauncher = AdbDaemonLauncher(context)
+
+    // Cached ZrokLauncher for the health-check tick. Allocating a fresh
+    // ZrokLauncher + AdbShellExecutor + ScheduledExecutorService every 30s
+    // (≈2880 instances per 24h park) burns heap with daemon-thread executors
+    // that aren't promptly GC'd because the executor's worker is daemon-flagged
+    // but still holds a reference to the launcher's Context. Lazy so we don't
+    // pay for it when zrok isn't enabled. The companion @Volatile init flag
+    // lets cleanup() decide whether shutdown is needed without forcing
+    // allocation.
+    @Volatile
+    private var zrokLauncherInitialized = false
+    @Volatile
+    private var zrokAdbShellExecutor: AdbShellExecutor? = null
+    private val zrokLauncherForHealthCheck: ZrokLauncher by lazy {
+        val executor = AdbShellExecutor(context)
+        zrokAdbShellExecutor = executor
+        zrokLauncherInitialized = true
+        ZrokLauncher(context, executor, log)
+    }
 
     companion object {
         private const val TAG = "DaemonStartup"
@@ -38,8 +64,15 @@ class DaemonStartupManager(
             DaemonType.TELEGRAM_DAEMON,
         )
 
-        // Track intentional stops so health check doesn't fight the user
-        val userStoppedDaemons = mutableSetOf<DaemonType>()
+        // Track intentional stops so health check doesn't fight the user.
+        // Mutated from controller threads (markUserStopped/clearUserStopped)
+        // and read from the main looper (runHealthCheck.contains). A plain
+        // mutableSetOf is a LinkedHashSet — concurrent add/iterate throws
+        // ConcurrentModificationException on the main thread. Wrap with
+        // ConcurrentHashMap.newKeySet for thread-safe traversal without
+        // an explicit lock.
+        val userStoppedDaemons: MutableSet<DaemonType> =
+            java.util.concurrent.ConcurrentHashMap.newKeySet()
 
         fun markUserStopped(type: DaemonType) {
             userStoppedDaemons.add(type)
@@ -70,11 +103,59 @@ class DaemonStartupManager(
         log.info(TAG, "=== Initializing daemon startup on app launch ===")
         log.info(TAG, "Waiting 45 seconds before starting daemons (system stabilization)...")
 
+        // Hand off from any pre-existing bootManager (which was launched
+        // before MainActivity attached). If we don't shut its scheduler
+        // down, both managers fire 30s health checks in parallel — double
+        // pkill cascades against the daemon family every tick. Treat
+        // `this` as the new owner; drop the boot manager.
+        val previousBootManager = bootManager
+        if (previousBootManager != null && previousBootManager !== this) {
+            log.info(TAG, "Handing off from bootManager → MainActivity-scoped manager")
+            // Run cleanup on a background thread, NOT on the main looper.
+            // cleanup() now calls adbLauncher.releasePerInstanceResources()
+            // (per-instance executor + tunnel-poll scheduler shutdown only;
+            // does NOT touch the process-wide shared Dadb that the new
+            // manager has just started using). The shutdownNow() call
+            // inside is bounded — it interrupts in-flight Runnables but
+            // doesn't block on Socket I/O — so we COULD run this on the
+            // main looper in principle. We still post to a background
+            // thread defensively in case any future cleanup step adds
+            // I/O; the cost is one short-lived daemon Thread per
+            // handoff (one-time, not per-tick).
+            //
+            // Clear the static reference up-front so subsequent
+            // initializeOnAppLaunch calls don't re-attempt the handoff,
+            // and so the manager can't be re-used after we've started
+            // tearing it down.
+            bootManager = null
+            Thread({
+                try {
+                    previousBootManager.cleanup()
+                } catch (e: Exception) {
+                    log.warn(TAG, "bootManager handoff cleanup failed: ${e.message}")
+                }
+            }, "bootManager-handoff").apply {
+                isDaemon = true
+                start()
+            }
+        }
+
         // Reset user-stopped flags on app launch (fresh start = auto-manage)
         userStoppedDaemons.clear()
 
         // Enable AccessibilityService keep-alive immediately (doesn't need delay)
         enableAccessibilityKeepAlive()
+
+        // Defensive sentinel cleanup on every app-launch path. If a previous
+        // process crashed mid-stop, per-daemon `.disabled` files can be
+        // stranded on disk; without this rm, the about-to-be-deployed
+        // watchdogs would gate-1 → exit 0 immediately on first iteration.
+        // User stop-intent persists in SharedPreferences (PreferencesManager
+        // .isDaemonEnabled), not in the .disabled files — so this rm only
+        // undoes stale crash-debris, never user choice. Idempotent.
+        // (Previously this only fired from MainActivity.onNewIntent's
+        // post-update path; missing from the cold-start launch flow.)
+        clearStaleSentinels()
 
         // Wait 45 seconds for system to fully stabilize before starting any daemons
         handler.postDelayed({ startCoreDaemons() }, 45000)
@@ -122,10 +203,17 @@ class DaemonStartupManager(
         
         // Reset user-stopped flags on boot
         userStoppedDaemons.clear()
-        
+
         // Enable AccessibilityService keep-alive immediately on boot
         enableAccessibilityKeepAlive()
-        
+
+        // Defensive sentinel cleanup on boot path too. A power-cycle
+        // mid-stop (rare but possible — power loss while user was tapping
+        // Stop) would leave the .disabled files on disk; without this rm,
+        // BootReceiver-triggered daemon launches would gate-1 → exit
+        // immediately. See initializeOnAppLaunch for the full rationale.
+        clearStaleSentinels()
+
         // Wait 45 seconds for system to fully stabilize before starting any daemons
         handler.postDelayed({ startCoreDaemonsViaAdb() }, 45000)
         handler.postDelayed({ startOptionalDaemonsViaAdb() }, 60000)
@@ -173,9 +261,15 @@ class DaemonStartupManager(
 
     private fun startCoreDaemonsViaAdb() {
         log.info(TAG, "Starting core daemons via ADB (Camera first, then Sentry daemons)...")
-        
-        // Start Camera Daemon FIRST
-        adbLauncher.isDaemonRunning("camera_daemon") { running ->
+
+        // Start Camera Daemon FIRST. Probe the actual --nice-name (`byd_cam_daemon`)
+        // not the legacy "camera_daemon" string — `ps -A` on stock Android shows
+        // the nice-name, and "camera_daemon" is not a substring of "byd_cam_daemon".
+        // The previous literal always reported false → one redundant launch+
+        // cleanup ADB round-trip on every boot (the inner `launchDaemon` does
+        // its own correct probe at DaemonLauncher.kt:328 and short-circuits, so
+        // this was cosmetic, but kept boot ~1-2 s slower than necessary).
+        adbLauncher.isDaemonRunning(DaemonType.CAMERA_DAEMON.processName) { running ->
             if (!running) {
                 log.info(TAG, "Boot: Starting Camera Daemon...")
                 val nativeLibDir = context.applicationInfo.nativeLibraryDir
@@ -337,18 +431,20 @@ class DaemonStartupManager(
      * Start Zrok tunnel on boot using ZrokLauncher directly.
      */
     private fun startZrokOnBoot() {
-        val adbShellExecutor = AdbShellExecutor(context)
-        val zrokLauncher = ZrokLauncher(context, adbShellExecutor, log)
-        
-        zrokLauncher.launchZrok(object : ZrokLauncher.ZrokCallback {
+        // Reuse the cached zrokLauncherForHealthCheck instead of allocating
+        // a fresh ZrokLauncher + AdbShellExecutor + ScheduledExecutorService.
+        // Each fresh allocation creates daemon threads that are never
+        // shutdown(), so on a 24h park (with health-check relaunches) the
+        // process accumulates ~hundreds of stranded executor threads.
+        zrokLauncherForHealthCheck.launchZrok(object : ZrokLauncher.ZrokCallback {
             override fun onLog(message: String) {
                 log.debug(TAG, "[Zrok Boot] $message")
             }
-            
+
             override fun onTunnelUrl(url: String) {
                 log.info(TAG, "Boot: Zrok URL: $url")
             }
-            
+
             override fun onError(error: String) {
                 log.error(TAG, "Boot: Zrok error: $error")
             }
@@ -359,8 +455,11 @@ class DaemonStartupManager(
      * Start Tailscale tunnel on boot using TailscaleLauncher directly.
      */
     private fun startTailscaleOnBoot() {
-        val adbShellExecutor = AdbShellExecutor(context)
-        val tailscaleLauncher = TailscaleLauncher(context, adbShellExecutor, log)
+        // Reuse the shared adbLauncher's AdbShellExecutor instead of
+        // allocating a fresh one. Each fresh AdbShellExecutor allocates a
+        // non-daemon single-thread Executors.newSingleThreadExecutor() that
+        // we never shutdown — leaks one parked thread per call.
+        val tailscaleLauncher = TailscaleLauncher(context, adbLauncher.adbShellExecutor, log)
 
         tailscaleLauncher.launchTailscale(object : TailscaleLauncher.TailscaleCallback {
             override fun onLog(message: String) {
@@ -481,9 +580,11 @@ class DaemonStartupManager(
         }
 
         log.info(TAG, "Enabling AccessibilityService keep-alive via ADB...")
+        // Reuse the shared adbLauncher's AdbShellExecutor — see
+        // startTailscaleOnBoot for why fresh allocation leaks a thread.
         val serviceLauncher = com.overdrive.app.launcher.ServiceLauncher(
             context,
-            com.overdrive.app.launcher.AdbShellExecutor(context),
+            adbLauncher.adbShellExecutor,
             log
         )
         serviceLauncher.enableAccessibilityKeepAlive(object : com.overdrive.app.launcher.ServiceLauncher.LaunchCallback {
@@ -493,7 +594,13 @@ class DaemonStartupManager(
         })
     }
 
-    private var healthCheckRunning = false
+    // AtomicBoolean (not just @Volatile) because startDaemonHealthCheck does
+    // a check-then-set: `if (!running) { running = true; schedule }`.
+    // Plain @Volatile gives visibility but not atomicity — two callers can
+    // both see false and both set true → two concurrent health-check
+    // schedulers, double pkill cascades every 30s. compareAndSet collapses
+    // both reads + the set into one atomic transition.
+    private val healthCheckRunning = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
      * Periodic health check: every 30s, verify all expected daemons are alive.
@@ -501,15 +608,14 @@ class DaemonStartupManager(
      * Daemons intentionally stopped by the user are skipped.
      */
     private fun startDaemonHealthCheck() {
-        if (healthCheckRunning) return
-        healthCheckRunning = true
+        if (!healthCheckRunning.compareAndSet(false, true)) return
         log.info(TAG, "Daemon health check started (interval=${HEALTH_CHECK_INTERVAL_MS / 1000}s)")
         scheduleNextHealthCheck()
     }
 
     private fun scheduleNextHealthCheck() {
         handler.postDelayed({
-            if (healthCheckRunning) {
+            if (healthCheckRunning.get()) {
                 runHealthCheck()
                 scheduleNextHealthCheck()
             }
@@ -556,6 +662,73 @@ class DaemonStartupManager(
     }
 
     private fun checkAndRelaunchDaemon(type: DaemonType) {
+        // Zrok needs a more specific liveness probe than `ps -A | grep zrok`.
+        // The shell watchdog (start_zrok.sh) ALSO matches that pattern, so a
+        // stuck or sentinel-disabled watchdog with no share child would
+        // silently pass the generic check and the user would see 502s
+        // forever. Use ZrokLauncher.isTunnelRunning() — it greps for the
+        // actual `zrok share` arg vector, not just any process name
+        // containing "zrok".
+        if (type == DaemonType.ZROK_TUNNEL) {
+            // Two-layer liveness for zrok: (1) process-alive grep on
+            // `'zrok share'` argv (catches dead-process), (2) HTTP probe
+            // against the public URL (catches edge-session-stale = the
+            // original 8–9hr 502 bug where the share process is alive
+            // but zrok's edge has dropped the underlay session and
+            // returns 502 to external clients).
+            //
+            // checkTunnelHealth combines both with a 2-strike stickiness
+            // counter so a single transient blip doesn't trigger a
+            // needless restart. EDGE_STALE on confirmed-stale → relaunch
+            // the same way as a dead process.
+            zrokLauncherForHealthCheck.checkTunnelHealth { health ->
+                when (health) {
+                    ZrokLauncher.TunnelHealth.PROCESS_DEAD -> {
+                        log.warn(TAG, "Health check: Zrok process is DEAD — relaunching...")
+                        relaunchDaemon(type)
+                    }
+                    ZrokLauncher.TunnelHealth.EDGE_STALE -> {
+                        // Edge-stale recovery is a stop+start: the existing
+                        // share process is alive, so the normal launchZrok
+                        // fast path would short-circuit ("already running")
+                        // and do nothing. We need to actively kill the
+                        // alive-but-stale process first so the relaunch
+                        // gets a fresh underlay session.
+                        //
+                        // Sequence the relaunch inside stopTunnel's
+                        // callbacks rather than via a fixed 2s postDelayed:
+                        // stopTunnel writes the disable sentinel + ps-kills
+                        // the share + watchdog asynchronously, and a
+                        // postDelayed only races them. With the callback
+                        // form, the relaunch runs strictly after the kill
+                        // script's exit (the launchZrok fast path's
+                        // cleanup script then rm's the sentinel before
+                        // writing a fresh watchdog).
+                        log.warn(TAG, "Health check: Zrok edge session STALE — stopping alive-but-stale process, then relaunching")
+                        zrokLauncherForHealthCheck.stopTunnel(object : ZrokLauncher.ZrokCallback {
+                            override fun onLog(message: String) {}
+                            override fun onTunnelUrl(url: String) {
+                                // stopTunnel emits onTunnelUrl("") on success.
+                                handler.post {
+                                    log.info(TAG, "Edge-stale recovery: relaunching Zrok after stop completed")
+                                    relaunchDaemon(type)
+                                }
+                            }
+                            override fun onError(error: String) {
+                                // stopTunnel onError still means the kill
+                                // script ran — proceed with relaunch.
+                                log.warn(TAG, "stopTunnel during edge-stale recovery returned error: $error (continuing relaunch)")
+                                handler.post { relaunchDaemon(type) }
+                            }
+                        })
+                    }
+                    ZrokLauncher.TunnelHealth.HEALTHY -> {
+                        // No-op
+                    }
+                }
+            }
+            return
+        }
         adbLauncher.isDaemonRunning(type.processName) { isRunning ->
             if (!isRunning) {
                 log.warn(TAG, "Health check: ${type.displayName} is DEAD — relaunching...")
@@ -585,6 +758,17 @@ class DaemonStartupManager(
                         onError = { e -> log.error(TAG, "HealthCheck: ACC Sentry restart failed: $e") }
                     )
                 }
+                DaemonType.ZROK_TUNNEL -> {
+                    // Boot-path zrok recovery (no ViewModel). Without this
+                    // branch, the health-check would log "no ADB fallback"
+                    // and never restart zrok after a crash on the boot path.
+                    log.info(TAG, "HealthCheck: relaunching Zrok tunnel via boot-path fallback")
+                    zrokLauncherForHealthCheck.launchZrok(object : ZrokLauncher.ZrokCallback {
+                        override fun onLog(message: String) { log.debug(TAG, "[Zrok HealthCheck] $message") }
+                        override fun onTunnelUrl(url: String) { log.info(TAG, "HealthCheck: Zrok URL: $url") }
+                        override fun onError(error: String) { log.error(TAG, "HealthCheck: Zrok restart failed: $error") }
+                    })
+                }
                 else -> {
                     log.warn(TAG, "Health check: no ADB fallback for ${type.displayName}")
                 }
@@ -592,9 +776,78 @@ class DaemonStartupManager(
         }
     }
 
+    /**
+     * Defensive sentinel cleanup on app launch. If the previous process died
+     * mid-stop (or post-update phase 3 was dropped due to an ADB hiccup),
+     * per-daemon disable sentinels can be left on disk; the watchdogs would
+     * then exit on their next iteration and never recover until manual rm.
+     * User stop-intent is persisted in SharedPreferences (PreferencesManager
+     * .isDaemonEnabled), not in the .disabled files — so clearing them here
+     * only undoes stale crash-debris, never user choice. Idempotent.
+     *
+     * Routes through this manager's shared AdbDaemonLauncher rather than
+     * letting callers allocate a fresh one — a fresh AdbDaemonLauncher
+     * spawns a fresh AdbShellExecutor (single-thread non-daemon executor)
+     * that's never shutdown(), so it leaks a parked thread per call.
+     */
+    fun clearStaleSentinels() {
+        // The outer try/catch is mostly belt-and-braces — executeShellCommand
+        // is async and won't throw synchronously except on
+        // RejectedExecutionException (executor already shut down).
+        try {
+            adbLauncher.executeShellCommand(
+                "rm -f /data/local/tmp/camera_daemon.disabled " +
+                    "/data/local/tmp/acc_sentry_daemon.disabled " +
+                    "/data/local/tmp/telegram_bot_daemon.disabled " +
+                    "/data/local/tmp/zrok.disabled 2>/dev/null; echo cleared",
+                object : AdbDaemonLauncher.LaunchCallback {
+                    override fun onLog(message: String) {}
+                    override fun onLaunched() {
+                        log.info(TAG, "Cleared stale per-daemon disable sentinels (defensive)")
+                    }
+                    override fun onError(error: String) {
+                        // Surface failures so a stuck-in-disabled state isn't
+                        // invisible. The trailing `; echo cleared` makes the
+                        // overall payload exit 0 even when rm fails (echo's
+                        // exit code wins), so onError typically only fires
+                        // on transport problems — but log just in case.
+                        log.warn(TAG, "Defensive sentinel rm onError: $error")
+                    }
+                }
+            )
+        } catch (e: Exception) {
+            log.warn(TAG, "Defensive sentinel rm threw: ${e.message}")
+        }
+    }
+
     fun cleanup() {
-        healthCheckRunning = false
+        healthCheckRunning.set(false)
         handler.removeCallbacksAndMessages(null)
-        adbLauncher.closePersistentConnection()
+        // releasePerInstanceResources — NOT closePersistentConnection.
+        // closePersistentConnection nulls the process-wide shared Dadb in
+        // AdbShellExecutor's companion, which would force the new
+        // MainActivity-scoped manager (which is reading the same shared
+        // Dadb) to reconnect + re-auth on first use. Worse, any in-flight
+        // shell command on this manager's still-pending postDelayed
+        // tasks would observe a closed transport and surface as spurious
+        // onError. We only need to release THIS manager's per-instance
+        // executor + tunnel-poll scheduler — the shared Dadb stays alive
+        // for the new owner.
+        adbLauncher.releasePerInstanceResources()
+        // Shutdown the cached ZrokLauncher's reconcile scheduler if it was
+        // ever instantiated. Without this, every Activity teardown leaves
+        // a stranded daemon thread for the lifetime of the process.
+        // The flag avoids forcing allocation just to check.
+        if (zrokLauncherInitialized) {
+            try {
+                zrokLauncherForHealthCheck.shutdown()
+                // The AdbShellExecutor owned by this cached launcher needs
+                // its own executor thread shutdown — without it the
+                // single-thread executor parks indefinitely.
+                zrokAdbShellExecutor?.shutdown()
+            } catch (e: Exception) {
+                log.warn(TAG, "ZrokLauncher shutdown failed: ${e.message}")
+            }
+        }
     }
 }

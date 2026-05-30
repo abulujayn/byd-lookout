@@ -56,6 +56,7 @@
     <string name="cd_expand_collapse">Expand/Collapse</string>
     <string name="cd_recording_status">Recording status</string>
     <string name="cd_trip_tracking_status">Trip tracking status</string>
+    <string name="cd_mic_status">Microphone capture status</string>
     <string name="cd_video_thumbnail">Video thumbnail</string>
     <string name="cd_play">Play</string>
     <string name="cd_back">Back</string>
@@ -64,6 +65,7 @@
     <string name="cd_player_next">Next recording</string>
     <string name="cd_player_maximize">Maximize player</string>
     <string name="cd_player_minimize">Exit fullscreen</string>
+    <string name="cd_player_mute">Toggle audio</string>
     <string name="cd_delete">Delete</string>
     <string name="cd_expand">Expand</string>
     <string name="cd_configure">Configure</string>
@@ -76,6 +78,7 @@
     <!-- overlay_status -->
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">TRIP</string>
+    <string name="overlay_mic_inactive_label">MIC</string>
 
     <!-- item_log_entry placeholders (timestamp/tag/message are runtime, but these are
          placeholder/preview text used at design time and visible in some empty states) -->
@@ -475,6 +478,7 @@
     <string name="toast_fetching_log">Fetching %1$s log…</string>
     <string name="toast_log_empty_or_missing">Log file is empty or not found</string>
     <string name="toast_log_empty">Log file is empty</string>
+    <string name="toast_daemon_manager_unavailable">Daemon manager not ready, try again in a moment</string>
     <string name="toast_log_save_failed">Failed to save log: %1$s</string>
     <string name="toast_log_not_found">Log file not found or unreadable</string>
     <string name="log_share_title">%1$s Log - %2$s</string>
@@ -498,6 +502,14 @@
     <!-- Setup guide -->
     <string name="setup_version_banner">Updated to v%1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">Already Granted</string>
+
+    <!-- Setup guide — post-setup tips section -->
+    <string name="setup_tips_header">Tips &amp; troubleshooting</string>
+    <string name="setup_traffic_title">Disable BYD Traffic Monitor</string>
+    <string name="setup_traffic_body">The BYD Traffic Monitor blocks third-party apps from reaching the internet. Disabling it lets OverDrive and any other apps you install actually use the network. A hard reboot is required afterwards.</string>
+    <string name="setup_traffic_button">Open Traffic Monitor</string>
+    <string name="setup_camera_fix_title">Camera feeds black or incorrect?</string>
+    <string name="setup_camera_fix_body">Open Diagnostics → Camera probe, set Camera ID to 0, tap Save, then restart the camera daemon. If the feeds are still wrong, repeat with Camera ID 1. Leave the mapping section untouched.</string>
 
     <!-- Recording storage path -->
 

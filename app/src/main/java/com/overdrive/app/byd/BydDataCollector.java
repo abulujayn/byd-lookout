@@ -770,10 +770,15 @@ public class BydDataCollector {
             }
 
             // Battery remaining energy — try multiple APIs in priority order.
-            // Priority 1: PowerDevice.getBatteryRemainPowerEV() — most accurate for BEVs.
-            // On PHEVs this may return stale values when ICE is running — validate against SOC.
+            // PHEV-first: when computeIsPhev() reports PHEV, BodyworkDevice.getBatteryPowerHEV()
+            // is the authoritative source. The Power/Statistic getters echo SOC% in the kWh
+            // field on Sealion-class PHEVs (the "SOC-as-kWh" firmware bug), so even with
+            // SOC-mimic guards they only ever produce rejects on PHEV. Skipping straight
+            // to HEV avoids two reflective probe attempts every cycle and removes the
+            // window where a freshly-classified-PHEV vehicle could still latch a bogus
+            // BEV reading before computeIsPhev() updates.
             //
-            // NOTE: We deliberately do NOT gate the priority-1/2 reads on
+            // NOTE: We deliberately do NOT gate the priority reads on
             // `Double.isNaN(b.remainKwh)`. Because `b` is built from the previous snapshot
             // via toBuilder(), gating on NaN means we only ever read these getters ONCE
             // (the very first poll after init), and the value freezes thereafter —
@@ -782,10 +787,47 @@ public class BydDataCollector {
             // garbage: out-of-range readings are skipped (not written), so the last-known
             // good value is preserved when the BYD HAL goes flaky after ACC OFF.
             //
-            // We track whether priority 1 or 2 wrote a fresh kWh this cycle so the
-            // priority-3 capacity fallback (older SDKs only) doesn't clobber it.
+            // We track whether any priority wrote a fresh kWh this cycle so the
+            // capacity fallback (older SDKs only) doesn't clobber it.
             boolean kwhWrittenThisCycle = false;
-            if (powerDevice != null) {
+            boolean isPhevForKwh = isPhev(b);
+
+            // PHEV Priority 1: BodyworkDevice.getBatteryPowerHEV() — PHEV-native energy reading.
+            // On Sealion-class PHEVs whose Power/Statistic getters return SOC% in the kWh
+            // field, this getter returns the actual remaining kWh (e.g. ~9.6 kWh at 67%
+            // SOC on an 18.3 kWh pack instead of 67.1). socHevPercent is always populated
+            // for telemetry.
+            if (isPhevForKwh && bodyworkDevice != null) {
+                try {
+                    Object hev = BydDeviceHelper.callGetter(bodyworkDevice, "getBatteryPowerHEV");
+                    if (hev instanceof Number) {
+                        double hevVal = ((Number) hev).doubleValue();
+                        if (hevVal >= 0) {
+                            b.socHevPercent(hevVal);
+                            double soc = b.socPercent;
+                            boolean looksLikeSocPercent = !Double.isNaN(soc)
+                                    && soc > 0 && Math.abs(hevVal - soc) < 3.0;
+                            if (!looksLikeSocPercent && hevVal > 1 && hevVal < 120) {
+                                b.remainKwh(hevVal);
+                                kwhWrittenThisCycle = true;
+                                logger.debug("remainKwh from getBatteryPowerHEV (PHEV-priority): " +
+                                    String.format("%.1f", hevVal) + " (soc=" +
+                                    String.format("%.1f", soc) + "%)");
+                            } else if (looksLikeSocPercent) {
+                                logger.debug("getBatteryPowerHEV returned " +
+                                    String.format("%.1f", hevVal) + " ≈ SOC " +
+                                    String.format("%.1f", soc) + "% — treating as SOC%, not kWh");
+                            }
+                        }
+                    }
+                } catch (Exception e) {
+                    logger.debug("getBatteryPowerHEV (PHEV-priority) failed: " + e.getMessage());
+                }
+            }
+
+            // BEV Priority 1: PowerDevice.getBatteryRemainPowerEV() — most accurate for BEVs.
+            // On PHEVs this may return stale values when ICE is running — validate against SOC.
+            if (!kwhWrittenThisCycle && powerDevice != null) {
                 try {
                     Object evKwh = BydDeviceHelper.callGetter(powerDevice, "getBatteryRemainPowerEV");
                     if (evKwh instanceof Number) {
@@ -876,20 +918,11 @@ public class BydDataCollector {
                 }
             }
             
-            // Priority 3: BodyworkDevice.getBatteryPowerHEV() — PHEV-native energy reading.
-            //
-            // Reintroduced after the priority chain dropped it post-v15. On Sealion-class
-            // PHEVs whose Power/Statistic getters echo SOC% in the kWh field (the
-            // SOC-as-kWh firmware bug guarded above), this getter returns the actual
-            // remaining kWh — e.g. ~15 kWh at 84% SOC on an 18.3 kWh pack instead of 84.1.
-            //
-            // Caveat: on some BEVs this same getter ALSO returns SOC% (the inverse bug).
-            // The looksLikeSocPercent guard below catches that case and refuses to write,
-            // so this priority only activates when the value is in real kWh units.
-            //
-            // Always populate b.socHevPercent (informational HAL metric) regardless of
-            // whether we accept the reading as remainKwh.
-            if (!kwhWrittenThisCycle && bodyworkDevice != null) {
+            // BEV-side fallback: BodyworkDevice.getBatteryPowerHEV() also runs for BEVs
+            // when Priority 1/2 didn't yield a value, in case a particular BEV firmware
+            // exposes remaining kWh here too. Skipped when PHEV-priority above already
+            // handled this getter.
+            if (!isPhevForKwh && !kwhWrittenThisCycle && bodyworkDevice != null) {
                 try {
                     Object hev = BydDeviceHelper.callGetter(bodyworkDevice, "getBatteryPowerHEV");
                     if (hev instanceof Number) {
@@ -902,7 +935,7 @@ public class BydDataCollector {
                             if (!looksLikeSocPercent && hevVal > 1 && hevVal < 120) {
                                 b.remainKwh(hevVal);
                                 kwhWrittenThisCycle = true;
-                                logger.debug("remainKwh from getBatteryPowerHEV: " +
+                                logger.debug("remainKwh from getBatteryPowerHEV (BEV-fallback): " +
                                     String.format("%.1f", hevVal) + " (soc=" +
                                     String.format("%.1f", soc) + "%)");
                             } else if (looksLikeSocPercent) {
@@ -1765,6 +1798,16 @@ public class BydDataCollector {
     }
 
     private boolean isPhev(BydVehicleData snapshot) {
+        return computeIsPhev();
+    }
+
+    /**
+     * Public drivetrain accessor for callers outside this class (TripDetector,
+     * TripAnalyticsManager, API handlers). Reuses the cached probe with the
+     * same {@link #DRIVETRAIN_REPROBE_MS} TTL so a hot path call doesn't hit
+     * reflection. Returns true for PHEV/HEV, false for BEV/unknown.
+     */
+    public boolean isPhevPublic() {
         return computeIsPhev();
     }
 

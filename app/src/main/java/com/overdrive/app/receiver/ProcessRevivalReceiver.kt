@@ -53,14 +53,31 @@ class ProcessRevivalReceiver : BroadcastReceiver() {
         private const val TAG = "ProcessRevival"
         private const val ACTION = "com.overdrive.app.action.PROCESS_REVIVAL"
 
-        // 8 minutes — well inside the BYD MCU's ~10-15 min WiFi-cut budget.
-        // AccSentryDaemon's in-process 10s loop dominates when the process is
-        // alive, so this interval only matters during dead-process windows.
-        private const val INTERVAL_MS = 8 * 60 * 1000L
+        // 5 minutes — comfortably inside the BYD MCU's ~10-15 min WiFi-cut
+        // budget AND inside the in-process health-check rhythm. With the
+        // SCHEDULE_EXACT_ALARM / USE_EXACT_ALARM permissions declared in the
+        // manifest, setExactAndAllowWhileIdle on Android 12+ fires on time
+        // (the doze ~9-min maintenance-window floor only applies to inexact
+        // alarms; exact-allow-while-idle is granted maintenance window
+        // exemption when those permissions are held).
+        //
+        // Tightened from 8 min → 5 min so worst-case "MainActivity +
+        // watchdog + daemon all dead" recovery is 5-8 min instead of
+        // 8-13 min. Wake cost: ~288 wakes/day at 5min vs ~180/day at 8min;
+        // each wake is ~50-100ms CPU + radio init, so the delta is tens
+        // of seconds of additional CPU per day on a parked car —
+        // negligible on the 12V auxiliary.
+        //
+        // Note: AccSentryDaemon's in-process 10s loop dominates when the
+        // daemon process is alive, so this interval ONLY matters during
+        // the everything-died-simultaneously dead-process window.
+        private const val INTERVAL_MS = 5 * 60 * 1000L
 
-        // Backup fires this much later than the primary. If the primary alarm
-        // is dropped by the OS, the backup re-seeds the chain.
-        private const val BACKUP_OFFSET_MS = 4 * 60 * 1000L
+        // Backup fires this much later than the primary. If the primary
+        // alarm is dropped by the OS, the backup re-seeds the chain.
+        // Tightened from 4min → 3min to match the smaller primary interval;
+        // total worst-case revival is now 5+3 = 8 min (was 8+4 = 12 min).
+        private const val BACKUP_OFFSET_MS = 3 * 60 * 1000L
 
         private const val PRIMARY_REQUEST_CODE = 0xD001
         private const val BACKUP_REQUEST_CODE = 0xD002
