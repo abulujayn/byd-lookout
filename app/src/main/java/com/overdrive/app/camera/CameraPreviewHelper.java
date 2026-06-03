@@ -30,11 +30,13 @@ import java.util.concurrent.atomic.AtomicReference;
  *   <li><b>Direct AVMCamera</b> — opens the requested camera id via
  *       {@code AVMCamera} reflection, attaches a YUV_420_888 ImageReader,
  *       captures one frame, tears down. Reflection-only, no GL state.
- *       Restricted to camera ids the GL surveillance pipeline isn't
- *       currently holding — the BYD camera service can't multi-claim, and
- *       a parallel open while the panoramic stream is live can take down
- *       the camera HAL (event 1002). Callers must check holding state via
- *       {@link #isCameraHeldByPipeline(int)} before invoking.</li>
+ *       Restricted to the camera id the GL surveillance pipeline is currently
+ *       holding. On-device verification showed BYD concurrency is
+ *       pair-dependent: Tang camera 2 (360 strip) + camera 0 (windshield)
+ *       can stream together, while camera 1 + camera 0 opens but the second
+ *       stream delivers zero frames. Same-id multi-claim remains unsafe, so
+ *       callers must check holding state via {@link #isCameraHeldByPipeline(int)}
+ *       before invoking this one-shot preview path.</li>
  *   <li><b>Panoramic slice / virtual view</b> — never opens a second camera.
  *       Reads the surveillance engine's published mosaic JPEG and crops the
  *       requested quadrant on the caller (HTTP worker) thread. Zero GL or
@@ -51,13 +53,13 @@ public final class CameraPreviewHelper {
     // requests (e.g. live MJPEG to the dashboard).
     private static final int DEFAULT_TIMEOUT_MS = 800;
 
-    // Process-wide single-flight gate for direct AVMCamera previews. The
-    // BYD camera service is single-claim per id; two HTTP clients dialing
-    // the same dialog from two phones (or Phone + head unit) would race
-    // each other into AVMCamera.open and one of them would lose with a
-    // confusing "returned false" / null result. Instead, the second caller
-    // fast-fails to null and lets the API handler fall through to the
-    // panoramic-slice cache path.
+    // Process-wide single-flight gate for direct AVMCamera previews. BYD
+    // camera concurrency is pair-dependent and same-id multi-claim is unsafe;
+    // two HTTP clients dialing the same dialog from two phones (or Phone +
+    // head unit) would race each other into AVMCamera.open and one of them
+    // would lose with a confusing "returned false" / null result. Instead,
+    // the second caller fast-fails to null and lets the API handler fall
+    // through to the panoramic-slice cache path.
     private static final java.util.concurrent.atomic.AtomicBoolean directPreviewBusy =
         new java.util.concurrent.atomic.AtomicBoolean(false);
 
@@ -100,7 +102,7 @@ public final class CameraPreviewHelper {
         if (preferredWidth <= 0 || preferredHeight <= 0) return null;
         if (isCameraHeldByPipeline(cameraId)) {
             logger.info("Refusing direct preview for cam=" + cameraId
-                    + " — surveillance pipeline holds it (multi-claim crashes BYD HAL)");
+                    + " — surveillance pipeline already holds this camera id");
             return null;
         }
         return captureWithSize(cameraId, preferredWidth, preferredHeight, fps, timeoutMs);
@@ -111,7 +113,7 @@ public final class CameraPreviewHelper {
         if (width <= 0 || height <= 0) return null;
         if (isCameraHeldByPipeline(cameraId)) {
             logger.info("Refusing direct preview for cam=" + cameraId
-                    + " — surveillance pipeline holds it (multi-claim crashes BYD HAL)");
+                    + " — surveillance pipeline already holds this camera id");
             return null;
         }
         return captureWithSize(cameraId, width, height, fps, timeoutMs);

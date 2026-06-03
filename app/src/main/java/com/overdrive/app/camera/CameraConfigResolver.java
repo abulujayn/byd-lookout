@@ -59,6 +59,15 @@ public final class CameraConfigResolver {
             }
         }
 
+        // Field-verified Tang layout: camera 2 is the 360 panoramic strip and
+        // camera 0 is the windshield/front camera; both stream concurrently.
+        // Older installs can have cameraProfile=auto/legacy but a validated
+        // probedCameraId=2 manual override, so expose WINDSHIELD even when the
+        // profile defaults don't include it.
+        if (!roleMappings.containsKey(CameraRole.WINDSHIELD) && panoCameraId == 2) {
+            roleMappings.put(CameraRole.WINDSHIELD, CameraSourceRef.direct(0));
+        }
+
         return new ResolvedCameraConfig(
                 profile,
                 autoProfile ? CameraProfiles.PROFILE_AUTO : profile.getId(),

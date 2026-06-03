@@ -98,6 +98,15 @@ public class QualitySettingsApiHandler {
             handleGeocodingPost(out, body);
             return true;
         }
+        // Recording composition layout (standard 360 mosaic / dashcam)
+        if (path.equals("/api/settings/recording-layout") && method.equals("GET")) {
+            sendRecordingLayoutSettings(out);
+            return true;
+        }
+        if (path.equals("/api/settings/recording-layout") && method.equals("POST")) {
+            handleRecordingLayoutPost(out, body);
+            return true;
+        }
         // Web-shell appearance (theme picker shipped on every page).
         // Same UnifiedConfigManager-backed pattern as the rest of /api/settings.
         if (path.equals("/api/settings/appearance") && method.equals("GET")) {
@@ -1366,6 +1375,69 @@ public class QualitySettingsApiHandler {
         response.put("success", true);
         response.put("enabled", recording.optBoolean("audioEnabled", false));
         HttpResponse.sendJson(out, response.toString());
+    }
+
+    /**
+     * GET /api/settings/recording-layout — read the recording composition
+     * layout ("standard" 360 mosaic, default, or "dashcam": forward view on
+     * top with 360 left/rear/right below). Recordings only.
+     */
+    private static void sendRecordingLayoutSettings(OutputStream out) throws Exception {
+        JSONObject recording = com.overdrive.app.config.UnifiedConfigManager.getRecording();
+        com.overdrive.app.camera.ResolvedCameraConfig camera =
+            com.overdrive.app.camera.CameraConfigResolver.resolve();
+        int windshieldCameraId = camera.getDirectCameraIdForRole(
+            com.overdrive.app.camera.CameraRole.WINDSHIELD);
+        JSONObject response = new JSONObject();
+        response.put("success", true);
+        response.put("layout", recording.optString("recordingLayout", "standard"));
+        response.put("dashcamUseWindshield", recording.optBoolean("dashcamUseWindshield", false));
+        response.put("windshieldAvailable", windshieldCameraId >= 0);
+        response.put("windshieldCameraId", windshieldCameraId);
+        HttpResponse.sendJson(out, response.toString());
+    }
+
+    /**
+     * POST /api/settings/recording-layout — set the recording layout.
+     * Hot-applies to the live recorder via the pipeline (gated GPU uniform,
+     * no recompile) and persists for daemon restarts / later recorders.
+     */
+    private static void handleRecordingLayoutPost(OutputStream out, String body) throws Exception {
+        try {
+            JSONObject settings = new JSONObject(body);
+            String layout = "dashcam".equals(settings.optString("layout", "standard"))
+                ? "dashcam" : "standard";
+            com.overdrive.app.camera.ResolvedCameraConfig camera =
+                com.overdrive.app.camera.CameraConfigResolver.resolve();
+            int windshieldCameraId = camera.getDirectCameraIdForRole(
+                com.overdrive.app.camera.CameraRole.WINDSHIELD);
+            boolean windshieldAvailable = windshieldCameraId >= 0;
+            boolean useWindshield = settings.optBoolean("dashcamUseWindshield", false)
+                && windshieldAvailable;
+
+            JSONObject delta = new JSONObject();
+            delta.put("recordingLayout", layout);
+            delta.put("dashcamUseWindshield", useWindshield);
+            com.overdrive.app.config.UnifiedConfigManager.setRecording(delta);
+
+            com.overdrive.app.surveillance.GpuSurveillancePipeline pipeline =
+                CameraDaemon.getGpuPipeline();
+            if (pipeline != null) {
+                pipeline.setRecordingLayout("dashcam".equals(layout) ? 1 : 0);
+                pipeline.setDashcamUseWindshield(useWindshield);
+            }
+
+            JSONObject response = new JSONObject();
+            response.put("success", true);
+            response.put("layout", layout);
+            response.put("dashcamUseWindshield", useWindshield);
+            response.put("windshieldAvailable", windshieldAvailable);
+            response.put("windshieldCameraId", windshieldCameraId);
+            HttpResponse.sendJson(out, response.toString());
+        } catch (Exception e) {
+            CameraDaemon.log("Error setting recording layout: " + e.getMessage());
+            HttpResponse.sendJsonError(out, e.getMessage());
+        }
     }
 
     /**

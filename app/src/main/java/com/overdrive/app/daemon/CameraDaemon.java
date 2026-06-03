@@ -2475,7 +2475,16 @@ public class CameraDaemon {
                         .isTelemetryOverlayEnabledFor("pano");
                     gpuPipeline.setOverlayEnabled(overlayEnabled);
                     log("TelemetryDataCollector initialized, pano overlay=" + overlayEnabled);
-                    
+
+                    // Apply persisted recording layout (standard 360 mosaic / dashcam)
+                    String recLayout = com.overdrive.app.config.UnifiedConfigManager
+                        .getRecording().optString("recordingLayout", "standard");
+                    gpuPipeline.setRecordingLayout("dashcam".equals(recLayout) ? 1 : 0);
+                    boolean dashcamUseWindshield = com.overdrive.app.config.UnifiedConfigManager
+                        .getRecording().optBoolean("dashcamUseWindshield", false);
+                    gpuPipeline.setDashcamUseWindshield(dashcamUseWindshield);
+                    log("Recording layout: " + recLayout);
+
                     // Late-bind TelemetryDataCollector to TripAnalyticsManager
                     // (it was null when TripAnalytics was initialized before the 45s GPU delay)
                     if (tripAnalyticsManager != null) {

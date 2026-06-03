@@ -74,6 +74,7 @@ BYD.recording = {
             this.loadGeocoding(),
             this.loadNativeDvr(),
             this.loadOemDashcam(),
+            this.loadRecordingLayout(),
         ]);
         this.savedConfig = JSON.parse(JSON.stringify(this.config));
         this.updateUI();
@@ -215,6 +216,7 @@ BYD.recording = {
         // Surveillance.js's reloadConfig already does this for its OEM row;
         // recording.js was missing the symmetric call.
         await this.loadOemDashcam();
+        await this.loadRecordingLayout();
 
         // Update UI with all reloaded settings
         this.savedConfig = JSON.parse(JSON.stringify(this.config));
@@ -1961,6 +1963,102 @@ BYD.recording = {
             if (card) card.classList.toggle('mode-card-active', r.value === mode);
         });
         this.markChanged();
+    },
+
+    // ==================== Recording Layout ====================
+    //
+    // Standard = 2x2 360 mosaic (default). Dashcam = forward road view on
+    // top with the 360 left/rear/right cameras tiled along the bottom.
+    // Recordings only; telemetry overlay is preserved in both layouts.
+
+    async loadRecordingLayout() {
+        try {
+            const resp = await fetch('/api/settings/recording-layout');
+            const data = await resp.json();
+            if (data.success) {
+                this._applyRecordingLayoutButtons(data.layout || 'standard');
+
+                const wsToggle = document.getElementById('dashcamUseWindshield');
+                if (wsToggle) {
+                    wsToggle.checked = data.dashcamUseWindshield || false;
+                    wsToggle.disabled = !data.windshieldAvailable;
+                }
+
+                const infoLine = document.getElementById('windshieldCameraInfo');
+                if (infoLine) {
+                    if (!data.windshieldAvailable) {
+                        infoLine.textContent = BYD.i18n.t('recording.layout_windshield_unavailable');
+                        infoLine.style.display = 'block';
+                    } else {
+                        infoLine.style.display = 'none';
+                    }
+                }
+
+                this._updateWindshieldToggleVisibility(data.layout || 'standard');
+            }
+        } catch (e) {
+            console.warn('Failed to load recording layout:', e);
+        }
+    },
+
+    _updateWindshieldToggleVisibility(layout) {
+        const subSetting = document.getElementById('dashcamWindshieldSetting');
+        if (subSetting) {
+            subSetting.style.display = layout === 'dashcam' ? 'flex' : 'none';
+        }
+    },
+
+    _applyRecordingLayoutButtons(layout) {
+        const group = document.getElementById('recLayoutBtns');
+        if (!group) return;
+        group.querySelectorAll('.btn-toggle').forEach(btn =>
+            btn.classList.toggle('active', btn.dataset.value === layout));
+    },
+
+    async setRecordingLayout(layout) {
+        this._applyRecordingLayoutButtons(layout);
+        this._updateWindshieldToggleVisibility(layout);
+        await this._saveRecordingLayout();
+    },
+
+    async toggleDashcamWindshield() {
+        await this._saveRecordingLayout();
+    },
+
+    async _saveRecordingLayout() {
+        const group = document.getElementById('recLayoutBtns');
+        const active = group ? group.querySelector('.btn-toggle.active') : null;
+        const layout = active ? active.dataset.value : 'standard';
+
+        const wsToggle = document.getElementById('dashcamUseWindshield');
+        const dashcamUseWindshield = wsToggle ? wsToggle.checked : false;
+
+        try {
+            const resp = await fetch('/api/settings/recording-layout', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ layout, dashcamUseWindshield })
+            });
+            const data = await resp.json();
+            if (data.success) {
+                this._applyRecordingLayoutButtons(data.layout);
+                this._updateWindshieldToggleVisibility(data.layout);
+
+                if (wsToggle) {
+                    wsToggle.checked = data.dashcamUseWindshield;
+                    wsToggle.disabled = !data.windshieldAvailable;
+                }
+
+                if (BYD.utils && BYD.utils.toast) {
+                    const key = data.layout === 'dashcam' ? 'recording.layout_dashcam_toast' : 'recording.layout_standard_toast';
+                    BYD.utils.toast(BYD.i18n.t(key), 'success');
+                }
+            } else if (BYD.utils && BYD.utils.toast) {
+                BYD.utils.toast(BYD.i18n.t('recording.layout_update_failed'), 'error');
+            }
+        } catch (e) {
+            if (BYD.utils && BYD.utils.toast) BYD.utils.toast(BYD.i18n.t('recording.layout_update_failed'), 'error');
+        }
     }
 };
 

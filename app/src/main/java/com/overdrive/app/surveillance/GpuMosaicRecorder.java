@@ -92,6 +92,7 @@ public class GpuMosaicRecorder {
     private int uRectifyK1Location;
     private int uRectifyK2Location;
     private int uRectifyAspectLocation;
+    private int uRecordLayoutLocation;
     private int aPositionLocation;
     private int aTexCoordLocation;
 
@@ -195,6 +196,10 @@ public class GpuMosaicRecorder {
     // the lock. Reused — no per-frame alloc.
     private final float[] producerCornerScratch = new float[8];
     private final float[] flipFlagsScratch = new float[8];
+    // Recording composition layout. 0 = standard 2x2 360 mosaic (default)
+    private volatile int recordLayout = 0;
+    private final java.util.concurrent.atomic.AtomicBoolean recordLayoutUniformDirty =
+        new java.util.concurrent.atomic.AtomicBoolean(true);
     private long lastFrameTime = 0;
     private long frameCount = 0;
     
@@ -552,6 +557,11 @@ public class GpuMosaicRecorder {
         uRectifyK1Location = GLES20.glGetUniformLocation(programId, "uRectifyK1");
         uRectifyK2Location = GLES20.glGetUniformLocation(programId, "uRectifyK2");
         uRectifyAspectLocation = GLES20.glGetUniformLocation(programId, "uRectifyAspect");
+        uRecordLayoutLocation = GLES20.glGetUniformLocation(programId, "uRecordLayout");
+        // Force both deferred uniforms to be re-pushed on the first frame of
+        // this (possibly reinitialized) program object.
+        apaModeUniformDirty.set(true);
+        recordLayoutUniformDirty.set(true);
 
         GlUtil.checkGlError("glGetLocation");
         
@@ -1692,6 +1702,7 @@ public class GpuMosaicRecorder {
             // than horizontal content of the same physical length).
             // Identity-equivalent at any aspect when k1 = k2 = 0.
             "uniform float uRectifyAspect;\n" +
+            "uniform float uRecordLayout;\n" +
             "varying vec2 vTexCoord;\n" +
             // NOTE: the previous revision of this file had a 4-tap
             // Catmull-Rom bicubic sampler here, gated on uRectifyK1 > 0.

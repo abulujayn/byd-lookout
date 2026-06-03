@@ -170,6 +170,25 @@ public class PanoramicCameraGpu {
     // by createCameraSurfaceTexture(), freed by releaseCameraConsumer().
     // Bound directly to cameraTextureId — no separate gralloc handoff.
     private SurfaceTexture cameraSurfaceTexture;
+
+    // Optional direct windshield camera used by the dashcam recording layout.
+    // Field verification on Tang: pano camera 2 and windshield camera 0 stream
+    // concurrently. This path is opened only when the user selects dashcam +
+    // windshield source; if open/bind fails the recorder falls back to the
+    // 360-front slice without dropping frames.
+    private ImageReader windshieldImageReader;
+    private Surface windshieldSurface;
+    private Object windshieldCameraObj;
+    private int windshieldTextureId;
+    private volatile boolean windshieldEnabled = false;
+    private volatile int windshieldCameraId = -1;
+    private volatile boolean windshieldPending = false;
+    private boolean windshieldStarted = false;
+    private boolean windshieldOpenFailed = false;
+    private boolean windshieldFrameReady = false;
+    private Image windshieldBoundImage;
+    private HardwareBuffer windshieldBoundHwBuffer;
+    private long windshieldFrameCount = 0;
     // Dedicated handler for ImageReader.OnImageAvailableListener. MUST be
     // separate from glHandler — renderLoop blocks the GL thread on
     // frameSync.wait(), which would starve the listener if it ran on the
@@ -731,6 +750,7 @@ public class PanoramicCameraGpu {
         
         // Create camera texture (OES type for external camera)
         cameraTextureId = GlUtil.createExternalTexture();
+        windshieldTextureId = GlUtil.createExternalTexture();
 
         // Build the camera consumer. Default = esco-style SurfaceTexture
         // path (addTexture/setTexture/rmTexture + previewIndex). Falls back
@@ -1345,6 +1365,109 @@ public class PanoramicCameraGpu {
         currentTexMatrix[10] = 1f; currentTexMatrix[11] = 0f;
         currentTexMatrix[12] = 0f; currentTexMatrix[13] = 0f;
         currentTexMatrix[14] = 0f; currentTexMatrix[15] = 1f;
+    }
+
+    private void createWindshieldImageReader() {
+        if (imageReaderThread == null) {
+            imageReaderThread = new HandlerThread("CamImageReaderCb");
+            imageReaderThread.start();
+            imageReaderHandler = new Handler(imageReaderThread.getLooper());
+        }
+        try {
+            windshieldImageReader = ImageReader.newInstance(
+                1920, 1080,
+                ImageFormat.PRIVATE,
+                4,
+                HardwareBuffer.USAGE_GPU_SAMPLED_IMAGE);
+        } catch (Throwable t) {
+            logger.warn("Windshield ImageReader PRIVATE init failed: " + t.getMessage()
+                + " — falling back to YUV_420_888");
+            windshieldImageReader = ImageReader.newInstance(
+                1920, 1080,
+                ImageFormat.YUV_420_888,
+                4);
+        }
+        windshieldImageReader.setOnImageAvailableListener(this::onWindshieldImageAvailable,
+            imageReaderHandler);
+        windshieldSurface = windshieldImageReader.getSurface();
+    }
+
+    private void onWindshieldImageAvailable(ImageReader r) {
+        windshieldPending = true;
+        synchronized (frameSync) {
+            frameSync.notify();
+        }
+    }
+
+    private void updateWindshieldCameraOnGlThread() {
+        if (windshieldEnabled && windshieldCameraId >= 0) {
+            if (!windshieldStarted && !windshieldOpenFailed) {
+                startWindshieldCameraOnGlThread();
+            }
+        } else if (windshieldStarted || windshieldOpenFailed) {
+            stopWindshieldCameraOnGlThread();
+            windshieldOpenFailed = false;
+        }
+    }
+
+    private void startWindshieldCameraOnGlThread() {
+        try {
+            createWindshieldImageReader();
+            Class<?> avmClass = Class.forName("android.hardware.AVMCamera");
+            Constructor<?> constructor = avmClass.getDeclaredConstructor(int.class);
+            constructor.setAccessible(true);
+            windshieldCameraObj = constructor.newInstance(windshieldCameraId);
+
+            Method mOpen = avmClass.getDeclaredMethod("open");
+            mOpen.setAccessible(true);
+            if (!(boolean) mOpen.invoke(windshieldCameraObj)) {
+                throw new RuntimeException("AVMCamera.open() returned false (id="
+                    + windshieldCameraId + ")");
+            }
+
+            AvmCameraHelper.setCameraFps(windshieldCameraObj, targetFps);
+
+            Method mAddSurface = avmClass.getDeclaredMethod("addPreviewSurface", Surface.class, int.class);
+            mAddSurface.setAccessible(true);
+            mAddSurface.invoke(windshieldCameraObj, windshieldSurface, 0);
+
+            Method mStart = avmClass.getDeclaredMethod("startPreview");
+            mStart.setAccessible(true);
+            mStart.invoke(windshieldCameraObj);
+
+            windshieldStarted = true;
+            windshieldFrameReady = false;
+            windshieldFrameCount = 0;
+            logger.info("Windshield camera started (id=" + windshieldCameraId + ")");
+        } catch (Throwable t) {
+            logger.warn("Windshield camera unavailable; dashcam layout will fall back to 360 front: "
+                + t.getMessage());
+            windshieldOpenFailed = true;
+            stopWindshieldCameraOnGlThread();
+        }
+    }
+
+    private void stopWindshieldCameraOnGlThread() {
+        if (windshieldCameraObj != null) {
+            BydCameraCoordinator.closeCamera(windshieldCameraObj, 0);
+            windshieldCameraObj = null;
+        }
+        releasePreviousBoundWindshieldImage();
+        if (windshieldSurface != null) {
+            try { windshieldSurface.release(); } catch (Throwable ignored) {}
+            windshieldSurface = null;
+        }
+        if (windshieldImageReader != null) {
+            try { windshieldImageReader.close(); } catch (Throwable ignored) {}
+            windshieldImageReader = null;
+        }
+        if (windshieldStarted || windshieldFrameReady) {
+            logger.info("Windshield camera stopped (frames=" + windshieldFrameCount + ")");
+        }
+        windshieldStarted = false;
+        windshieldPending = false;
+        windshieldFrameReady = false;
+        windshieldFrameCount = 0;
     }
     
     /**
@@ -2144,6 +2267,53 @@ public class PanoramicCameraGpu {
         }
     }
 
+    private boolean consumeLatestWindshieldImageAndBind() {
+        ImageReader reader = windshieldImageReader;
+        if (reader == null || windshieldTextureId == 0) return false;
+        Image image = null;
+        HardwareBuffer hwBuffer = null;
+        boolean transferredOwnership = false;
+        try {
+            image = reader.acquireLatestImage();
+            if (image == null) return false;
+            hwBuffer = image.getHardwareBuffer();
+            if (hwBuffer == null) return false;
+            boolean bound = HardwareBufferTextureBinder
+                .bindHardwareBufferToTextureNative(hwBuffer, windshieldTextureId);
+            if (!bound) return false;
+            releasePreviousBoundWindshieldImage();
+            windshieldBoundImage = image;
+            windshieldBoundHwBuffer = hwBuffer;
+            windshieldFrameReady = true;
+            windshieldFrameCount++;
+            transferredOwnership = true;
+            return true;
+        } catch (Throwable t) {
+            logger.warn("consumeLatestWindshieldImageAndBind error: " + t.getMessage());
+            return false;
+        } finally {
+            if (!transferredOwnership) {
+                if (hwBuffer != null) {
+                    try { hwBuffer.close(); } catch (Throwable ignored) {}
+                }
+                if (image != null) {
+                    try { image.close(); } catch (Throwable ignored) {}
+                }
+            }
+        }
+    }
+
+    private void releasePreviousBoundWindshieldImage() {
+        if (windshieldBoundHwBuffer != null) {
+            try { windshieldBoundHwBuffer.close(); } catch (Throwable ignored) {}
+            windshieldBoundHwBuffer = null;
+        }
+        if (windshieldBoundImage != null) {
+            try { windshieldBoundImage.close(); } catch (Throwable ignored) {}
+            windshieldBoundImage = null;
+        }
+    }
+
     /** Periodic diagnostic for the ImageReader path. Throttled to align with
      *  the 2-minute Stats log so it rides along instead of spamming. */
     private void maybeLogImageReaderDiag() {
@@ -2392,7 +2562,13 @@ public class PanoramicCameraGpu {
                 // the encoder now produces PTS values that exactly mirror real
                 // camera cadence, eliminating the rubber-banding/snapback the
                 // EMA introduced at 15+ fps.
-                localRecorder.drawFrame(cameraTextureId, currentFrameTimestampNs);
+                updateWindshieldCameraOnGlThread();
+                if (windshieldStarted && windshieldPending) {
+                    consumeLatestWindshieldImageAndBind();
+                    windshieldPending = false;
+                }
+                localRecorder.drawFrame(cameraTextureId, windshieldTextureId,
+                    windshieldStarted && windshieldFrameReady, currentFrameTimestampNs);
 
                 // CRITICAL: Drain encoder immediately after frame submission
                 // This prevents eglSwapBuffers from blocking when encoder buffers fill up
@@ -3755,6 +3931,8 @@ public class PanoramicCameraGpu {
             }
         }
 
+        stopWindshieldCameraOnGlThread();
+
         // Releases whichever consumer (SurfaceTexture or ImageReader) is active.
         releaseCameraConsumer();
 
@@ -3769,6 +3947,10 @@ public class PanoramicCameraGpu {
         if (cameraTextureId != 0) {
             GlUtil.deleteTexture(cameraTextureId);
             cameraTextureId = 0;
+        }
+        if (windshieldTextureId != 0) {
+            GlUtil.deleteTexture(windshieldTextureId);
+            windshieldTextureId = 0;
         }
         
         if (dummySurface != null) {
@@ -3794,6 +3976,24 @@ public class PanoramicCameraGpu {
                                       HardwareEventRecorderGpu streamEncoder) {
         this.streamScaler = streamScaler;
         this.streamEncoder = streamEncoder;
+    }
+
+    /**
+     * Enables/disables the optional direct windshield camera used by the
+     * dashcam recording layout. The actual AVMCamera open/close happens on
+     * the GL thread; if it fails, the recorder keeps using the 360-front
+     * fallback without interrupting recording.
+     */
+    public void setDashcamWindshieldCamera(boolean enabled, int cameraId) {
+        this.windshieldEnabled = enabled && cameraId >= 0;
+        this.windshieldCameraId = cameraId;
+        this.windshieldOpenFailed = false;
+        Handler handler = glHandler;
+        if (handler != null) {
+            handler.post(this::updateWindshieldCameraOnGlThread);
+        }
+        logger.info("Dashcam windshield source "
+            + (this.windshieldEnabled ? ("enabled (id=" + cameraId + ")") : "disabled"));
     }
     
     /**

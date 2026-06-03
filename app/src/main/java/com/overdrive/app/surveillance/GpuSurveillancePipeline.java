@@ -68,7 +68,14 @@ public class GpuSurveillancePipeline {
     // release() can deregister it cleanly.
     private com.overdrive.app.config.UnifiedConfigManager.ConfigChangeListener
         rectifyConfigListener;
-    
+
+    // Recording composition layout (0 = standard 360 mosaic, 1 = dashcam:
+    // forward view on top + 360 left/rear/right below). Persisted in
+    // recording.recordingLayout; re-applied to each recorder on creation.
+    private volatile int recordingLayoutConfig = 0;
+    private volatile boolean dashcamUseWindshieldConfig = false;
+    private volatile int windshieldCameraIdConfig = -1;
+
     // Mode tracking
     private enum Mode {
         IDLE,           // Nothing active

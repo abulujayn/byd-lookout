@@ -103,6 +103,14 @@ public final class ResolvedCameraConfig {
         return new EnumMap<>(roleMappings);
     }
 
+    public int getDirectCameraIdForRole(CameraRole role) {
+        CameraSourceRef ref = roleMappings.get(role);
+        if (ref == null || ref.getKind() != CameraSourceKind.DIRECT || ref.getCameraId() == null) {
+            return -1;
+        }
+        return ref.getCameraId();
+    }
+
     /**
      * Resolves panoramic role → slice. Always returns a non-null slice for
      * every PANO_* role: profile defaults first, then user mappings (which may
