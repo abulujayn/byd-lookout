@@ -140,8 +140,8 @@
     "rate_limited": "一个命令仍在进行 等几秒钟",
     "not_supported": "这个控制器目前不用.",
     "find_car_label": "找个车",
-    "battery_heat_label": "热量电池",
-    "close_all_windows_label": "所有的窗户关闭"
+    "battery_heat_label": "电池热量",
+    "close_all_windows_label": "关闭所有的窗户"
   },
   "messages": {
     "logged_out": "登录出来",

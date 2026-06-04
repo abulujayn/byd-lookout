@@ -140,8 +140,8 @@
     "rate_limited": "명령은 계속 진행 중입니다",
     "not_supported": "이 컨트롤은 현재 사용할 수 없습니다.",
     "find_car_label": "차를 찾아",
-    "battery_heat_label": "핫타이터리",
-    "close_all_windows_label": "모든 창을 닫기"
+    "battery_heat_label": "배터리 열",
+    "close_all_windows_label": "모든 창문을 닫아"
   },
   "messages": {
     "logged_out": "로그아웃",

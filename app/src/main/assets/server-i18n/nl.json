@@ -140,8 +140,8 @@
     "rate_limited": "Een opdracht is nog in progress  wacht een paar seconden",
     "not_supported": "Deze controle is niet beschikbaar op dit moment.",
     "find_car_label": "Zoek een auto .",
-    "battery_heat_label": "Heat Battery",
-    "close_all_windows_label": "alle ramen dicht"
+    "battery_heat_label": "Batterijverwarming",
+    "close_all_windows_label": "Sluit alle ramen."
   },
   "messages": {
     "logged_out": "Ik heb me uitgeschakeld .",

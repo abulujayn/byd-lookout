@@ -1,17 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">OverDrive</string>
+    <!-- Accessibility Service -->
     <string name="accessibility_service_description">オバードライブの車両モニタリングをバックグラウンドで活性化します.このサービスは画面コンテンツを読み取ったり相互作用したりしません.</string>
+    <!-- Recording Mode Labels -->
+    <!-- Proximity Guard Settings Labels -->
+    <!-- Quality Settings Labels -->
+    <!-- Storage Labels -->
+    <!-- Recording Status Labels -->
+    <!-- Event Types -->
+    <!-- Filter Labels -->
+    <!-- Storage Breakdown -->
+    <!-- Recording Controls -->
+    <!-- Slider Range Labels -->
+    <!-- ============================================================
+         i18n string extraction (Step 1: Layouts)
+         ============================================================ -->
+    <!-- Drawer menu -->
+    <!-- Common buttons / labels -->
     <string name="action_cancel">キャンセル</string>
     <string name="action_clear_plain">クリア</string>
     <string name="action_select_all">すべてを選択</string>
     <string name="action_select_all_short">すべて</string>
     <string name="action_delete">削除</string>
+    <string name="action_share">Share</string>
     <string name="action_done">完成</string>
     <string name="action_remind_me_later">後で思い出してください</string>
     <string name="action_retry">再試行</string>
     <string name="action_run">走る</string>
     <string name="action_clear_output">清潔な出力</string>
+    <!-- Nav header -->
+    <!-- Common content descriptions -->
     <string name="cd_camera">カメラ</string>
     <string name="cd_qr">QR</string>
     <string name="cd_qr_code">QRコード</string>
@@ -32,7 +51,13 @@
     <string name="cd_player_maximize">プレイヤーを最大限に</string>
     <string name="cd_player_minimize">出口フルスクリーン</string>
     <string name="cd_player_mute">オーディオを切り替える</string>
+    <string name="cd_player_quadrant_all">Show all cameras</string>
+    <string name="cd_player_quadrant_front">Show front camera</string>
+    <string name="cd_player_quadrant_right">Show right camera</string>
+    <string name="cd_player_quadrant_rear">Show rear camera</string>
+    <string name="cd_player_quadrant_left">Show left camera</string>
     <string name="cd_delete">削除</string>
+    <string name="cd_share">Share</string>
     <string name="cd_expand">拡大する</string>
     <string name="cd_configure">設定</string>
     <string name="cd_download_log">ダウンロードログ</string>
@@ -40,23 +65,33 @@
     <string name="cd_battery">バッテリー</string>
     <string name="cd_step_completed">ステップ完了</string>
     <string name="cd_permission_granted">許可が認められた</string>
+    <!-- overlay_status -->
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">トリップ</string>
     <string name="overlay_mic_inactive_label">MIC</string>
+    <!-- item_log_entry placeholders (timestamp/tag/message are runtime, but these are
+         placeholder/preview text used at design time and visible in some empty states) -->
     <string name="log_entry_default_timestamp">12時34分56分</string>
     <string name="log_entry_default_tag">[タグ]</string>
     <string name="log_entry_default_message">ログメッセージ</string>
+    <!-- item_safe_location -->
+    <!-- item_daemon_card -->
     <string name="daemon_card_default_name">デイモン名</string>
     <string name="daemon_card_default_status">状態メッセージ</string>
     <string name="daemon_card_subprocesses">超進捗</string>
+    <!-- item_time_window -->
+    <!-- fragment_logs_panel -->
     <string name="logs_panel_title">ログ</string>
+    <!-- activity_main_new / activity_main-land -->
     <string name="url_connecting">接続する...</string>
+    <!-- dialog_tailscale_settings -->
     <string name="tailscale_generate_login_url">ログイン URL を生成する</string>
     <string name="tailscale_scan_to_login">ログインにスキャンする</string>
     <string name="tailscale_qr_waiting">URLのログインを待っています</string>
     <string name="tailscale_enable_proxy">Tailscale プロキシを有効にする</string>
     <string name="tailscale_proxy_explainer">MQTTから Tailscaleまでの経路は ポート転送なしで 尾ネットでプライベートブローカーに連絡することができます</string>
     <string name="tailscale_proxy_warning">MQTTが有効になっている間に,公共のブローカー (HiveMQ, AWS IoT,など) に MQTTが失敗します  Tailscaleはあなたの尾ネットへのルートのみです.保存はデモンを再起動します.</string>
+    <!-- Camera ingestion mode selector (Default vs DiLink 4) -->
     <string name="camera_mode_title">摂取モード</string>
     <string name="camera_mode_subtitle">頭部ユニットに一致するパスを選択します.デフォルトはほとんどのBYDモデルに適合します.AVM HALがプリシードされた2x2モザイクを発射する新しい装飾 (Han / Tang 2024+) では DiLink 4 が必要です.</string>
     <string name="camera_mode_option_default">デフォルト  Seal, Atto, Dolphin (ほとんどの車) で動作する</string>
@@ -65,12 +100,14 @@
     <string name="camera_mode_current_dilink4">現在の: ディリンク4</string>
     <string name="camera_mode_save">適用モード</string>
     <string name="camera_mode_hint">モードを変更するとカメラdaemonが再起動します.ビデオが間違っていた場合 (スクイッチ,欠落の四角形,赤色のオーバーレイ) 他のモードを試してみてください.</string>
+    <!-- DiLink 4 quadrant tweaks (only effective when cameraMode = DiLink 4) -->
     <string name="camera_dilink4_tweaks_title">ディリンク4クアドラント・ツイック</string>
     <string name="camera_dilink4_tweaks_subtitle">DiLink 4路線の車両調整. DiLink 4モードが上記に選択された場合にのみ有効です.</string>
     <string name="camera_dilink4_save">調整を適用する</string>
-    <string name="camera_dilink4_hint">HALがフード上に赤色の"キャリブレーション失敗"クロームを塗った場合にのみ,これらのタグを切り替える. Daemon リセットアップは変更を適用します.</string>
+    <string name="camera_dilink4_hint">HALがフード上に赤色の\"キャリブレーション失敗\"クロームを塗った場合にのみ,これらのタグを切り替える. Daemon リセットアップは変更を適用します.</string>
     <string name="camera_dilink4_red_mask_label">赤い校准覆い (GL) を抑制する</string>
-    <string name="camera_dilink4_red_mask_subtitle">鮮やかな赤色のHAL"校正失敗"ピクセルを検出するフラグメントシェッダーパスを追加し,隣接するサンプル (またはバナーが塗装するには大きすぎると明るさ灰色) で置き換える.</string>
+    <string name="camera_dilink4_red_mask_subtitle">鮮やかな赤色のHAL\"校正失敗\"ピクセルを検出するフラグメントシェッダーパスを追加し,隣接するサンプル (またはバナーが塗装するには大きすぎると明るさ灰色) で置き換える.</string>
+    <!-- dialog_camera_selection -->
     <string name="camera_selection_title">カメラ選択</string>
     <string name="camera_selection_subtitle">パノラマカメラ源を選択する</string>
     <string name="camera_current_auto">現在の: 自動</string>
@@ -82,6 +119,21 @@
     <string name="camera_option_4">カメラ4</string>
     <string name="camera_option_5">カメラ5</string>
     <string name="camera_selection_hint">カメラ1 = BYD Seal, カメラ0 = Atto トリム. 設定が有効になるために カメラIDを変更した後,デモンを再起動します.</string>
+    <!-- OEM Dashcam camera ID picker (Phase 5: separate forward-sensor pipeline) -->
+    <string name="camera_oem_dashcam_title">OEM Dashcam Camera ID</string>
+    <string name="camera_oem_dashcam_hint">Pick the AVMCamera id that points at the forward dashcam sensor. Dashcam is the OPPOSITE of pano: Seal/Han pano = 1 → dashcam = 0; Atto / Tang pano = 0 → dashcam = 1. Leave on Auto to let OverDrive pick.</string>
+    <string name="camera_oem_dashcam_auto_resolved">Auto — using id %1$d (pano is id %2$d)</string>
+    <string name="camera_oem_dashcam_auto_unavailable">Auto — pano id is %1$d, can\'t infer dashcam</string>
+    <string name="camera_oem_dashcam_save">Save</string>
+    <!-- Dashcam-side camera labels — REVERSE of the pano labels above. The
+         OEM dashcam id is the opposite of the pano id, so the helpful
+         "this is what your trim should pick" hint flips between the two
+         dialogs. Without these strings the dashcam picker re-used the pano
+         labels and told Seal owners to pick "Camera 1 — Seal" for their
+         dashcam, which is the pano camera, not the dashcam. -->
+    <string name="camera_oem_option_0">Camera 0 — Seal / Han (default)</string>
+    <string name="camera_oem_option_1">Camera 1 — Atto / Tang</string>
+    <!-- Camera mapping dialog (multi-vehicle role-to-slice routing) -->
     <string name="camera_mapping_title">カメラマッピング</string>
     <string name="camera_role_label">役割マッピング</string>
     <string name="camera_candidate_previous">前記</string>
@@ -96,6 +148,7 @@
     <string name="camera_mapping_current_format">現在のマッピング: %1$s</string>
     <string name="camera_mapping_current_none">現在のマッピング:自動 / デフォルト</string>
     <string name="camera_mapping_hint">OverDriveは,既知の起動動作をデフォルトで保持しますが,現在では,統合パノラマストライプを適切に校正することができます.各原始統合スライスをプリビューし,論理的な360の役割を実際に車両の前/右/後/左に表示するスライスにマップします.そしてデモンはそのレイアウトを再起動後録音,ストリーミング,AIに使用します.</string>
+    <!-- fragment_dashboard -->
     <string name="dashboard_scan_to_connect">接続をスキャンする</string>
     <string name="dashboard_qr_waiting">トンネルを待ってる</string>
     <string name="dashboard_daemons_running_default">0/5 走る</string>
@@ -103,6 +156,8 @@
     <string name="dashboard_access_code">アクセスコード</string>
     <string name="dashboard_token_masked">••••••••</string>
     <string name="dashboard_regenerate_token">再生する記号</string>
+    <!-- fragment_recording_controls -->
+    <!-- dialog_setup_guide -->
     <string name="setup_guide_title">始めること</string>
     <string name="setup_guide_subtitle">最高の体験を得るための3つの簡単なステップ</string>
     <string name="setup_step_one_label">1</string>
@@ -117,13 +172,21 @@
     <string name="setup_overlay_title">他のアプリで表示を許可する</string>
     <string name="setup_overlay_body">他のアプリの上に記録およびトラッキングの移動状態を示す浮動状態表示を有効にします.</string>
     <string name="setup_overlay_button">オーバーレイ設定を開く</string>
+    <!-- Language picker (drawer footer + bottom sheet) -->
     <string name="cd_close">閉じる</string>
     <string name="language_picker_title">言語</string>
+    <!-- Subtitle on the language-picker bottom sheet. %1$d is the supported
+         language count (Auto adds an extra row but isn't counted). -->
     <string name="language_picker_subtitle_fmt">%1$d の言語</string>
+    <!-- Subtitle placeholder while the count is being computed. -->
     <string name="language_picker_subtitle_pending">言語を選択する</string>
     <string name="language_auto_title">自動運転</string>
+    <!-- %1$s is the native-script name of the locale that "Auto" currently
+         resolves to, e.g. "Auto · English". -->
     <string name="language_auto_subtitle">フォローシステム · %1$s</string>
+    <!-- Drawer footer subtitle when on Auto, e.g. "English · Auto". -->
     <string name="language_label_auto_fmt">%1$s · オート</string>
+    <!-- fragment_adb_console -->
     <string name="adb_prompt">$</string>
     <string name="adb_command_hint">命令を入力する...</string>
     <string name="adb_preset_commands_header">前設定コマンド</string>
@@ -131,13 +194,17 @@
     <string name="adb_output_ready">命令を準備する</string>
     <string name="adb_console_hero_title">ADB コンソール</string>
     <string name="adb_console_hero_subtitle">デバイスでシェルコマンドを実行する</string>
+    <!-- fragment_webview -->
     <string name="webview_loading">荷物...</string>
     <string name="webview_camera_daemon_not_running">カメラデモンが動かない</string>
     <string name="webview_start_camera_daemon">このページにアクセスするために デーモン画面からカメラデーモンを起動します</string>
+    <!-- dialog_roi_drawing -->
+    <!-- dialog_zrok_token -->
     <string name="zrok_enable_token_hint">トークンを有効にする</string>
     <string name="zrok_token_storage_note">トークンは安全に保存され,アプリとデモンプロセス間で共有されます.</string>
     <string name="zrok_reset_environment">Zrok 環境をリセットする</string>
     <string name="zrok_reset_environment_desc">環境とトークンを削除します. トークンを再び有効にする必要があります (デバイススロットを使用します).</string>
+    <!-- dialog_reset_data -->
     <string name="reset_title">データをリセットする</string>
     <string name="reset_subtitle">カテゴリー別で蓄積されたデータを消す</string>
     <string name="reset_warning">記録,旅行,バッテリー履歴は永久に削除されます.</string>
@@ -159,6 +226,8 @@
     <string name="reset_cat_proximity_desc">ラダーで触発されたイベント MP4</string>
     <string name="reset_cat_trip_files">旅行テレメトリファイル</string>
     <string name="reset_cat_trip_files_desc">ドライブで1回のJSONテレメトリ</string>
+    <!-- fragment_abrp_settings -->
+    <!-- fragment_recording_library -->
     <string name="recording_lib_chip_any">どれか</string>
     <string name="recording_lib_chip_person">人</string>
     <string name="recording_lib_chip_vehicle">車両</string>
@@ -168,6 +237,7 @@
     <string name="recording_lib_chip_critical">批判的</string>
     <string name="recording_lib_selected_count_zero">0 選択した</string>
     <string name="recording_lib_no_recordings">記録なし</string>
+    <!-- v4 redesign: collapsible filter bar + single-row date jump -->
     <string name="recording_lib_filter_button">フィルター</string>
     <string name="recording_lib_filter_button_active">フィルター · %1$d</string>
     <string name="recording_lib_filter_sheet_title">フィルター録音</string>
@@ -177,6 +247,7 @@
     <string name="recording_lib_filter_section_severity">重度</string>
     <string name="recording_lib_filter_section_type">タイプ</string>
     <string name="recording_lib_filter_section_place">場所</string>
+    <string name="recording_lib_place_search_hint">Search places…</string>
     <string name="recording_lib_chip_type_normal">標準</string>
     <string name="recording_lib_chip_type_proximity">距離</string>
     <string name="recording_lib_date_today">今日</string>
@@ -194,14 +265,46 @@
     <string name="cd_next_day">翌日</string>
     <string name="cd_open_filters">オープンフィルター</string>
     <string name="cd_clear_filter">透明なフィルター</string>
+    <!-- v5 redesign: SOTA empty state with CTA + tile type badges -->
+    <string name="recording_lib_empty_title">No recordings match</string>
+    <string name="recording_lib_empty_body">Try adjusting your date range or chip filters.</string>
+    <string name="recording_lib_empty_clear_filters">Clear filters</string>
+    <!-- Shown on the empty-state body when there are zero clips on disk
+         (no filter is active). Sets a friendlier tone than "No recordings match". -->
+    <string name="recording_lib_empty_disk_title">Nothing recorded yet</string>
+    <string name="recording_lib_empty_disk_body">Captures will appear here as soon as the dashcam or surveillance pipeline writes a clip.</string>
+    <!-- Shown while the daemon is warming the H2 recording index on cold
+         start. Includes a progress counter when the daemon reports done/total,
+         otherwise a static body. The library re-polls every 1.5s and
+         transitions out automatically once results land. -->
+    <string name="recording_lib_building_index_title">Building library index</string>
+    <string name="recording_lib_building_index_body">One moment while the daemon scans your recordings.</string>
+    <string name="recording_lib_building_index_progress">Indexed %1$d of %2$d clips…</string>
+    <!-- Tile type badge labels — short, glanceable, mirrors the on-disk
+         filename prefix (cam_/event_/dvr_/proximity_) so power users can
+         map a tile back to its file group at a glance. -->
+    <string name="recording_lib_type_normal">CAM</string>
+    <string name="recording_lib_type_event">EVENT</string>
+    <string name="recording_lib_type_proximity">PROX</string>
+    <string name="recording_lib_type_oem">OEM</string>
+    <!-- Toast shown when a multi-select share is dispatched. -->
+    <string name="toast_share_recordings">Sharing %1$d recordings</string>
+    <!-- fragment_sentry_config -->
+    <!-- fragment_video_player -->
     <string name="player_title_recording">記録</string>
     <string name="player_time_zero">0:00</string>
     <string name="player_time_separator"> / </string>
+    <!-- fragment_daemons -->
     <string name="daemons_hero_title">背景サービス</string>
+    <!-- Subtitle on the Daemons hero header before the first state arrives. -->
     <string name="daemons_count_pending">運搬サービス...</string>
+    <!-- Subtitle on the Daemons hero header. %1$d running, %2$d total. -->
     <string name="daemons_count_fmt">%1$d の %2$d の実行</string>
+    <!-- dialog_time_window -->
+    <!-- dialog_update_progress -->
     <string name="update_preparing">更新を準備する...</string>
     <string name="update_percent_zero">0%</string>
+    <!-- dialog_battery_health -->
     <string name="battery_health_title">バッテリーの健康</string>
     <string name="battery_health_subtitle">健康状態</string>
     <string name="battery_health_dashes">--</string>
@@ -232,19 +335,27 @@
     <string name="toast_soh_observed_value_saved">%1$.1f kWhに更新されたパッケージ容量</string>
     <string name="toast_soh_observed_value_failed">パッケージ容量を更新できませんでした (%1$s).</string>
     <string name="diagnostics_battery_needs_review">要確認</string>
+    <!-- ============================================================
+         Step 2: Kotlin / Java UI literal extraction
+         ============================================================ -->
+    <!-- Notifications -->
+    <!-- Toasts / dialogs -->
     <string name="dialog_ok">OK</string>
+    <!-- Dynamic format strings -->
+    <!-- Plurals -->
     <plurals name="recordings_deleted_count">
-        <item quantity="one">%dの記録は削除</item>
         <item quantity="other">%dの記録が削除された</item>
     </plurals>
     <plurals name="delete_recordings_title">
-        <item quantity="one">%d レコーディングを削除する</item>
         <item quantity="other">%d録音を削除する</item>
     </plurals>
     <plurals name="delete_recordings_message">
-        <item quantity="one">%dの記録を永久に削除します これは取り消すことはできません</item>
         <item quantity="other">%dの録音は永久に削除されます.これは取り消すことはできません.</item>
     </plurals>
+    <!-- ============================================================
+         Step 2 (continued): MainActivity, fragments, dialogs
+         ============================================================ -->
+    <!-- MainActivity -->
     <string name="toast_updated_to">%1$s に更新されました</string>
     <string name="toast_update_install_failed">更新インストール失敗: %1$s</string>
     <string name="toast_checking_for_updates">更新をチェックする</string>
@@ -294,6 +405,7 @@
     <string name="dialog_traffic_reboot_message">変更が適用されました. 硬いリブートを実行してください. 鍵を押して中央コンソールボタンを5秒押してください.</string>
     <string name="traffic_monitor_loading">交通モニター: チェック...</string>
     <string name="traffic_monitor_tap_to_check">交通モニター (チェックするにはタップ)</string>
+    <!-- Reset categories -->
     <string name="reset_label_trips">走行履歴</string>
     <string name="reset_label_soc_history">SoC + 12V 過去</string>
     <string name="reset_label_soh">SOH校正</string>
@@ -303,6 +415,10 @@
     <string name="reset_label_sentry_events">監視イベント</string>
     <string name="reset_label_proximity">接近記録</string>
     <string name="reset_label_trip_files">旅行テレメトリファイル</string>
+    <!-- ROI dialog -->
+    <!-- Sentry config -->
+    <!-- Format helpers -->
+    <!-- Dashboard -->
     <string name="toast_access_code_copied">アクセスコードをコピーした</string>
     <string name="dialog_regenerate_token_title">再生する記号</string>
     <string name="dialog_regenerate_token_message">実行中のトークンが無効になる. すべてのアクティブセッションがログアウトされます.</string>
@@ -319,6 +435,7 @@
     <string name="tunnel_label_cloudflared">雲が吹いた</string>
     <string name="tunnel_label_zrok">Zrok</string>
     <string name="tunnel_label_tailscale">Tailscale</string>
+    <!-- Daemon names — shown on the Daemons list and dashboard. -->
     <string name="daemon_name_camera">カメラ Daemon</string>
     <string name="daemon_name_surveillance">監視 Daemon</string>
     <string name="daemon_name_acc_surveillance">ACC 監視</string>
@@ -329,6 +446,8 @@
     <string name="daemon_name_telegram">Telegram ボット</string>
     <string name="clip_label_access_code">アクセスコード</string>
     <string name="clip_label_url">URL</string>
+    <!-- ABRP -->
+    <!-- Daemons fragment -->
     <string name="toast_no_config_needed">%1$s の設定は必要ありません</string>
     <string name="dialog_zrok_token_title">Zrokトンネルトークン</string>
     <string name="dialog_zrok_token_message">Zrokの有効化トークンを入力します.</string>
@@ -370,6 +489,8 @@
     <string name="log_header_source">ソース: %1$s</string>
     <string name="log_header_exported">輸出: %1$s</string>
     <string name="log_header_truncated">注記:10000行までの短縮されたログ (合計:%1$d行)</string>
+    <!-- Recording controls -->
+    <!-- Recording library -->
     <string name="toast_cannot_play_video">ビデオ再生できない: %1$s</string>
     <string name="dialog_delete_recording_title">記録を削除する</string>
     <string name="dialog_delete_recording_message">%1$sを削除する</string>
@@ -377,30 +498,42 @@
     <string name="toast_recording_delete_failed">記録を削除できなかった</string>
     <string name="toast_batch_delete_partial">%1$dは削除され,%2$dは失敗</string>
     <string name="play_with_chooser">遊びなさい</string>
+    <!-- Setup guide -->
     <string name="setup_version_banner">更新された v%1$s 再び確認自動起動,BYDは,すべてのインストールでそれを消す</string>
     <string name="setup_overlay_already_granted">すでに 認め られ て いる</string>
+    <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">提示 &amp; トラブルシューティング</string>
     <string name="setup_traffic_title">BYD トラフィックモニターを無効にする</string>
     <string name="setup_traffic_body">BYD トラフィックモニターは,インターネットにアクセスできない第三者のアプリをブロックします.それを無効化すると,OverDriveとインストールする他のアプリが実際にネットワークを使用できます.その後ハードリブートが必要になります.</string>
     <string name="setup_traffic_button">オープントラフィックモニター</string>
     <string name="setup_camera_fix_title">カメラは黒か間違ってるのか?</string>
     <string name="setup_camera_fix_body">カメラのIDを0に設定し,保存をタップして,カメラデモンを再起動します.フィードがまだ間違っている場合は,カメラID1で繰り返します.マッピングセクションを未然にしてください.</string>
+    <!-- Recording storage path -->
+    <!-- MainActivity status -->
     <string name="camera_current_manual">現在のカメラ: %1$d (マニュアル)</string>
     <string name="camera_current_auto_label">現在の: 自動</string>
     <string name="soh_estimation_active">推定活動</string>
     <string name="soh_no_estimate_yet">推定はまだありません  データを待っています</string>
+    <!-- Recording tabs -->
+    <!-- Misc -->
     <string name="recording_lib_selected_count">%1$dが選択された</string>
     <string name="video_player_playback_error">再生エラー</string>
     <string name="video_player_no_events">イベントなし</string>
     <string name="daemon_configuration_required">設定が必要</string>
     <string name="daemon_configuration_message">%1$s</string>
+    <!-- Navigation graph fragment labels (shown as toolbar/ActionBar titles) -->
     <string name="nav_page_video_player">ビデオプレーヤー</string>
     <string name="nav_page_telegram">Telegram</string>
     <string name="nav_page_abrp">ABRP</string>
     <string name="nav_page_mqtt">MQTT</string>
     <string name="nav_page_byd_cloud">BYD Cloud</string>
+    <!-- StatusOverlayService persistent notification (foreground service) -->
     <string name="status_overlay_notif_title">OverDrive 状態</string>
     <string name="status_overlay_notif_text">ステータスオーバーレイ アクティブ</string>
+    <!-- ============================================================== -->
+    <!-- M3 Revamp: navigation rail + settings sub-rail + theme picker  -->
+    <!-- ============================================================== -->
+    <!-- Top-level destinations (navigation rail labels) -->
     <string name="rail_dashboard">デッシュボード</string>
     <string name="rail_live">生きている</string>
     <string name="rail_recordings">録画</string>
@@ -409,6 +542,7 @@
     <string name="rail_integrations">統合</string>
     <string name="rail_diagnostics">診断</string>
     <string name="rail_settings">設定</string>
+    <!-- Settings sub-rail -->
     <string name="settings_section_appearance">外見</string>
     <string name="settings_section_recording">記録</string>
     <string name="settings_section_surveillance">監視</string>
@@ -420,15 +554,24 @@
     <string name="settings_overlay_camera_subtitle">録音が動いている間に REC/ PROX バッジを表示します.</string>
     <string name="settings_overlay_trip_title">Trip を表示する</string>
     <string name="settings_overlay_trip_subtitle">トリップバッジを表示する</string>
+    <!-- Was "About & updates" — Check for Updates row was removed from
+         the About page, so the menu / rail label is now just "About". -->
     <string name="settings_section_about">情報</string>
+    <!-- Settings sub-rail (landscape) — overline + a11y -->
     <string name="settings_subrail_overline">設定</string>
     <string name="cd_settings_subrail">設定サブレール</string>
+    <!-- Settings → Vehicle data placeholder pane -->
+    <!-- Settings → Privacy pane copy -->
     <string name="settings_privacy_title">プライバシーとデータ</string>
     <string name="settings_privacy_body">リセットは録音インデックス,キャッシュされた認証,デモン状態,デバイス上の偏好をクリアします.</string>
+    <!-- Settings → About pane copy -->
     <string name="settings_about_title">OverDriveについて</string>
     <string name="settings_about_version_label">バージョン</string>
     <string name="settings_about_package_label">建設する</string>
     <string name="settings_about_check_update_value">最新のGitHubリリースを確認し、新しい場合はインストールします。</string>
+    <!-- Support-development section: tiered options, low-cost first.
+         star → spread → coffee, in that visual order. Copy aims for
+         personality without being corny — short, warm, specific. -->
     <string name="settings_about_support_section">あなたのような人々によって動かす</string>
     <string name="settings_about_support_share_title">他のオーナーにも伝えよう</string>
     <string name="settings_about_support_share_value">共有されたリンクは 他のBYDのオーナーがOverdriveを発見するのに役立ちます</string>
@@ -438,40 +581,45 @@
     <string name="settings_about_open_link_copied">ブラウザが見つかりませんでした. URLコピー: %1$s</string>
     <string name="settings_about_support_kofi_title">次のリリースに燃料</string>
     <string name="settings_about_support_kofi_value">カフェは夜明けの約束を支える</string>
-    <string name="settings_about_support_kofi_url">株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 株式会社 </string>
     <string name="settings_about_license_title">ライセンス</string>
     <string name="settings_about_license_value">MIT オープンソース. 完全テキストを表示するにはタップします.</string>
     <string name="settings_about_source_title">ソースコード</string>
     <string name="settings_about_source_value">github.com/yash-srivastava/Overdrive-release</string>
-    <string name="settings_about_license_url">販売開始開始開始開始</string>
-    <string name="settings_about_source_url">海外の反応</string>
     <string name="settings_about_star_title">を GitHub に 落とす</string>
     <string name="settings_about_star_value">ちょっと待って 沢山の意味がある</string>
-    <string name="settings_about_star_url">海外の反応</string>
     <string name="settings_about_thanks_title">ありがとう</string>
     <string name="settings_about_thanks_subtitle">コントリビューターとサポーターの皆さんに支えられています。</string>
     <string name="settings_about_contributors_title">コントリビューター</string>
     <string name="settings_about_supporters_title">サポーター</string>
     <string name="settings_about_thanks_empty">参加してくれる人が増えると、ここに表示されます。</string>
+    <!-- Settings → General -->
     <string name="settings_theme_label">テーマ</string>
     <string name="settings_theme_auto">自動 (フォローシステム)</string>
     <string name="settings_theme_light">ライト</string>
     <string name="settings_theme_dark">暗闇</string>
     <string name="settings_language_label">言語</string>
+    <!-- Recordings page (header + segmented control + page actions) -->
     <string name="recordings_title">録画</string>
     <string name="recordings_segment_dashcam">ダッシュキャム</string>
     <string name="recordings_segment_surveillance">監視</string>
     <string name="recordings_action_settings">設定</string>
+    <!-- Hero subtitle: "%1$d today · %2$d total · %3$s" where %3$s is a pre-formatted size like "42 GB". -->
     <string name="recordings_summary_format">%1$d今日 · %2$d合計 · %3$s</string>
+    <!-- Per-segment label with running count, e.g. "Dashcam · 118". -->
     <string name="recordings_segment_dashcam_count">ダッシュキャム · %d</string>
     <string name="recordings_segment_surveillance_count">監視 · %d</string>
+    <!-- Layout-time placeholder for the counts subtitle before the scan completes. -->
     <string name="recordings_summary_pending">—</string>
+    <!-- Landscape recordings preview placeholder (right pane). -->
     <string name="recordings_preview_placeholder_title">記録を選択する</string>
     <string name="recordings_preview_placeholder_body">左側にある任意のアイテムをタップして演奏します.</string>
+    <!-- Diagnostics page -->
     <string name="diagnostics_section_adb_console">ADB コンソール</string>
     <string name="diagnostics_section_traffic">交通モニター</string>
     <string name="diagnostics_section_camera_probe">カメラ探査機</string>
     <string name="diagnostics_section_battery">バッテリーの健康</string>
+    <!-- Sub-label used on diagnostics utility cards in landscape (hint to tap). -->
+    <!-- SOTA Diagnostics dashboard -->
     <string name="diagnostics_hero_title">システム診断</string>
     <string name="diagnostics_hero_subtitle">生体健康 記録 探査機</string>
     <string name="diagnostics_health_clear">清潔だ</string>
@@ -482,14 +630,19 @@
     <string name="diagnostics_health_battery">バッテリー</string>
     <string name="diagnostics_metric_pending">—</string>
     <string name="diagnostics_metric_online">オンライン</string>
+    <!-- Network tile: bottom line tunnel state (e.g. "Tunnel · Online"). %1$s is one of
+         tunnel_state_online / tunnel_state_offline / tunnel_state_connecting. -->
     <string name="diagnostics_network_tunnel_label">トンネル · %1$s</string>
     <string name="diagnostics_tunnel_state_online">オンライン</string>
     <string name="diagnostics_tunnel_state_offline">オフライン</string>
     <string name="diagnostics_tunnel_state_connecting">接続</string>
+    <!-- Network top-line fallbacks when no Wi-Fi SSID is available. -->
     <string name="diagnostics_network_mobile">モバイル</string>
     <string name="diagnostics_network_ethernet">エサネット</string>
     <string name="diagnostics_network_offline">オフライン</string>
+    <!-- Storage tile lines. %1$d clip count, %2$s human-readable used size. -->
     <string name="diagnostics_storage_used_line">%1$dクリップ · %2$sを使用</string>
+    <!-- Storage tile bottom line. %1$s human-readable free size. -->
     <string name="diagnostics_storage_free_line">%1$s 無料</string>
     <string name="diagnostics_logs_card_title">ライブイベントログ</string>
     <string name="diagnostics_logs_card_subtitle">実行サービスからのストリーミング出力</string>
@@ -499,6 +652,7 @@
     <string name="diagnostics_adb_subtitle">端末を開け</string>
     <string name="diagnostics_battery_subtitle">SOHを検査して 統計をまとめて</string>
     <string name="diagnostics_settings_subtitle">アプリの好み テーマ 言語</string>
+    <!-- SOTA Integrations page -->
     <string name="integrations_hero_title">統合</string>
     <string name="integrations_hero_subtitle">オーバードライブをあなたのサービスに接続する</string>
     <string name="integrations_status_unknown">設定をタップする</string>
@@ -509,19 +663,31 @@
     <string name="integrations_mqtt_desc">車両のテレメトリをホームアシスタントまたはMQTTの仲介者に公開する.</string>
     <string name="integrations_byd_cloud_desc">BYDアプリアカウントを接続して、ドアロック、ヘッドライト点滅、クラクションなどのリモートコマンドを有効にします。</string>
     <string name="integrations_configure_button">設定</string>
+    <!-- Settings → About / Privacy actions (rows) -->
     <string name="settings_action_check_update">更新をチェック</string>
     <string name="settings_action_reset_data">データをリセットする...</string>
+    <!-- Content descriptions for rail / segmented controls -->
     <string name="cd_brand_logo">OverDrive</string>
+    <!-- ============================================================== -->
+    <!-- Dashboard SOTA revamp                                            -->
+    <!-- ============================================================== -->
+    <!-- Hero card -->
+    <!-- SOTA hero headline. Static identity statement (not a time-of-day
+         greeting) — pairs with the OVERDRIVE overline above and the live
+         status row of chips below. Locale catalogs auto-translate. -->
     <string name="dashboard_hero_headline">監視中</string>
     <string name="dashboard_subtitle_all_systems">すべてのシステムはオンライン</string>
     <string name="dashboard_subtitle_some_offline">オンラインでの%1$dの%2$dサービス</string>
     <string name="dashboard_subtitle_no_tunnel">遠隔アクセスオフライン</string>
+    <!-- Metric tiles -->
     <string name="dashboard_metric_recordings">今日の録音</string>
     <string name="dashboard_metric_storage">使用された貯蔵庫</string>
     <string name="dashboard_metric_tunnel">リモートアクセス</string>
     <string name="dashboard_metric_services">背景サービス</string>
     <string name="dashboard_metric_value_pending">—</string>
     <string name="dashboard_metric_vehicle">車両</string>
+    <!-- Hero chips: at-a-glance pills under the greeting that summarize the
+         three most important live signals (tunnel, services, recording). -->
     <string name="dashboard_chip_recording_active">録画</string>
     <string name="dashboard_chip_recording_idle">待機中</string>
     <string name="dashboard_vehicle_tap_to_set">セットをタップする</string>
@@ -540,36 +706,56 @@
     <string name="vehicle_dialog_summary_model">モデル: %1$s</string>
     <string name="vehicle_dialog_summary_calibration">Last calibrated: %1$.1f%% on %2$s</string>
     <string name="vehicle_dialog_soh_unavailable">入手できない</string>
+    <!-- Combined Recordings+Storage chip: e.g. "8.4 GB used · 12 GB free" -->
     <string name="dashboard_metric_storage_chip">%1$s使用 · %2$s 無料</string>
     <string name="dashboard_metric_storage_chip_pending">保存 </string>
     <string name="dashboard_tunnel_offline">オフライン</string>
     <string name="dashboard_tunnel_online">オンライン</string>
     <string name="dashboard_tunnel_connecting">接続する...</string>
+    <!-- Quick actions (now rendered as same-size tiles, not chips) -->
     <string name="dashboard_action_live">ライブビュー</string>
     <string name="dashboard_action_live_subtitle">オープンカメラビュー</string>
     <string name="dashboard_action_recordings">録画</string>
     <string name="dashboard_action_settings">設定</string>
     <string name="dashboard_action_settings_subtitle">優先順位について</string>
+    <!-- ============================================================ -->
+    <!-- Settings — SOTA portrait hub + section pages                  -->
+    <!-- ============================================================ -->
+    <!-- Hero -->
     <string name="settings_hero_title">設定</string>
     <string name="settings_hero_overline">過剰運転</string>
     <string name="settings_hero_subtitle">外見,記録,監視,およびデバイス上のデータを調節する.</string>
+    <!-- Section overlines -->
     <string name="settings_overline_preferences">優先順位</string>
     <string name="settings_overline_about_data">DATAについて</string>
+    <!-- Quick toggles -->
     <string name="settings_quick_theme_label">テーマ</string>
     <string name="settings_quick_language_label">言語</string>
+    <!-- Section row subtitles (portrait) -->
     <string name="settings_section_recording_subtitle">預設/後設バッファ,コードック,保存制限</string>
     <string name="settings_section_surveillance_subtitle">検出ゾーン スケジュール 動き感</string>
     <string name="settings_section_daemons_subtitle">クラウッドフラード,Zrok,Telegram,MQTTランナー</string>
+    <!-- About / data row subtitles -->
     <string name="settings_about_row_title">OverDriveについて</string>
     <string name="settings_about_row_subtitle">バージョン ライセンス サポート開発</string>
     <string name="settings_reset_row_subtitle">記録,イベント,またはすべてのキャッシュ.</string>
+    <!-- Footer -->
     <string name="settings_footer_format">OverDrive %1$s · %2$s</string>
+    <!-- ============================================================ -->
+    <!-- Appearance pane — SOTA visual theme picker                    -->
+    <!-- ============================================================ -->
     <string name="settings_appearance_subtitle">テーマ,言語,視覚の好み</string>
     <string name="settings_theme_active_auto_caption">自動はシステムテーマをフォローします</string>
     <string name="settings_theme_active_light_caption">ライトテーマは常にオンです</string>
     <string name="settings_theme_active_dark_caption">暗黒のテーマはいつも</string>
     <string name="settings_language_count_format">%1$d の %2$d の言語が利用可能</string>
     <string name="settings_language_card_title">ディスプレイ言語</string>
+    <!-- ============================================================ -->
+    <!-- Vehicle data pane — manifest permissions + integrations       -->
+    <!-- ============================================================ -->
+    <!-- ============================================================ -->
+    <!-- Privacy pane — stance + storage summary + reset               -->
+    <!-- ============================================================ -->
     <string name="settings_privacy_stance_title">デフォルトでデバイス内</string>
     <string name="settings_privacy_stance_body">OverDriveは完全にヘッドユニットで動きます 電気測定は 明らかに設定したトンネルや統合以外は 車から出ません</string>
     <string name="settings_privacy_overline_storage">ローカル ストレージ</string>
@@ -580,43 +766,66 @@
     <string name="settings_privacy_storage_count_format">%1$d クリップ</string>
     <string name="settings_privacy_storage_count_format_plural">%1$dクリップ</string>
     <string name="settings_privacy_reset_subtitle">カテゴリーを選択します:録音,イベント,デモン設定,キャッシュテレメトリ...</string>
+    <!-- Place tagging (reverse geocoding) — recording row chip fallback. -->
     <string name="recording_unknown_location">場所はない</string>
+    <!-- ============================================================== -->
+    <!-- Diagnostics health-tile values (Camera + Battery)                -->
+    <!-- ============================================================== -->
+    <!-- Camera tile primary value: %1$d is the probed camera id (0..N). -->
     <string name="diagnostics_camera_value_camera_n">カメラ%1$d</string>
+    <!-- Camera tile primary value when manual override is active. -->
     <string name="diagnostics_camera_value_camera_n_manual">カメラ%1$d (手動)</string>
     <string name="diagnostics_camera_value_probing">探査...</string>
     <string name="diagnostics_camera_value_offline">オフライン</string>
+    <!-- Battery tile primary value: %1$.0f is the SOH percent (0..100). -->
     <string name="diagnostics_battery_value_soh">%1$.0f%%</string>
     <string name="diagnostics_battery_value_pending">待機データ</string>
+    <!-- Dashboard recordings tile: live-record indicator prefix.
+         %1$d is today's clip count. The leading bullet is the red dot. -->
     <string name="dashboard_recordings_value_live">● %1$d</string>
+    <!-- ============================================================== -->
+    <!-- Dashboard hero subtitle — auto-rotating insights carousel        -->
+    <!-- ============================================================== -->
+    <!-- Each line replaces the static subtitle for ~5s, then cross-fades
+         to the next available insight. Numbers are bolded + tinted in the
+         provider, so translators should keep numeric placeholders intact
+         (do not spell out the digits). -->
+    <!-- First-launch welcome — only shown on the very first dashboard visit. -->
     <string name="dashboard_insight_welcome">お待たせしました オーバードライブはもう2番目の目です</string>
+    <!-- Parking delta. %1$s = absolute SOC delta string ("8%"); %2$s = absolute kWh string ("4 kWh"). -->
     <string name="dashboard_insight_parked_charged_kwh">駐車中に%1$s (≈%2$s) を拾った</string>
     <string name="dashboard_insight_parked_charged">駐車中に%1$sを拾った</string>
     <string name="dashboard_insight_parked_drained_kwh">駐車して以来 %1$s (≈%2$s) を使った</string>
     <string name="dashboard_insight_parked_drained">駐車して以来%1$sを使っています</string>
+    <!-- Most recent surveillance clip. %1$s = relative time, e.g. "2 hr. ago" / "yesterday". -->
     <string name="dashboard_insight_last_alert">最後の監視警報: %1$s</string>
+    <!-- Most recent completed charging session in the last 24h.
+         %1$s = energy added (e.g. "12.4 kWh"); %2$s = duration (e.g. "1 hr 45 min"). -->
     <string name="dashboard_insight_last_charge">最後の電荷: %2$s で +%1$s</string>
+    <!-- Storage milestone. %1$d = clip count; %2$s = total size (e.g. "42 GB"). -->
     <string name="dashboard_insight_storage_milestone">%1$dクリップ · %2$s録音</string>
+    <!-- Number formatters used inside other insights. Translators may localize
+         the unit suffix (e.g. "키와트" / "квт·ч") but should leave the float
+         placeholder shape so the bold-ifier still finds the digits. -->
     <string name="dashboard_insight_kwh_format">%1$.1f kWh</string>
     <string name="dashboard_insight_percent_format">%1$.1f%%</string>
     <string name="dashboard_insight_hours_minutes">%1$d hr %2$d min</string>
+    <!-- Today's clips. -->
     <plurals name="dashboard_insight_today_clips">
-        <item quantity="one">%1$dクリップは今日録音されました</item>
         <item quantity="other">今日録音された%1$dクリップ</item>
     </plurals>
+    <!-- Process uptime. Days form takes (days, hours); hours form takes hours only. -->
     <plurals name="dashboard_insight_uptime_days_hours">
-        <item quantity="one">%1$d日,%2$d時間でオンラインでドライブ</item>
         <item quantity="other">%1$d日,%2$d時間,オンラインで運転する</item>
     </plurals>
     <plurals name="dashboard_insight_uptime_hours">
-        <item quantity="one">%1$d時間 オンラインでオーバードライブ</item>
         <item quantity="other">%1$d時間 オンラインでオーバードライブ</item>
     </plurals>
+    <!-- Duration helpers used inside insights (last_charge etc.). -->
     <plurals name="dashboard_insight_minutes">
-        <item quantity="one">%1$d min</item>
         <item quantity="other">%1$d min</item>
     </plurals>
     <plurals name="dashboard_insight_hours">
-        <item quantity="one">%1$d hr</item>
         <item quantity="other">%1$d hr</item>
     </plurals>
 </resources>

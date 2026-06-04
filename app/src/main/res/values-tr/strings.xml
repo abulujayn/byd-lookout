@@ -1,17 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">OverDrive</string>
+    <!-- Accessibility Service -->
     <string name="accessibility_service_description">Bu hizmet ekran içeriğini okumamaktadır veya etkileşime girmez.</string>
+    <!-- Recording Mode Labels -->
+    <!-- Proximity Guard Settings Labels -->
+    <!-- Quality Settings Labels -->
+    <!-- Storage Labels -->
+    <!-- Recording Status Labels -->
+    <!-- Event Types -->
+    <!-- Filter Labels -->
+    <!-- Storage Breakdown -->
+    <!-- Recording Controls -->
+    <!-- Slider Range Labels -->
+    <!-- ============================================================
+         i18n string extraction (Step 1: Layouts)
+         ============================================================ -->
+    <!-- Drawer menu -->
+    <!-- Common buttons / labels -->
     <string name="action_cancel">İptal</string>
     <string name="action_clear_plain">Temizle</string>
     <string name="action_select_all">Tümünü seç</string>
     <string name="action_select_all_short">Hepsi .</string>
     <string name="action_delete">Sil</string>
+    <string name="action_share">Share</string>
     <string name="action_done">Yapıldı</string>
     <string name="action_remind_me_later">Beni daha sonra hatırla .</string>
     <string name="action_retry">Tekrar dene</string>
     <string name="action_run">Kaç .</string>
     <string name="action_clear_output">Açık Çıkış</string>
+    <!-- Nav header -->
+    <!-- Common content descriptions -->
     <string name="cd_camera">Kamera</string>
     <string name="cd_qr">QR</string>
     <string name="cd_qr_code">QR kodu</string>
@@ -32,7 +51,13 @@
     <string name="cd_player_maximize">Oyuncunu en üst seviyeye çıkar</string>
     <string name="cd_player_minimize">Dışarı çıkış tam ekran</string>
     <string name="cd_player_mute">Ses değiştir</string>
+    <string name="cd_player_quadrant_all">Show all cameras</string>
+    <string name="cd_player_quadrant_front">Show front camera</string>
+    <string name="cd_player_quadrant_right">Show right camera</string>
+    <string name="cd_player_quadrant_rear">Show rear camera</string>
+    <string name="cd_player_quadrant_left">Show left camera</string>
     <string name="cd_delete">Sil</string>
+    <string name="cd_share">Share</string>
     <string name="cd_expand">Genişle</string>
     <string name="cd_configure">Yapılandırma</string>
     <string name="cd_download_log">İndirme günlüğü</string>
@@ -40,23 +65,33 @@
     <string name="cd_battery">Batarya</string>
     <string name="cd_step_completed">Adım tamamlandı</string>
     <string name="cd_permission_granted">Verilmiş izin</string>
+    <!-- overlay_status -->
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">TRIP</string>
     <string name="overlay_mic_inactive_label">MIC</string>
+    <!-- item_log_entry placeholders (timestamp/tag/message are runtime, but these are
+         placeholder/preview text used at design time and visible in some empty states) -->
     <string name="log_entry_default_timestamp">12:34:56\'da.</string>
     <string name="log_entry_default_tag">- Hayır, hayır.</string>
     <string name="log_entry_default_message">Kayıt mesajı buraya</string>
+    <!-- item_safe_location -->
+    <!-- item_daemon_card -->
     <string name="daemon_card_default_name">Daemon Adı</string>
     <string name="daemon_card_default_status">Durum mesajı</string>
     <string name="daemon_card_subprocesses">İLKATLAR</string>
+    <!-- item_time_window -->
+    <!-- fragment_logs_panel -->
     <string name="logs_panel_title">Kaynaklar</string>
+    <!-- activity_main_new / activity_main-land -->
     <string name="url_connecting">Bağlantı...</string>
+    <!-- dialog_tailscale_settings -->
     <string name="tailscale_generate_login_url">Giriş URL oluştur</string>
     <string name="tailscale_scan_to_login">Giriş için taray</string>
     <string name="tailscale_qr_waiting">URL girişini bekliyorum...</string>
     <string name="tailscale_enable_proxy">Tailscale Proxy etkinleştir</string>
     <string name="tailscale_proxy_explainer">MQTT\'den Tailscale\'e giden yollar, böylece port yönlendirmesi olmadan arka ağınızda özel bir broker\'a ulaşabilirsiniz.</string>
     <string name="tailscale_proxy_warning">MQTT etkinleştirildiği sürece kamu ajanlarına (HiveMQ, AWS IoT, vb.)  Tailscale sadece kuyruk ağınıza giden yolları başarısız olacaktır.</string>
+    <!-- Camera ingestion mode selector (Default vs DiLink 4) -->
     <string name="camera_mode_title">İçecek Modu</string>
     <string name="camera_mode_subtitle">Öntanımlı olarak çoğu BYD modeline uygundur; AVM HAL\'ın önceden dikili 2x2 mozaik ürettiği daha yeni süslerde (Han / Tang 2024+) DiLink 4 gereklidir.</string>
     <string name="camera_mode_option_default">Öntanımlı  Seal, Atto, Dolphin (çoğu araba) üzerinde çalışır</string>
@@ -65,12 +100,14 @@
     <string name="camera_mode_current_dilink4">Akım: DiLink 4</string>
     <string name="camera_mode_save">Uygulama modusu</string>
     <string name="camera_mode_hint">Modu değiştirmek kamera daemon\'i yeniden başlatır. Eğer video yanlış görünüyorsa (squished, missing quadrants, red overlay), diğer modu deneyin.</string>
+    <!-- DiLink 4 quadrant tweaks (only effective when cameraMode = DiLink 4) -->
     <string name="camera_dilink4_tweaks_title">DiLink 4 Çeyreği Düzenlemeleri</string>
     <string name="camera_dilink4_tweaks_subtitle">DiLink 4 yolu için araç başına ayarlamalar. DiLink 4 modunun yukarıda seçildiği zaman geçerlidir.</string>
     <string name="camera_dilink4_save">Düzenlemeleri uygula</string>
     <string name="camera_dilink4_hint">Daemon yeniden başlatma değişikliği uyguluyor.</string>
     <string name="camera_dilink4_red_mask_label">Kırmızı kalibrasyon örtüsünü (GL) bastır</string>
-    <string name="camera_dilink4_red_mask_subtitle">Parlak kırmızı HAL "kalibrasyon başarısız" piksellerini tespit eden ve komşu bir örnekle (veya pankart boyamayacak kadar büyük olduğunda parlaklık gri) değiştiren bir parça-ölümleme geçişi ekler.</string>
+    <string name="camera_dilink4_red_mask_subtitle">Parlak kırmızı HAL \"kalibrasyon başarısız\" piksellerini tespit eden ve komşu bir örnekle (veya pankart boyamayacak kadar büyük olduğunda parlaklık gri) değiştiren bir parça-ölümleme geçişi ekler.</string>
+    <!-- dialog_camera_selection -->
     <string name="camera_selection_title">Kamera Seçimi</string>
     <string name="camera_selection_subtitle">Panoramik kamera kaynağını seçin</string>
     <string name="camera_current_auto">Akım: Otomatik</string>
@@ -82,6 +119,21 @@
     <string name="camera_option_4">Kamera 4</string>
     <string name="camera_option_5">Kamera 5</string>
     <string name="camera_selection_hint">Otomatik olarak her çubukta trim için doğru kamera seçilir. Kamera 1 = BYD Seal, Kamera 0 = Atto trimler. Kurulumun yürürlüğe girmesi için kamera kimliğini değiştirdikten sonra daemon\'u yeniden başlatın.</string>
+    <!-- OEM Dashcam camera ID picker (Phase 5: separate forward-sensor pipeline) -->
+    <string name="camera_oem_dashcam_title">OEM Dashcam Camera ID</string>
+    <string name="camera_oem_dashcam_hint">Pick the AVMCamera id that points at the forward dashcam sensor. Dashcam is the OPPOSITE of pano: Seal/Han pano = 1 → dashcam = 0; Atto / Tang pano = 0 → dashcam = 1. Leave on Auto to let OverDrive pick.</string>
+    <string name="camera_oem_dashcam_auto_resolved">Auto — using id %1$d (pano is id %2$d)</string>
+    <string name="camera_oem_dashcam_auto_unavailable">Auto — pano id is %1$d, can\'t infer dashcam</string>
+    <string name="camera_oem_dashcam_save">Save</string>
+    <!-- Dashcam-side camera labels — REVERSE of the pano labels above. The
+         OEM dashcam id is the opposite of the pano id, so the helpful
+         "this is what your trim should pick" hint flips between the two
+         dialogs. Without these strings the dashcam picker re-used the pano
+         labels and told Seal owners to pick "Camera 1 — Seal" for their
+         dashcam, which is the pano camera, not the dashcam. -->
+    <string name="camera_oem_option_0">Camera 0 — Seal / Han (default)</string>
+    <string name="camera_oem_option_1">Camera 1 — Atto / Tang</string>
+    <!-- Camera mapping dialog (multi-vehicle role-to-slice routing) -->
     <string name="camera_mapping_title">Kamera Haritası</string>
     <string name="camera_role_label">Rol haritası</string>
     <string name="camera_candidate_previous">Önceki</string>
@@ -96,6 +148,7 @@
     <string name="camera_mapping_current_format">Akım haritası: %1$s</string>
     <string name="camera_mapping_current_none">Akım haritası: Otomatik / Varsayılan</string>
     <string name="camera_mapping_hint">OverDrive varsayılan olarak eski başlangıç davranışını korur, ancak şimdi birleşik panoramik şeridi düzgün kalibre etmenizi sağlar. Her çiğ birleşik parçayı önceden görüntüleyin, mantıksal 360 rollerini aracınızda ön/sağ/arktaki/sol gösterilen parçaya haritasınız ve daemon bu düzeni kaydetme, akış ve AI için yeniden başlatıldıktan sonra tekrar kullanacaktır.</string>
+    <!-- fragment_dashboard -->
     <string name="dashboard_scan_to_connect">Bağlantı için taray</string>
     <string name="dashboard_qr_waiting">Tünel için bekliyordum...</string>
     <string name="dashboard_daemons_running_default">0/5 Çıkıyor</string>
@@ -103,6 +156,8 @@
     <string name="dashboard_access_code">Erişim Kodu</string>
     <string name="dashboard_token_masked">••••••••</string>
     <string name="dashboard_regenerate_token">Yeniden Yükleme İşaretleri</string>
+    <!-- fragment_recording_controls -->
+    <!-- dialog_setup_guide -->
     <string name="setup_guide_title">Başlamak</string>
     <string name="setup_guide_subtitle">En iyi deneyimi elde etmek için üç hızlı adım:</string>
     <string name="setup_step_one_label">1</string>
@@ -117,13 +172,21 @@
     <string name="setup_overlay_title">Diğer Uygulamalarda Gösterilmesine İzin Ver</string>
     <string name="setup_overlay_body">Diğer uygulamalar üzerinde kaydetme ve seyahat izleme için yüzen bir durum göstergesi göstermek için bunu etkinleştirin.</string>
     <string name="setup_overlay_button">Açık Ekleme Ayarları</string>
+    <!-- Language picker (drawer footer + bottom sheet) -->
     <string name="cd_close">Kapat</string>
     <string name="language_picker_title">Dil</string>
+    <!-- Subtitle on the language-picker bottom sheet. %1$d is the supported
+         language count (Auto adds an extra row but isn't counted). -->
     <string name="language_picker_subtitle_fmt">%1$d dilleri mevcut</string>
+    <!-- Subtitle placeholder while the count is being computed. -->
     <string name="language_picker_subtitle_pending">Dil seçin</string>
     <string name="language_auto_title">Otomatik</string>
+    <!-- %1$s is the native-script name of the locale that "Auto" currently
+         resolves to, e.g. "Auto · English". -->
     <string name="language_auto_subtitle">İzleme sistemi · %1$s</string>
+    <!-- Drawer footer subtitle when on Auto, e.g. "English · Auto". -->
     <string name="language_label_auto_fmt">%1$s · Otomatik</string>
+    <!-- fragment_adb_console -->
     <string name="adb_prompt">$</string>
     <string name="adb_command_hint">Komutanlığı girin...</string>
     <string name="adb_preset_commands_header">Öntanımlı komutlar</string>
@@ -131,13 +194,17 @@
     <string name="adb_output_ready">Komutlara hazır...</string>
     <string name="adb_console_hero_title">ADB Konsolu</string>
     <string name="adb_console_hero_subtitle">Cihazda Shell komutlarını çalıştır</string>
+    <!-- fragment_webview -->
     <string name="webview_loading">Karga...</string>
     <string name="webview_camera_daemon_not_running">Kamera Daemon çalışmıyor .</string>
     <string name="webview_start_camera_daemon">Bu sayfaya erişmek için Kamera Daemon\'unu Daemon ekranından başlatın.</string>
+    <!-- dialog_roi_drawing -->
+    <!-- dialog_zrok_token -->
     <string name="zrok_enable_token_hint">İşaret etkinleştir</string>
     <string name="zrok_token_storage_note">Token güvenli bir şekilde saklanır ve uygulama ve daemon süreçleri arasında paylaşılar.</string>
     <string name="zrok_reset_environment">Zrok Çevresini Yeniden Oturt</string>
     <string name="zrok_reset_environment_desc">Çevre ve token çıkarır. token ile yeniden etkinleştirmeniz gerekir (bir cihaz yuvasını kullanır).</string>
+    <!-- dialog_reset_data -->
     <string name="reset_title">Verileri Yeniden Oturt</string>
     <string name="reset_subtitle">Toplanan verileri kategoriye göre sil</string>
     <string name="reset_warning">Bu işlem iptal edilemez. Kayıtlar, yolculuklar ve pil geçmişi kalıcı olarak silinecektir.</string>
@@ -159,6 +226,8 @@
     <string name="reset_cat_proximity_desc">Radarla tetiklenen etkinlik MP4\'leri</string>
     <string name="reset_cat_trip_files">Yolculuk Telemetri Dosyaları</string>
     <string name="reset_cat_trip_files_desc">JSON\'in bir yolculuk için disket telemetrisi</string>
+    <!-- fragment_abrp_settings -->
+    <!-- fragment_recording_library -->
     <string name="recording_lib_chip_any">Herhangi bir</string>
     <string name="recording_lib_chip_person">Kişiler</string>
     <string name="recording_lib_chip_vehicle">Araç</string>
@@ -168,6 +237,7 @@
     <string name="recording_lib_chip_critical">Kritik</string>
     <string name="recording_lib_selected_count_zero">0 seçili</string>
     <string name="recording_lib_no_recordings">Kayıt yok.</string>
+    <!-- v4 redesign: collapsible filter bar + single-row date jump -->
     <string name="recording_lib_filter_button">Filtre</string>
     <string name="recording_lib_filter_button_active">Filtre · %1$d</string>
     <string name="recording_lib_filter_sheet_title">Filtre kayıtları</string>
@@ -177,6 +247,7 @@
     <string name="recording_lib_filter_section_severity">Ağırlık</string>
     <string name="recording_lib_filter_section_type">Tür</string>
     <string name="recording_lib_filter_section_place">Yer</string>
+    <string name="recording_lib_place_search_hint">Search places…</string>
     <string name="recording_lib_chip_type_normal">Normal</string>
     <string name="recording_lib_chip_type_proximity">Yakınlık</string>
     <string name="recording_lib_date_today">Bugün</string>
@@ -194,14 +265,46 @@
     <string name="cd_next_day">Ertesi gün</string>
     <string name="cd_open_filters">Açık filtreler</string>
     <string name="cd_clear_filter">Açık filtre</string>
+    <!-- v5 redesign: SOTA empty state with CTA + tile type badges -->
+    <string name="recording_lib_empty_title">No recordings match</string>
+    <string name="recording_lib_empty_body">Try adjusting your date range or chip filters.</string>
+    <string name="recording_lib_empty_clear_filters">Clear filters</string>
+    <!-- Shown on the empty-state body when there are zero clips on disk
+         (no filter is active). Sets a friendlier tone than "No recordings match". -->
+    <string name="recording_lib_empty_disk_title">Nothing recorded yet</string>
+    <string name="recording_lib_empty_disk_body">Captures will appear here as soon as the dashcam or surveillance pipeline writes a clip.</string>
+    <!-- Shown while the daemon is warming the H2 recording index on cold
+         start. Includes a progress counter when the daemon reports done/total,
+         otherwise a static body. The library re-polls every 1.5s and
+         transitions out automatically once results land. -->
+    <string name="recording_lib_building_index_title">Building library index</string>
+    <string name="recording_lib_building_index_body">One moment while the daemon scans your recordings.</string>
+    <string name="recording_lib_building_index_progress">Indexed %1$d of %2$d clips…</string>
+    <!-- Tile type badge labels — short, glanceable, mirrors the on-disk
+         filename prefix (cam_/event_/dvr_/proximity_) so power users can
+         map a tile back to its file group at a glance. -->
+    <string name="recording_lib_type_normal">CAM</string>
+    <string name="recording_lib_type_event">EVENT</string>
+    <string name="recording_lib_type_proximity">PROX</string>
+    <string name="recording_lib_type_oem">OEM</string>
+    <!-- Toast shown when a multi-select share is dispatched. -->
+    <string name="toast_share_recordings">Sharing %1$d recordings</string>
+    <!-- fragment_sentry_config -->
+    <!-- fragment_video_player -->
     <string name="player_title_recording">Kayıt</string>
     <string name="player_time_zero">Saat 0: 00</string>
     <string name="player_time_separator"> / </string>
+    <!-- fragment_daemons -->
     <string name="daemons_hero_title">Arka plan hizmetleri</string>
+    <!-- Subtitle on the Daemons hero header before the first state arrives. -->
     <string name="daemons_count_pending">Kargo hizmetleri...</string>
+    <!-- Subtitle on the Daemons hero header. %1$d running, %2$d total. -->
     <string name="daemons_count_fmt">%1$d\'nin %2$d\'i çalıştırmak</string>
+    <!-- dialog_time_window -->
+    <!-- dialog_update_progress -->
     <string name="update_preparing">Güncellemeye hazırlanıyorum...</string>
     <string name="update_percent_zero">% 0</string>
+    <!-- dialog_battery_health -->
     <string name="battery_health_title">Batarya Sağlığı</string>
     <string name="battery_health_subtitle">Sağlık durumu</string>
     <string name="battery_health_dashes">--</string>
@@ -232,7 +335,14 @@
     <string name="toast_soh_observed_value_saved">Paket kapasitesi %1$.1f kWh\'ye güncellenmiştir.</string>
     <string name="toast_soh_observed_value_failed">Paket kapasitesini güncelleyememiştim (%1$s).</string>
     <string name="diagnostics_battery_needs_review">İnceleme gerekli</string>
+    <!-- ============================================================
+         Step 2: Kotlin / Java UI literal extraction
+         ============================================================ -->
+    <!-- Notifications -->
+    <!-- Toasts / dialogs -->
     <string name="dialog_ok">Tamam</string>
+    <!-- Dynamic format strings -->
+    <!-- Plurals -->
     <plurals name="recordings_deleted_count">
         <item quantity="one">%d kaydı kaldırıldı</item>
         <item quantity="other">%d kayıtları silindi</item>
@@ -245,6 +355,10 @@
         <item quantity="one">%d kayıtlarını kalıcı olarak siler.</item>
         <item quantity="other">Bu %d kayıtlarını kalıcı olarak siler.</item>
     </plurals>
+    <!-- ============================================================
+         Step 2 (continued): MainActivity, fragments, dialogs
+         ============================================================ -->
+    <!-- MainActivity -->
     <string name="toast_updated_to">%1$s\'e güncellenmiştir</string>
     <string name="toast_update_install_failed">Güncelleme yükleme başarısız oldu: %1$s</string>
     <string name="toast_checking_for_updates">Güncellemeleri kontrol ediyorum...</string>
@@ -294,6 +408,7 @@
     <string name="dialog_traffic_reboot_message">Değişim uygulandı. Lütfen şimdi sert bir yeniden başlatma yapın:</string>
     <string name="traffic_monitor_loading">Trafik monitörü: Kontrol...</string>
     <string name="traffic_monitor_tap_to_check">Trafik monitörü (kontrol etmek için dokun)</string>
+    <!-- Reset categories -->
     <string name="reset_label_trips">Seyahatler</string>
     <string name="reset_label_soc_history">SoC + 12V tarihi</string>
     <string name="reset_label_soh">SoH kalibrasyonu</string>
@@ -303,6 +418,10 @@
     <string name="reset_label_sentry_events">Gözetim etkinlikleri</string>
     <string name="reset_label_proximity">Yakınlık kayıtları</string>
     <string name="reset_label_trip_files">Yolculuk Telemetri Dosyaları</string>
+    <!-- ROI dialog -->
+    <!-- Sentry config -->
+    <!-- Format helpers -->
+    <!-- Dashboard -->
     <string name="toast_access_code_copied">Giriş kodu kopyalandı</string>
     <string name="dialog_regenerate_token_title">Yeniden Yükleme İşaretleri</string>
     <string name="dialog_regenerate_token_message">Bu, mevcut token\'ı geçersiz kılacak.</string>
@@ -319,6 +438,7 @@
     <string name="tunnel_label_cloudflared">Bulutlu</string>
     <string name="tunnel_label_zrok">Zrok</string>
     <string name="tunnel_label_tailscale">Tailscale</string>
+    <!-- Daemon names — shown on the Daemons list and dashboard. -->
     <string name="daemon_name_camera">Kamera Daemon</string>
     <string name="daemon_name_surveillance">Gözlem Daemon</string>
     <string name="daemon_name_acc_surveillance">ACC Denetim</string>
@@ -329,6 +449,8 @@
     <string name="daemon_name_telegram">Telegram Bot</string>
     <string name="clip_label_access_code">Erişim Kodu</string>
     <string name="clip_label_url">URL</string>
+    <!-- ABRP -->
+    <!-- Daemons fragment -->
     <string name="toast_no_config_needed">%1$s için yapılandırma gerekmez</string>
     <string name="dialog_zrok_token_title">Zrok tünel simgesi</string>
     <string name="dialog_zrok_token_message">Zrok etkinleştirme simgelerinizi girin.</string>
@@ -370,6 +492,8 @@
     <string name="log_header_source">Kaynak: %1$s</string>
     <string name="log_header_exported">İhracat: %1$s</string>
     <string name="log_header_truncated">NOT: 10000 satır boyunca kısaltılmış kütüphane (toplamı: %1$d satırlar)</string>
+    <!-- Recording controls -->
+    <!-- Recording library -->
     <string name="toast_cannot_play_video">Video çalılamıyor: %1$s</string>
     <string name="dialog_delete_recording_title">Kayıtları Sil</string>
     <string name="dialog_delete_recording_message">%1$s\'i sil?</string>
@@ -377,30 +501,42 @@
     <string name="toast_recording_delete_failed">Kayıt silinemedi</string>
     <string name="toast_batch_delete_partial">%1$d silindi, %2$d başarısız oldu</string>
     <string name="play_with_chooser">Oynayın .</string>
+    <!-- Setup guide -->
     <string name="setup_version_banner">V%1$s\'ye güncellenmiş  Otomatik başlatmayı yeniden onaylayın, BYD onu her kurulumda siler</string>
     <string name="setup_overlay_already_granted">Zaten verildi</string>
+    <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">İpuç ve sorun çözme</string>
     <string name="setup_traffic_title">BYD Trafik Monitörü Etkinleştir</string>
     <string name="setup_traffic_body">BYD Traffic Monitor üçüncü taraf uygulamaların internet\'e ulaşmasını engeller. Bu uygulamayı devre dışı bırakmak, OverDrive ve yüklediğiniz diğer uygulamaların ağı kullanmasına izin verir.</string>
     <string name="setup_traffic_button">Açık Trafik İzleyici</string>
     <string name="setup_camera_fix_title">Kamera siyah mı yanlış mı?</string>
     <string name="setup_camera_fix_body">Açık Diagnostics → Kamera sondası, Camera ID\'yi 0 olarak ayarlayın, Save\'e dokunun ve sonra kamera demonu yeniden başlatın.</string>
+    <!-- Recording storage path -->
+    <!-- MainActivity status -->
     <string name="camera_current_manual">Şimdiki: Kamera %1$d (Manual)</string>
     <string name="camera_current_auto_label">Akım: Otomatik</string>
     <string name="soh_estimation_active">Değerlendirme etkinliği</string>
     <string name="soh_no_estimate_yet">Henüz bir tahmin yok  Veriler bekliyor</string>
+    <!-- Recording tabs -->
+    <!-- Misc -->
     <string name="recording_lib_selected_count">%1$d seçili</string>
     <string name="video_player_playback_error">Çalışma hatası</string>
     <string name="video_player_no_events">Hiçbir olay yok .</string>
     <string name="daemon_configuration_required">Yapılandırma Gerekli</string>
     <string name="daemon_configuration_message">%1$s</string>
+    <!-- Navigation graph fragment labels (shown as toolbar/ActionBar titles) -->
     <string name="nav_page_video_player">Video Oyuncusu</string>
     <string name="nav_page_telegram">Telegram</string>
     <string name="nav_page_abrp">ABRP</string>
     <string name="nav_page_mqtt">MQTT</string>
     <string name="nav_page_byd_cloud">BYD Cloud</string>
+    <!-- StatusOverlayService persistent notification (foreground service) -->
     <string name="status_overlay_notif_title">OverDrive Durumu</string>
     <string name="status_overlay_notif_text">Durum üstü aktif</string>
+    <!-- ============================================================== -->
+    <!-- M3 Revamp: navigation rail + settings sub-rail + theme picker  -->
+    <!-- ============================================================== -->
+    <!-- Top-level destinations (navigation rail labels) -->
     <string name="rail_dashboard">Tablo</string>
     <string name="rail_live">Canlı</string>
     <string name="rail_recordings">Kayıtlar</string>
@@ -409,6 +545,7 @@
     <string name="rail_integrations">Entegreler</string>
     <string name="rail_diagnostics">Teşhisler</string>
     <string name="rail_settings">Ayarlar</string>
+    <!-- Settings sub-rail -->
     <string name="settings_section_appearance">Görünüm</string>
     <string name="settings_section_recording">Kayıt</string>
     <string name="settings_section_surveillance">Gözetim</string>
@@ -420,15 +557,24 @@
     <string name="settings_overlay_camera_subtitle">Kayıt aktifken REC / PROX badgesini göster.</string>
     <string name="settings_overlay_trip_title">Trip\'i gösterir</string>
     <string name="settings_overlay_trip_subtitle">Seyahat tespiti çalışırken TRIP rozetini göster.</string>
+    <!-- Was "About & updates" — Check for Updates row was removed from
+         the About page, so the menu / rail label is now just "About". -->
     <string name="settings_section_about">Hakkında</string>
+    <!-- Settings sub-rail (landscape) — overline + a11y -->
     <string name="settings_subrail_overline">SETIMLER</string>
     <string name="cd_settings_subrail">Yapılandırma alt demiryolu</string>
+    <!-- Settings → Vehicle data placeholder pane -->
+    <!-- Settings → Privacy pane copy -->
     <string name="settings_privacy_title">Gizlilik &amp; Veriler</string>
     <string name="settings_privacy_body">Reset kayıt indeksini, önbelleğe alınan kimlik bilgileri, daemon durumunu ve cihazdaki tercihleri temizler.</string>
+    <!-- Settings → About pane copy -->
     <string name="settings_about_title">OverDrive hakkında</string>
     <string name="settings_about_version_label">Versiyon</string>
     <string name="settings_about_package_label">İnşaat</string>
     <string name="settings_about_check_update_value">En son GitHub sürümünü kontrol edin ve daha yeniyse yükleyin.</string>
+    <!-- Support-development section: tiered options, low-cost first.
+         star → spread → coffee, in that visual order. Copy aims for
+         personality without being corny — short, warm, specific. -->
     <string name="settings_about_support_section">Senin gibi insanlar tarafından güçlendirilmiş.</string>
     <string name="settings_about_support_share_title">Başka bir araç sahibine bahset</string>
     <string name="settings_about_support_share_value">Paylaşılan her bağlantı başka bir BYD sahibinin Overdrive\'i keşfetmesine yardımcı olur.</string>
@@ -438,40 +584,45 @@
     <string name="settings_about_open_link_copied">URL kopyalandı: %1$s</string>
     <string name="settings_about_support_kofi_title">Sonraki versiyon için yakıt</string>
     <string name="settings_about_support_kofi_value">Ko-Fi\'de kahve içmek gece geç saatleri bekliyor.</string>
-    <string name="settings_about_support_kofi_url">https://ko-fi.com/E1E71XALHX</string>
     <string name="settings_about_license_title">Lisans</string>
     <string name="settings_about_license_value">MIT  açık kaynak. Tam metni görüntülemek için dokunun.</string>
     <string name="settings_about_source_title">Kaynak kodu</string>
     <string name="settings_about_source_value">github.com/yash-srivastava/Overdrive-release</string>
-    <string name="settings_about_license_url">https://github.com/yash-srivastava/Overdrive-release/blob/main/license</string>
-    <string name="settings_about_source_url">https://github.com/yash-srivastava/Overdrive-release</string>
     <string name="settings_about_star_title">GitHub\'da bir bırak</string>
     <string name="settings_about_star_value">Bir saniye sürer, çok şey ifade eder.</string>
-    <string name="settings_about_star_url">https://github.com/yash-srivastava/Overdrive-release</string>
     <string name="settings_about_thanks_title">Teşekkürler</string>
     <string name="settings_about_thanks_subtitle">Katkıda bulunanların ve destekçilerin yardımıyla kuruldu.</string>
     <string name="settings_about_contributors_title">Katkıda bulunanlar</string>
     <string name="settings_about_supporters_title">Destekçiler</string>
     <string name="settings_about_thanks_empty">İnsanlar katıldıkça liste dolmaya başlar.</string>
+    <!-- Settings → General -->
     <string name="settings_theme_label">Tema</string>
     <string name="settings_theme_auto">Otomatik (önderleme sistemi)</string>
     <string name="settings_theme_light">Işık</string>
     <string name="settings_theme_dark">Karanlık</string>
     <string name="settings_language_label">Dil</string>
+    <!-- Recordings page (header + segmented control + page actions) -->
     <string name="recordings_title">Kayıtlar</string>
     <string name="recordings_segment_dashcam">Dashcam</string>
     <string name="recordings_segment_surveillance">Gözetim</string>
     <string name="recordings_action_settings">Ayarlar</string>
+    <!-- Hero subtitle: "%1$d today · %2$d total · %3$s" where %3$s is a pre-formatted size like "42 GB". -->
     <string name="recordings_summary_format">%1$d bugün · %2$d toplam · %3$s</string>
+    <!-- Per-segment label with running count, e.g. "Dashcam · 118". -->
     <string name="recordings_segment_dashcam_count">Dashcam · %d</string>
     <string name="recordings_segment_surveillance_count">Gözetim · %d</string>
+    <!-- Layout-time placeholder for the counts subtitle before the scan completes. -->
     <string name="recordings_summary_pending">—</string>
+    <!-- Landscape recordings preview placeholder (right pane). -->
     <string name="recordings_preview_placeholder_title">Kayıt seçin</string>
     <string name="recordings_preview_placeholder_body">Soldaki herhangi bir şeyi çalmak için dokun.</string>
+    <!-- Diagnostics page -->
     <string name="diagnostics_section_adb_console">ADB Konsolu</string>
     <string name="diagnostics_section_traffic">Trafik monitörü</string>
     <string name="diagnostics_section_camera_probe">Kamera sondası</string>
     <string name="diagnostics_section_battery">Batarya sağlığı</string>
+    <!-- Sub-label used on diagnostics utility cards in landscape (hint to tap). -->
+    <!-- SOTA Diagnostics dashboard -->
     <string name="diagnostics_hero_title">Sistem teşhisleri</string>
     <string name="diagnostics_hero_subtitle">Sağlık kayıtları ve cihazın sondajları.</string>
     <string name="diagnostics_health_clear">Her şey açık .</string>
@@ -482,14 +633,19 @@
     <string name="diagnostics_health_battery">Batarya</string>
     <string name="diagnostics_metric_pending">—</string>
     <string name="diagnostics_metric_online">Çevrimiçi</string>
+    <!-- Network tile: bottom line tunnel state (e.g. "Tunnel · Online"). %1$s is one of
+         tunnel_state_online / tunnel_state_offline / tunnel_state_connecting. -->
     <string name="diagnostics_network_tunnel_label">Tunel · %1$s</string>
     <string name="diagnostics_tunnel_state_online">Çevrimiçi</string>
     <string name="diagnostics_tunnel_state_offline">İletişimden uzak</string>
     <string name="diagnostics_tunnel_state_connecting">Bağlantı</string>
+    <!-- Network top-line fallbacks when no Wi-Fi SSID is available. -->
     <string name="diagnostics_network_mobile">Mobil</string>
     <string name="diagnostics_network_ethernet">Ethernet</string>
     <string name="diagnostics_network_offline">İletişimden uzak</string>
+    <!-- Storage tile lines. %1$d clip count, %2$s human-readable used size. -->
     <string name="diagnostics_storage_used_line">%1$d klipleri · %2$s kullanılır</string>
+    <!-- Storage tile bottom line. %1$s human-readable free size. -->
     <string name="diagnostics_storage_free_line">%1$s ücretsiz</string>
     <string name="diagnostics_logs_card_title">Canlı etkinlik kaydı</string>
     <string name="diagnostics_logs_card_subtitle">Çalışan hizmetlerden gelen akış çıkışı.</string>
@@ -499,6 +655,7 @@
     <string name="diagnostics_adb_subtitle">Cihazın terminalini aç.</string>
     <string name="diagnostics_battery_subtitle">SOH hücresini kontrol et ve istatistikleri topla.</string>
     <string name="diagnostics_settings_subtitle">Uygulama tercihleri, tema ve dil.</string>
+    <!-- SOTA Integrations page -->
     <string name="integrations_hero_title">Entegreler</string>
     <string name="integrations_hero_subtitle">Overdrive\'ı hizmetlerinize bağlayın.</string>
     <string name="integrations_status_unknown">Yapılandırmak için dokun</string>
@@ -509,19 +666,31 @@
     <string name="integrations_mqtt_desc">Aracın telemetrisini ev asistanına veya herhangi bir MQTT aracıya gönderin.</string>
     <string name="integrations_byd_cloud_desc">Kapı kilidi, far yanıp sönmesi ve korna gibi uzaktan komutları etkinleştirmek için BYD uygulama hesabınızı bağlayın.</string>
     <string name="integrations_configure_button">Yapılandırma</string>
+    <!-- Settings → About / Privacy actions (rows) -->
     <string name="settings_action_check_update">Güncellemeleri kontrol edin</string>
     <string name="settings_action_reset_data">Verileri yeniden ayarlayın...</string>
+    <!-- Content descriptions for rail / segmented controls -->
     <string name="cd_brand_logo">OverDrive</string>
+    <!-- ============================================================== -->
+    <!-- Dashboard SOTA revamp                                            -->
+    <!-- ============================================================== -->
+    <!-- Hero card -->
+    <!-- SOTA hero headline. Static identity statement (not a time-of-day
+         greeting) — pairs with the OVERDRIVE overline above and the live
+         status row of chips below. Locale catalogs auto-translate. -->
     <string name="dashboard_hero_headline">Nöbette</string>
     <string name="dashboard_subtitle_all_systems">Tüm sistemler çevrimiçi</string>
     <string name="dashboard_subtitle_some_offline">%1$d of %2$d online hizmetleri</string>
     <string name="dashboard_subtitle_no_tunnel">Uzaktan erişim çevrimdışı</string>
+    <!-- Metric tiles -->
     <string name="dashboard_metric_recordings">Bugünün kayıtları .</string>
     <string name="dashboard_metric_storage">Kullanılan depolama</string>
     <string name="dashboard_metric_tunnel">Uzaktan erişim</string>
     <string name="dashboard_metric_services">Arka plan hizmetleri</string>
     <string name="dashboard_metric_value_pending">—</string>
     <string name="dashboard_metric_vehicle">Araç</string>
+    <!-- Hero chips: at-a-glance pills under the greeting that summarize the
+         three most important live signals (tunnel, services, recording). -->
     <string name="dashboard_chip_recording_active">Kayıt</string>
     <string name="dashboard_chip_recording_idle">Boşta</string>
     <string name="dashboard_vehicle_tap_to_set">Yapılandırmaya dokun</string>
@@ -540,36 +709,56 @@
     <string name="vehicle_dialog_summary_model">Model: %1$s</string>
     <string name="vehicle_dialog_summary_calibration">Son kalibrasyon: %1$.1f%% %2$s</string>
     <string name="vehicle_dialog_soh_unavailable">kullanılamıyor</string>
+    <!-- Combined Recordings+Storage chip: e.g. "8.4 GB used · 12 GB free" -->
     <string name="dashboard_metric_storage_chip">%1$s kullanıldı · %2$s ücretsiz</string>
     <string name="dashboard_metric_storage_chip_pending">Depolama </string>
     <string name="dashboard_tunnel_offline">İletişimden uzak</string>
     <string name="dashboard_tunnel_online">Çevrimiçi</string>
     <string name="dashboard_tunnel_connecting">Bağlantı...</string>
+    <!-- Quick actions (now rendered as same-size tiles, not chips) -->
     <string name="dashboard_action_live">Canlı görüntü</string>
     <string name="dashboard_action_live_subtitle">Açık kamera görüntüsü</string>
     <string name="dashboard_action_recordings">Kayıtlar</string>
     <string name="dashboard_action_settings">Ayarlar</string>
     <string name="dashboard_action_settings_subtitle">Tercihleri ve hakkında</string>
+    <!-- ============================================================ -->
+    <!-- Settings — SOTA portrait hub + section pages                  -->
+    <!-- ============================================================ -->
+    <!-- Hero -->
     <string name="settings_hero_title">Ayarlar</string>
     <string name="settings_hero_overline">ÜZÜR KATLAR</string>
     <string name="settings_hero_subtitle">Görünüm, kayıt, gözetim ve cihazdaki verileri ayarlayın.</string>
+    <!-- Section overlines -->
     <string name="settings_overline_preferences">ÖNEMLER</string>
     <string name="settings_overline_about_data">BİRLEŞİK &amp; DATA</string>
+    <!-- Quick toggles -->
     <string name="settings_quick_theme_label">Tema</string>
     <string name="settings_quick_language_label">Dil</string>
+    <!-- Section row subtitles (portrait) -->
     <string name="settings_section_recording_subtitle">Ön / sonrası tamponlar, kodekler, depolama sınırları.</string>
     <string name="settings_section_surveillance_subtitle">Deteksiyon bölgeleri, program, hareket hassasiyeti.</string>
     <string name="settings_section_daemons_subtitle">Bulutlu, Zrok, Telegram, MQTT koşucuları.</string>
+    <!-- About / data row subtitles -->
     <string name="settings_about_row_title">OverDrive hakkında</string>
     <string name="settings_about_row_subtitle">Versiyon, lisans, destek geliştirme.</string>
     <string name="settings_reset_row_subtitle">Kayıtları, olayları ya da tüm gizli yerleri temizle.</string>
+    <!-- Footer -->
     <string name="settings_footer_format">OverDrive %1$s · %2$s</string>
+    <!-- ============================================================ -->
+    <!-- Appearance pane — SOTA visual theme picker                    -->
+    <!-- ============================================================ -->
     <string name="settings_appearance_subtitle">Tema, dil ve görsel tercihler.</string>
     <string name="settings_theme_active_auto_caption">Otomatik sistem temasını takip eder.</string>
     <string name="settings_theme_active_light_caption">Işık teması her zaman açık.</string>
     <string name="settings_theme_active_dark_caption">Karanlık konu her zaman açık.</string>
     <string name="settings_language_count_format">%1$d\'den %2$d dillerinde mevcut</string>
     <string name="settings_language_card_title">Gösterim dili</string>
+    <!-- ============================================================ -->
+    <!-- Vehicle data pane — manifest permissions + integrations       -->
+    <!-- ============================================================ -->
+    <!-- ============================================================ -->
+    <!-- Privacy pane — stance + storage summary + reset               -->
+    <!-- ============================================================ -->
     <string name="settings_privacy_stance_title">Öntanımlı olarak cihazda</string>
     <string name="settings_privacy_stance_body">OverDrive tamamen ana birimle çalışır. Arabanızdan açıkça ayarladığınız tüneller ve entegrasyonlar dışında hiçbir telemetri çıkmaz.</string>
     <string name="settings_privacy_overline_storage">Yerel depolama</string>
@@ -580,29 +769,56 @@
     <string name="settings_privacy_storage_count_format">%1$d klipi</string>
     <string name="settings_privacy_storage_count_format_plural">%1$d klipleri</string>
     <string name="settings_privacy_reset_subtitle">Kategorileri seçin: kayıtlar, olaylar, daemon yapılandırmaları, önbelleğe alınmış telemetri...</string>
+    <!-- Place tagging (reverse geocoding) — recording row chip fallback. -->
     <string name="recording_unknown_location">Yer yok .</string>
+    <!-- ============================================================== -->
+    <!-- Diagnostics health-tile values (Camera + Battery)                -->
+    <!-- ============================================================== -->
+    <!-- Camera tile primary value: %1$d is the probed camera id (0..N). -->
     <string name="diagnostics_camera_value_camera_n">Kamera %1$d</string>
+    <!-- Camera tile primary value when manual override is active. -->
     <string name="diagnostics_camera_value_camera_n_manual">Kamera %1$d (elçici)</string>
     <string name="diagnostics_camera_value_probing">Araştıran...</string>
     <string name="diagnostics_camera_value_offline">İletişimden uzak</string>
+    <!-- Battery tile primary value: %1$.0f is the SOH percent (0..100). -->
     <string name="diagnostics_battery_value_soh">%1$.0f%%</string>
     <string name="diagnostics_battery_value_pending">Bekleyen veriler</string>
+    <!-- Dashboard recordings tile: live-record indicator prefix.
+         %1$d is today's clip count. The leading bullet is the red dot. -->
     <string name="dashboard_recordings_value_live">● %1$d</string>
+    <!-- ============================================================== -->
+    <!-- Dashboard hero subtitle — auto-rotating insights carousel        -->
+    <!-- ============================================================== -->
+    <!-- Each line replaces the static subtitle for ~5s, then cross-fades
+         to the next available insight. Numbers are bolded + tinted in the
+         provider, so translators should keep numeric placeholders intact
+         (do not spell out the digits). -->
+    <!-- First-launch welcome — only shown on the very first dashboard visit. -->
     <string name="dashboard_insight_welcome">Hoşgeldiniz  Overdrive şimdi ikinci göz çiftiniz.</string>
+    <!-- Parking delta. %1$s = absolute SOC delta string ("8%"); %2$s = absolute kWh string ("4 kWh"). -->
     <string name="dashboard_insight_parked_charged_kwh">%1$s (≈%2$s) park ederken alındı.</string>
     <string name="dashboard_insight_parked_charged">%1$s\'i park ederken aldım.</string>
     <string name="dashboard_insight_parked_drained_kwh">Park ettiğinden beri %1$s (≈%2$s) kullandın</string>
     <string name="dashboard_insight_parked_drained">Park ettiğinden beri %1$s kullanıyorum.</string>
+    <!-- Most recent surveillance clip. %1$s = relative time, e.g. "2 hr. ago" / "yesterday". -->
     <string name="dashboard_insight_last_alert">Son güvenlik uyarısı: %1$s</string>
+    <!-- Most recent completed charging session in the last 24h.
+         %1$s = energy added (e.g. "12.4 kWh"); %2$s = duration (e.g. "1 hr 45 min"). -->
     <string name="dashboard_insight_last_charge">Son şarj: %2$s\'de +%1$s</string>
+    <!-- Storage milestone. %1$d = clip count; %2$s = total size (e.g. "42 GB"). -->
     <string name="dashboard_insight_storage_milestone">%1$d klipleri · %2$s kaydedildi</string>
+    <!-- Number formatters used inside other insights. Translators may localize
+         the unit suffix (e.g. "키와트" / "квт·ч") but should leave the float
+         placeholder shape so the bold-ifier still finds the digits. -->
     <string name="dashboard_insight_kwh_format">%1$.1f kWh</string>
     <string name="dashboard_insight_percent_format">%1$.1f%%</string>
     <string name="dashboard_insight_hours_minutes">%1$d hr %2$d min</string>
+    <!-- Today's clips. -->
     <plurals name="dashboard_insight_today_clips">
         <item quantity="one">%1$d klipi bugün kaydedildi .</item>
         <item quantity="other">Bugün kaydedilen %1$d klipleri</item>
     </plurals>
+    <!-- Process uptime. Days form takes (days, hours); hours form takes hours only. -->
     <plurals name="dashboard_insight_uptime_days_hours">
         <item quantity="one">%1$d gün, %2$d saat için çevrimiçi sürüş</item>
         <item quantity="other">%1$d günleri, %2$d saatleri için online sürüş</item>
@@ -611,6 +827,7 @@
         <item quantity="one">%1$d saat boyunca online sürüş</item>
         <item quantity="other">%1$d saat boyunca online sürüş</item>
     </plurals>
+    <!-- Duration helpers used inside insights (last_charge etc.). -->
     <plurals name="dashboard_insight_minutes">
         <item quantity="one">%1$d dakika</item>
         <item quantity="other">%1$d dakika</item>

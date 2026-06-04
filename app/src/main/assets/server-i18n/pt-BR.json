@@ -140,8 +140,8 @@
     "rate_limited": "Um comando ainda está em andamento.",
     "not_supported": "Este controlo não está disponível neste momento.",
     "find_car_label": "Encontre um carro .",
-    "battery_heat_label": "Bateria de calor",
-    "close_all_windows_label": "Todas as janelas fechadas"
+    "battery_heat_label": "Calor de bateria",
+    "close_all_windows_label": "Feche todas as janelas ."
   },
   "messages": {
     "logged_out": "Desligado .",

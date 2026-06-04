@@ -1,17 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">OverDrive</string>
+    <!-- Accessibility Service -->
     <string name="accessibility_service_description">Giữ Overdrive giám sát xe hoạt động trong nền. Dịch vụ này không đọc hoặc tương tác với nội dung màn hình.</string>
+    <!-- Recording Mode Labels -->
+    <!-- Proximity Guard Settings Labels -->
+    <!-- Quality Settings Labels -->
+    <!-- Storage Labels -->
+    <!-- Recording Status Labels -->
+    <!-- Event Types -->
+    <!-- Filter Labels -->
+    <!-- Storage Breakdown -->
+    <!-- Recording Controls -->
+    <!-- Slider Range Labels -->
+    <!-- ============================================================
+         i18n string extraction (Step 1: Layouts)
+         ============================================================ -->
+    <!-- Drawer menu -->
+    <!-- Common buttons / labels -->
     <string name="action_cancel">Huỷ</string>
     <string name="action_clear_plain">Xoá</string>
     <string name="action_select_all">Chọn tất cả</string>
     <string name="action_select_all_short">Tất cả</string>
     <string name="action_delete">Xoá</string>
+    <string name="action_share">Share</string>
     <string name="action_done">DONE</string>
     <string name="action_remind_me_later">Hãy nhớ tôi sau này.</string>
     <string name="action_retry">Thử lại</string>
     <string name="action_run">Chạy đi.</string>
     <string name="action_clear_output">Tạo ra rõ ràng</string>
+    <!-- Nav header -->
+    <!-- Common content descriptions -->
     <string name="cd_camera">Máy ảnh</string>
     <string name="cd_qr">QR</string>
     <string name="cd_qr_code">Mã QR</string>
@@ -32,7 +51,13 @@
     <string name="cd_player_maximize">Tăng tối đa người chơi</string>
     <string name="cd_player_minimize">Chiếc màn hình đầy đủ xuất hiện</string>
     <string name="cd_player_mute">Đổi âm thanh</string>
+    <string name="cd_player_quadrant_all">Show all cameras</string>
+    <string name="cd_player_quadrant_front">Show front camera</string>
+    <string name="cd_player_quadrant_right">Show right camera</string>
+    <string name="cd_player_quadrant_rear">Show rear camera</string>
+    <string name="cd_player_quadrant_left">Show left camera</string>
     <string name="cd_delete">Xoá</string>
+    <string name="cd_share">Share</string>
     <string name="cd_expand">Tăng cường</string>
     <string name="cd_configure">Thiết lập</string>
     <string name="cd_download_log">Lập nhật ký tải xuống</string>
@@ -40,23 +65,33 @@
     <string name="cd_battery">Phòng pin</string>
     <string name="cd_step_completed">Bước hoàn thành</string>
     <string name="cd_permission_granted">Giấy phép được cấp</string>
+    <!-- overlay_status -->
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">TRIP</string>
     <string name="overlay_mic_inactive_label">MIC</string>
+    <!-- item_log_entry placeholders (timestamp/tag/message are runtime, but these are
+         placeholder/preview text used at design time and visible in some empty states) -->
     <string name="log_entry_default_timestamp">12:34:56</string>
     <string name="log_entry_default_tag">[THAG]</string>
     <string name="log_entry_default_message">Thông báo đăng ký ở đây</string>
+    <!-- item_safe_location -->
+    <!-- item_daemon_card -->
     <string name="daemon_card_default_name">Tên Daemon</string>
     <string name="daemon_card_default_status">Thông báo trạng thái</string>
     <string name="daemon_card_subprocesses">Các quá trình quá trình</string>
+    <!-- item_time_window -->
+    <!-- fragment_logs_panel -->
     <string name="logs_panel_title">Nhóm gỗ</string>
+    <!-- activity_main_new / activity_main-land -->
     <string name="url_connecting">Kết nối...</string>
+    <!-- dialog_tailscale_settings -->
     <string name="tailscale_generate_login_url">Tạo login URL</string>
     <string name="tailscale_scan_to_login">Scan để Login</string>
     <string name="tailscale_qr_waiting">Chờ đợi đăng nhập URL...</string>
     <string name="tailscale_enable_proxy">Khả năng Tailscale Proxy</string>
     <string name="tailscale_proxy_explainer">Các tuyến đường MQTT đến Tailscale để bạn có thể liên lạc với một nhà môi giới riêng trên mạng đuôi của bạn mà không cần chuyển tiếp cổng.</string>
     <string name="tailscale_proxy_warning">Trong khi được bật, MQTT đến các nhà môi giới công cộng (HiveMQ, AWS IoT, vv) sẽ thất bại  Tailscale chỉ đường đến lưới đuôi của bạn.</string>
+    <!-- Camera ingestion mode selector (Default vs DiLink 4) -->
     <string name="camera_mode_title">Phương thức tiêu thụ</string>
     <string name="camera_mode_subtitle">Chọn con đường phù hợp với đơn vị đầu của bạn. Theo mặc định phù hợp với hầu hết các mô hình BYD; DiLink 4 được yêu cầu trên các trang trí mới hơn (Han / Tang 2024+) nơi AVM HAL phát ra một hình ảnh 2x2 được đan trước.</string>
     <string name="camera_mode_option_default">Tầm  hoạt động trên Seal, Atto, Dolphin (hầu hết xe hơi)</string>
@@ -65,12 +100,14 @@
     <string name="camera_mode_current_dilink4">Hiện tại: DiLink 4</string>
     <string name="camera_mode_save">Động thái áp dụng</string>
     <string name="camera_mode_hint">Thay đổi chế độ khởi động lại máy ảnh daemon. Nếu video trông sai (squished, missing quadrants, red overlay), hãy thử chế độ khác.</string>
+    <!-- DiLink 4 quadrant tweaks (only effective when cameraMode = DiLink 4) -->
     <string name="camera_dilink4_tweaks_title">DiLink 4 Quadrant Tweaks</string>
     <string name="camera_dilink4_tweaks_subtitle">Các điều chỉnh cho phương tiện cho đường DiLink 4. Chỉ hiệu quả khi chế độ DiLink 4 được chọn ở trên.</string>
     <string name="camera_dilink4_save">Sử dụng các điều chỉnh</string>
-    <string name="camera_dilink4_hint">Đổi lại chỉ khi HAL vẽ một màu đỏ "tích chuẩn thất bại" chrome trên nguồn cấp dữ liệu.</string>
+    <string name="camera_dilink4_hint">Đổi lại chỉ khi HAL vẽ một màu đỏ \"tích chuẩn thất bại\" chrome trên nguồn cấp dữ liệu.</string>
     <string name="camera_dilink4_red_mask_label">Thiết lập lớp phủ tiêu chuẩn màu đỏ (GL)</string>
-    <string name="camera_dilink4_red_mask_subtitle">Thêm một đoạn chiếu bóng nhạt để phát hiện các pixel HAL "sự chuẩn bị thất bại" màu đỏ sáng và thay thế chúng bằng một mẫu lân cận (hoặc màu xám sáng khi biểu ngữ quá lớn để sơn).</string>
+    <string name="camera_dilink4_red_mask_subtitle">Thêm một đoạn chiếu bóng nhạt để phát hiện các pixel HAL \"sự chuẩn bị thất bại\" màu đỏ sáng và thay thế chúng bằng một mẫu lân cận (hoặc màu xám sáng khi biểu ngữ quá lớn để sơn).</string>
+    <!-- dialog_camera_selection -->
     <string name="camera_selection_title">Chọn máy ảnh</string>
     <string name="camera_selection_subtitle">Chọn nguồn máy ảnh toàn cảnh</string>
     <string name="camera_current_auto">Hiện tại: tự động</string>
@@ -82,6 +119,21 @@
     <string name="camera_option_4">Camera 4</string>
     <string name="camera_option_5">Camera 5</string>
     <string name="camera_selection_hint">Auto chọn máy ảnh phù hợp cho trang bị của bạn trên mỗi boot. Camera 1 = BYD Seal, Camera 0 = Atto trang bị. khởi động lại daemon sau khi thay đổi ID máy ảnh để thiết lập có hiệu lực.</string>
+    <!-- OEM Dashcam camera ID picker (Phase 5: separate forward-sensor pipeline) -->
+    <string name="camera_oem_dashcam_title">OEM Dashcam Camera ID</string>
+    <string name="camera_oem_dashcam_hint">Pick the AVMCamera id that points at the forward dashcam sensor. Dashcam is the OPPOSITE of pano: Seal/Han pano = 1 → dashcam = 0; Atto / Tang pano = 0 → dashcam = 1. Leave on Auto to let OverDrive pick.</string>
+    <string name="camera_oem_dashcam_auto_resolved">Auto — using id %1$d (pano is id %2$d)</string>
+    <string name="camera_oem_dashcam_auto_unavailable">Auto — pano id is %1$d, can\'t infer dashcam</string>
+    <string name="camera_oem_dashcam_save">Save</string>
+    <!-- Dashcam-side camera labels — REVERSE of the pano labels above. The
+         OEM dashcam id is the opposite of the pano id, so the helpful
+         "this is what your trim should pick" hint flips between the two
+         dialogs. Without these strings the dashcam picker re-used the pano
+         labels and told Seal owners to pick "Camera 1 — Seal" for their
+         dashcam, which is the pano camera, not the dashcam. -->
+    <string name="camera_oem_option_0">Camera 0 — Seal / Han (default)</string>
+    <string name="camera_oem_option_1">Camera 1 — Atto / Tang</string>
+    <!-- Camera mapping dialog (multi-vehicle role-to-slice routing) -->
     <string name="camera_mapping_title">Chụp bản đồ bằng máy ảnh</string>
     <string name="camera_role_label">Phân tích vai trò</string>
     <string name="camera_candidate_previous">Trước đây</string>
@@ -96,6 +148,7 @@
     <string name="camera_mapping_current_format">Phân tích hiện tại: %1$s</string>
     <string name="camera_mapping_current_none">Bản đồ hiện tại: tự động / mặc định</string>
     <string name="camera_mapping_hint">OverDrive giữ lại hành vi khởi động cũ theo mặc định, nhưng bây giờ cho phép bạn chuẩn bị dải toàn cảnh hợp nhất đúng cách. Xem trước mỗi mảnh hợp nhất nguyên liệu, lập bản đồ các vai trò 360 hợp lý đến mảnh thực sự hiển thị phía trước / phải / phía sau / bên trái trên xe của bạn, và con quỷ sẽ sử dụng lại bố cục đó để ghi lại, phát trực tuyến và AI sau khi khởi động lại.</string>
+    <!-- fragment_dashboard -->
     <string name="dashboard_scan_to_connect">Scan để kết nối</string>
     <string name="dashboard_qr_waiting">Chờ đường hầm...</string>
     <string name="dashboard_daemons_running_default">0/5 chạy</string>
@@ -103,6 +156,8 @@
     <string name="dashboard_access_code">Mã truy cập</string>
     <string name="dashboard_token_masked">••••••••</string>
     <string name="dashboard_regenerate_token">Tín hiệu tái tạo</string>
+    <!-- fragment_recording_controls -->
+    <!-- dialog_setup_guide -->
     <string name="setup_guide_title">Bắt đầu</string>
     <string name="setup_guide_subtitle">Ba bước nhanh chóng để có được trải nghiệm tốt nhất:</string>
     <string name="setup_step_one_label">1</string>
@@ -117,13 +172,21 @@
     <string name="setup_overlay_title">Cho phép hiển thị trên các ứng dụng khác</string>
     <string name="setup_overlay_body">Khả năng điều này để hiển thị một chỉ số trạng thái nổi để ghi lại và theo dõi chuyến đi trên đầu các ứng dụng khác.</string>
     <string name="setup_overlay_button">Open Overlay Settings</string>
+    <!-- Language picker (drawer footer + bottom sheet) -->
     <string name="cd_close">Đóng</string>
     <string name="language_picker_title">Ngôn ngữ</string>
+    <!-- Subtitle on the language-picker bottom sheet. %1$d is the supported
+         language count (Auto adds an extra row but isn't counted). -->
     <string name="language_picker_subtitle_fmt">Các ngôn ngữ có sẵn %1$d</string>
+    <!-- Subtitle placeholder while the count is being computed. -->
     <string name="language_picker_subtitle_pending">Chọn ngôn ngữ</string>
     <string name="language_auto_title">Tự động</string>
+    <!-- %1$s is the native-script name of the locale that "Auto" currently
+         resolves to, e.g. "Auto · English". -->
     <string name="language_auto_subtitle">Hệ thống theo dõi · %1$s</string>
+    <!-- Drawer footer subtitle when on Auto, e.g. "English · Auto". -->
     <string name="language_label_auto_fmt">%1$s · tự động</string>
+    <!-- fragment_adb_console -->
     <string name="adb_prompt">$</string>
     <string name="adb_command_hint">Nhập lệnh...</string>
     <string name="adb_preset_commands_header">Các lệnh cài đặt trước</string>
@@ -131,13 +194,17 @@
     <string name="adb_output_ready">Sẵn sàng cho lệnh...</string>
     <string name="adb_console_hero_title">ADB Console</string>
     <string name="adb_console_hero_subtitle">Động hành lệnh shell trên thiết bị</string>
+    <!-- fragment_webview -->
     <string name="webview_loading">Lái...</string>
     <string name="webview_camera_daemon_not_running">Camera Daemon không chạy</string>
     <string name="webview_start_camera_daemon">Bắt đầu Camera Daemon từ màn hình Daemons để truy cập trang này.</string>
+    <!-- dialog_roi_drawing -->
+    <!-- dialog_zrok_token -->
     <string name="zrok_enable_token_hint">Khả năng token</string>
     <string name="zrok_token_storage_note">Token được lưu trữ an toàn và chia sẻ giữa các quy trình ứng dụng và daemon.</string>
     <string name="zrok_reset_environment">Tái thiết Zrok Môi trường</string>
     <string name="zrok_reset_environment_desc">Xóa môi trường và token. Bạn sẽ cần phải bật lại với token của bạn (sử dụng một khe thiết bị).</string>
+    <!-- dialog_reset_data -->
     <string name="reset_title">Data Reset</string>
     <string name="reset_subtitle">Xóa dữ liệu tích lũy theo các loại</string>
     <string name="reset_warning">Điều này không thể không được thực hiện. Các bản ghi, chuyến đi và lịch sử pin sẽ bị xóa vĩnh viễn.</string>
@@ -159,6 +226,8 @@
     <string name="reset_cat_proximity_desc">Radar kích hoạt sự kiện MP4</string>
     <string name="reset_cat_trip_files">Dữ liệu telemetry chuyến đi</string>
     <string name="reset_cat_trip_files_desc">Điện đo trên đĩa JSON mỗi chuyến đi</string>
+    <!-- fragment_abrp_settings -->
+    <!-- fragment_recording_library -->
     <string name="recording_lib_chip_any">Bất kỳ</string>
     <string name="recording_lib_chip_person">Người</string>
     <string name="recording_lib_chip_vehicle">Chiếc xe</string>
@@ -168,6 +237,7 @@
     <string name="recording_lib_chip_critical">Chứng quan trọng</string>
     <string name="recording_lib_selected_count_zero">0 được chọn</string>
     <string name="recording_lib_no_recordings">Không ghi âm</string>
+    <!-- v4 redesign: collapsible filter bar + single-row date jump -->
     <string name="recording_lib_filter_button">Bộ lọc</string>
     <string name="recording_lib_filter_button_active">Bộ lọc · %1$d</string>
     <string name="recording_lib_filter_sheet_title">Các bản ghi bộ lọc</string>
@@ -177,6 +247,7 @@
     <string name="recording_lib_filter_section_severity">Độ nghiêm trọng</string>
     <string name="recording_lib_filter_section_type">Loại</string>
     <string name="recording_lib_filter_section_place">Địa điểm</string>
+    <string name="recording_lib_place_search_hint">Search places…</string>
     <string name="recording_lib_chip_type_normal">Nhóm chứng chuẩn</string>
     <string name="recording_lib_chip_type_proximity">Khoảng cách</string>
     <string name="recording_lib_date_today">Ngày nay</string>
@@ -194,14 +265,46 @@
     <string name="cd_next_day">Ngày hôm sau</string>
     <string name="cd_open_filters">Các bộ lọc mở</string>
     <string name="cd_clear_filter">Bộ lọc rõ ràng</string>
+    <!-- v5 redesign: SOTA empty state with CTA + tile type badges -->
+    <string name="recording_lib_empty_title">No recordings match</string>
+    <string name="recording_lib_empty_body">Try adjusting your date range or chip filters.</string>
+    <string name="recording_lib_empty_clear_filters">Clear filters</string>
+    <!-- Shown on the empty-state body when there are zero clips on disk
+         (no filter is active). Sets a friendlier tone than "No recordings match". -->
+    <string name="recording_lib_empty_disk_title">Nothing recorded yet</string>
+    <string name="recording_lib_empty_disk_body">Captures will appear here as soon as the dashcam or surveillance pipeline writes a clip.</string>
+    <!-- Shown while the daemon is warming the H2 recording index on cold
+         start. Includes a progress counter when the daemon reports done/total,
+         otherwise a static body. The library re-polls every 1.5s and
+         transitions out automatically once results land. -->
+    <string name="recording_lib_building_index_title">Building library index</string>
+    <string name="recording_lib_building_index_body">One moment while the daemon scans your recordings.</string>
+    <string name="recording_lib_building_index_progress">Indexed %1$d of %2$d clips…</string>
+    <!-- Tile type badge labels — short, glanceable, mirrors the on-disk
+         filename prefix (cam_/event_/dvr_/proximity_) so power users can
+         map a tile back to its file group at a glance. -->
+    <string name="recording_lib_type_normal">CAM</string>
+    <string name="recording_lib_type_event">EVENT</string>
+    <string name="recording_lib_type_proximity">PROX</string>
+    <string name="recording_lib_type_oem">OEM</string>
+    <!-- Toast shown when a multi-select share is dispatched. -->
+    <string name="toast_share_recordings">Sharing %1$d recordings</string>
+    <!-- fragment_sentry_config -->
+    <!-- fragment_video_player -->
     <string name="player_title_recording">Đăng ký</string>
     <string name="player_time_zero">0: 00</string>
     <string name="player_time_separator"> / </string>
+    <!-- fragment_daemons -->
     <string name="daemons_hero_title">Dịch vụ nền</string>
+    <!-- Subtitle on the Daemons hero header before the first state arrives. -->
     <string name="daemons_count_pending">Dịch vụ tải...</string>
+    <!-- Subtitle on the Daemons hero header. %1$d running, %2$d total. -->
     <string name="daemons_count_fmt">%1$d của %2$d chạy</string>
+    <!-- dialog_time_window -->
+    <!-- dialog_update_progress -->
     <string name="update_preparing">Chuẩn bị cập nhật...</string>
     <string name="update_percent_zero">0%</string>
+    <!-- dialog_battery_health -->
     <string name="battery_health_title">Sức khỏe pin</string>
     <string name="battery_health_subtitle">Tình trạng sức khỏe</string>
     <string name="battery_health_dashes">--</string>
@@ -232,19 +335,27 @@
     <string name="toast_soh_observed_value_saved">Khả năng đóng gói được cập nhật thành %1$.1f kWh.</string>
     <string name="toast_soh_observed_value_failed">Không thể cập nhật dung lượng gói (%1$s).</string>
     <string name="diagnostics_battery_needs_review">Cần xem lại</string>
+    <!-- ============================================================
+         Step 2: Kotlin / Java UI literal extraction
+         ============================================================ -->
+    <!-- Notifications -->
+    <!-- Toasts / dialogs -->
     <string name="dialog_ok">OK</string>
+    <!-- Dynamic format strings -->
+    <!-- Plurals -->
     <plurals name="recordings_deleted_count">
-        <item quantity="one">Đăng ký %d bị xóa</item>
         <item quantity="other">Các bản ghi %d bị xóa</item>
     </plurals>
     <plurals name="delete_recordings_title">
-        <item quantity="one">Xóa bản ghi %d</item>
         <item quantity="other">Xóa bản ghi %d</item>
     </plurals>
     <plurals name="delete_recordings_message">
-        <item quantity="one">Điều này sẽ xóa vĩnh viễn bản ghi %d.</item>
         <item quantity="other">Điều này sẽ xóa vĩnh viễn các bản ghi %d.</item>
     </plurals>
+    <!-- ============================================================
+         Step 2 (continued): MainActivity, fragments, dialogs
+         ============================================================ -->
+    <!-- MainActivity -->
     <string name="toast_updated_to">Được cập nhật lên %1$s</string>
     <string name="toast_update_install_failed">Cập nhật cài đặt thất bại: %1$s</string>
     <string name="toast_checking_for_updates">Xem xem có thông tin mới không...</string>
@@ -294,6 +405,7 @@
     <string name="dialog_traffic_reboot_message">Thay đổi đã được áp dụng. Xin vui lòng thực hiện một khởi động lại cứng bây giờ:</string>
     <string name="traffic_monitor_loading">Kiểm tra giao thông: kiểm tra...</string>
     <string name="traffic_monitor_tap_to_check">Kiểm tra giao thông (chạm vào để kiểm tra)</string>
+    <!-- Reset categories -->
     <string name="reset_label_trips">Chuyến đi</string>
     <string name="reset_label_soc_history">lịch sử SoC + 12V</string>
     <string name="reset_label_soh">Tích chuẩn SoH</string>
@@ -303,6 +415,10 @@
     <string name="reset_label_sentry_events">Các sự kiện giám sát</string>
     <string name="reset_label_proximity">Các bản ghi gần gũi</string>
     <string name="reset_label_trip_files">Dữ liệu telemetry chuyến đi</string>
+    <!-- ROI dialog -->
+    <!-- Sentry config -->
+    <!-- Format helpers -->
+    <!-- Dashboard -->
     <string name="toast_access_code_copied">Mã truy cập sao chép</string>
     <string name="dialog_regenerate_token_title">Tín hiệu tái tạo</string>
     <string name="dialog_regenerate_token_message">Điều này sẽ làm vô hiệu hóa token hiện tại.</string>
@@ -319,6 +435,7 @@
     <string name="tunnel_label_cloudflared">Tự nhiên</string>
     <string name="tunnel_label_zrok">Zrok</string>
     <string name="tunnel_label_tailscale">Tailscale</string>
+    <!-- Daemon names — shown on the Daemons list and dashboard. -->
     <string name="daemon_name_camera">Camera Daemon</string>
     <string name="daemon_name_surveillance">Daemon giám sát</string>
     <string name="daemon_name_acc_surveillance">ACC Giám sát</string>
@@ -329,6 +446,8 @@
     <string name="daemon_name_telegram">Telegram Bot</string>
     <string name="clip_label_access_code">Mã truy cập</string>
     <string name="clip_label_url">URL</string>
+    <!-- ABRP -->
+    <!-- Daemons fragment -->
     <string name="toast_no_config_needed">Không cần thiết cấu hình cho %1$s</string>
     <string name="dialog_zrok_token_title">Zrok Tunnel Token</string>
     <string name="dialog_zrok_token_message">Nhập mã hiệu kích hoạt Zrok của bạn.</string>
@@ -370,6 +489,8 @@
     <string name="log_header_source">Nguồn: %1$s</string>
     <string name="log_header_exported">Xuất khẩu: %1$s</string>
     <string name="log_header_truncated">LƯU Ý: Nhóm nhật ký được cắt ngắn để kéo dài 10000 dòng (tổng số: %1$d dòng)</string>
+    <!-- Recording controls -->
+    <!-- Recording library -->
     <string name="toast_cannot_play_video">Không thể phát video: %1$s</string>
     <string name="dialog_delete_recording_title">Xóa bản ghi</string>
     <string name="dialog_delete_recording_message">Xóa %1$s?\nĐiều này không thể hủy bỏ được.</string>
@@ -377,30 +498,42 @@
     <string name="toast_recording_delete_failed">Không thể xóa bản ghi</string>
     <string name="toast_batch_delete_partial">%1$d bị xóa, %2$d thất bại</string>
     <string name="play_with_chooser">Chơi với</string>
+    <!-- Setup guide -->
     <string name="setup_version_banner">Cập nhật v%1$s  xác nhận lại tự động khởi động, BYD xóa nó trên mỗi cài đặt</string>
     <string name="setup_overlay_already_granted">Đã được cấp</string>
+    <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">Mẹo &amp; giải quyết các vấn đề</string>
     <string name="setup_traffic_title">Thiết lập màn hình giao thông BYD</string>
     <string name="setup_traffic_body">BYD Traffic Monitor ngăn chặn các ứng dụng bên thứ ba tiếp cận internet. Khóa nó cho phép OverDrive và bất kỳ ứng dụng nào bạn cài đặt thực sự sử dụng mạng. Một khởi động lại cứng là cần thiết sau đó.</string>
     <string name="setup_traffic_button">Kiểm tra giao thông mở</string>
     <string name="setup_camera_fix_title">Máy ảnh đưa màu đen hay không đúng?</string>
     <string name="setup_camera_fix_body">Open Diagnostics → Camera probe, đặt Camera ID lên 0, nhấn Save, sau đó khởi động lại camera daemon. Nếu nguồn cấp dữ liệu vẫn sai, lặp lại với Camera ID 1. Để phần bản đồ không bị ảnh hưởng.</string>
+    <!-- Recording storage path -->
+    <!-- MainActivity status -->
     <string name="camera_current_manual">Hiện tại: Camera %1$d (Hướng dẫn)</string>
     <string name="camera_current_auto_label">Hiện tại: tự động</string>
     <string name="soh_estimation_active">Đánh giá hoạt động</string>
     <string name="soh_no_estimate_yet">Không có ước tính nào  chờ dữ liệu</string>
+    <!-- Recording tabs -->
+    <!-- Misc -->
     <string name="recording_lib_selected_count">%1$d được chọn</string>
     <string name="video_player_playback_error">Trận lỗi phát lại</string>
     <string name="video_player_no_events">Không có sự kiện</string>
     <string name="daemon_configuration_required">Thiết lập cần thiết</string>
     <string name="daemon_configuration_message">%1$s</string>
+    <!-- Navigation graph fragment labels (shown as toolbar/ActionBar titles) -->
     <string name="nav_page_video_player">Video Player</string>
     <string name="nav_page_telegram">Telegram</string>
     <string name="nav_page_abrp">ABRP</string>
     <string name="nav_page_mqtt">MQTT</string>
     <string name="nav_page_byd_cloud">BYD Cloud</string>
+    <!-- StatusOverlayService persistent notification (foreground service) -->
     <string name="status_overlay_notif_title">OverDrive Tình trạng</string>
     <string name="status_overlay_notif_text">Status overlay hoạt động</string>
+    <!-- ============================================================== -->
+    <!-- M3 Revamp: navigation rail + settings sub-rail + theme picker  -->
+    <!-- ============================================================== -->
+    <!-- Top-level destinations (navigation rail labels) -->
     <string name="rail_dashboard">bảng điều khiển</string>
     <string name="rail_live">Đời sống</string>
     <string name="rail_recordings">Bản ghi</string>
@@ -409,6 +542,7 @@
     <string name="rail_integrations">Kết hợp</string>
     <string name="rail_diagnostics">Chẩn đoán</string>
     <string name="rail_settings">Cài đặt</string>
+    <!-- Settings sub-rail -->
     <string name="settings_section_appearance">Nhìn hình</string>
     <string name="settings_section_recording">Đăng ký</string>
     <string name="settings_section_surveillance">Giám sát</string>
@@ -420,15 +554,24 @@
     <string name="settings_overlay_camera_subtitle">Hình bày thẻ REC / PROX trong khi ghi âm đang hoạt động.</string>
     <string name="settings_overlay_trip_title">Chỉ thị Trip</string>
     <string name="settings_overlay_trip_subtitle">Cho thấy thẻ TRIP khi phát hiện chuyến đi đang chạy.</string>
+    <!-- Was "About & updates" — Check for Updates row was removed from
+         the About page, so the menu / rail label is now just "About". -->
     <string name="settings_section_about">Giới thiệu</string>
+    <!-- Settings sub-rail (landscape) — overline + a11y -->
     <string name="settings_subrail_overline">Định hướng</string>
     <string name="cd_settings_subrail">Sub-rail cài đặt</string>
+    <!-- Settings → Vehicle data placeholder pane -->
+    <!-- Settings → Privacy pane copy -->
     <string name="settings_privacy_title">Bảo mật &amp; dữ liệu</string>
     <string name="settings_privacy_body">Reset xóa chỉ số ghi âm, thông tin tín dụng được lưu trữ trong cache, trạng thái daemon và sở thích trên thiết bị.</string>
+    <!-- Settings → About pane copy -->
     <string name="settings_about_title">Về OverDrive</string>
     <string name="settings_about_version_label">Phiên bản</string>
     <string name="settings_about_package_label">Xây dựng</string>
     <string name="settings_about_check_update_value">Kiểm tra bản phát hành GitHub mới nhất và cài đặt nếu mới hơn.</string>
+    <!-- Support-development section: tiered options, low-cost first.
+         star → spread → coffee, in that visual order. Copy aims for
+         personality without being corny — short, warm, specific. -->
     <string name="settings_about_support_section">Được vận hành bởi những người như anh</string>
     <string name="settings_about_support_share_title">Hãy nói với chủ xe khác</string>
     <string name="settings_about_support_share_value">Mỗi liên kết được chia sẻ giúp một chủ sở hữu BYD khác khám phá Overdrive.</string>
@@ -438,40 +581,45 @@
     <string name="settings_about_open_link_copied">Không tìm thấy trình duyệt. URL sao chép: %1$s</string>
     <string name="settings_about_support_kofi_title">Chất nhiên liệu phát hành tiếp theo</string>
     <string name="settings_about_support_kofi_value">Một tách cà phê trên Ko-fi giữ cho các cam kết đêm đến.</string>
-    <string name="settings_about_support_kofi_url">https://ko-fi.com/E1E71XALHX</string>
     <string name="settings_about_license_title">Giấy phép</string>
     <string name="settings_about_license_value">MIT  mã nguồn mở. Nhấp để xem toàn văn bản.</string>
     <string name="settings_about_source_title">Mã nguồn</string>
     <string name="settings_about_source_value">github.com/yash-srivastava/Overdrive-release</string>
-    <string name="settings_about_license_url">https://github.com/yash-srivastava/Overdrive-release/blob/main/license</string>
-    <string name="settings_about_source_url">https://github.com/yash-srivastava/Overdrive-release</string>
     <string name="settings_about_star_title">Thả trên GitHub</string>
     <string name="settings_about_star_value">Chỉ mất một giây thôi, có nghĩa là rất nhiều.</string>
-    <string name="settings_about_star_url">https://github.com/yash-srivastava/Overdrive-release</string>
     <string name="settings_about_thanks_title">Cảm ơn</string>
     <string name="settings_about_thanks_subtitle">Được xây dựng với sự giúp đỡ của những người đóng góp và ủng hộ.</string>
     <string name="settings_about_contributors_title">Người đóng góp</string>
     <string name="settings_about_supporters_title">Người ủng hộ</string>
     <string name="settings_about_thanks_empty">Danh sách sẽ được điền khi có người tham gia.</string>
+    <!-- Settings → General -->
     <string name="settings_theme_label">Chủ đề</string>
     <string name="settings_theme_auto">tự động (chế hệ theo dõi)</string>
     <string name="settings_theme_light">Ánh sáng</string>
     <string name="settings_theme_dark">Đen tối</string>
     <string name="settings_language_label">Ngôn ngữ</string>
+    <!-- Recordings page (header + segmented control + page actions) -->
     <string name="recordings_title">Bản ghi</string>
     <string name="recordings_segment_dashcam">Dashcam</string>
     <string name="recordings_segment_surveillance">Giám sát</string>
     <string name="recordings_action_settings">Cài đặt</string>
+    <!-- Hero subtitle: "%1$d today · %2$d total · %3$s" where %3$s is a pre-formatted size like "42 GB". -->
     <string name="recordings_summary_format">%1$d ngày hôm nay · %2$d tổng số · %3$s</string>
+    <!-- Per-segment label with running count, e.g. "Dashcam · 118". -->
     <string name="recordings_segment_dashcam_count">Dashcam · %d</string>
     <string name="recordings_segment_surveillance_count">Giám sát · %d</string>
+    <!-- Layout-time placeholder for the counts subtitle before the scan completes. -->
     <string name="recordings_summary_pending">—</string>
+    <!-- Landscape recordings preview placeholder (right pane). -->
     <string name="recordings_preview_placeholder_title">Chọn một bản ghi</string>
     <string name="recordings_preview_placeholder_body">Nhấn bất kỳ mục nào ở bên trái để chơi nó.</string>
+    <!-- Diagnostics page -->
     <string name="diagnostics_section_adb_console">ADB Console</string>
     <string name="diagnostics_section_traffic">Kiểm tra giao thông</string>
     <string name="diagnostics_section_camera_probe">Hình ảnh</string>
     <string name="diagnostics_section_battery">Sức khỏe pin</string>
+    <!-- Sub-label used on diagnostics utility cards in landscape (hint to tap). -->
+    <!-- SOTA Diagnostics dashboard -->
     <string name="diagnostics_hero_title">Chẩn đoán hệ thống</string>
     <string name="diagnostics_hero_subtitle">Sức khỏe trực tiếp, nhật ký và thăm dò cho thiết bị.</string>
     <string name="diagnostics_health_clear">Được rồi.</string>
@@ -482,14 +630,19 @@
     <string name="diagnostics_health_battery">Phòng pin</string>
     <string name="diagnostics_metric_pending">—</string>
     <string name="diagnostics_metric_online">Trên mạng</string>
+    <!-- Network tile: bottom line tunnel state (e.g. "Tunnel · Online"). %1$s is one of
+         tunnel_state_online / tunnel_state_offline / tunnel_state_connecting. -->
     <string name="diagnostics_network_tunnel_label">Đường hầm · %1$s</string>
     <string name="diagnostics_tunnel_state_online">Trên mạng</string>
     <string name="diagnostics_tunnel_state_offline">Không liên kết</string>
     <string name="diagnostics_tunnel_state_connecting">Kết nối</string>
+    <!-- Network top-line fallbacks when no Wi-Fi SSID is available. -->
     <string name="diagnostics_network_mobile">Điện thoại di động</string>
     <string name="diagnostics_network_ethernet">Ethernet</string>
     <string name="diagnostics_network_offline">Không liên kết</string>
+    <!-- Storage tile lines. %1$d clip count, %2$s human-readable used size. -->
     <string name="diagnostics_storage_used_line">Các clip %1$d · %2$s được sử dụng</string>
+    <!-- Storage tile bottom line. %1$s human-readable free size. -->
     <string name="diagnostics_storage_free_line">%1$s miễn phí</string>
     <string name="diagnostics_logs_card_title">Đăng ký sự kiện trực tiếp</string>
     <string name="diagnostics_logs_card_subtitle">Tiếp tục phát ra từ các dịch vụ đang chạy.</string>
@@ -499,6 +652,7 @@
     <string name="diagnostics_adb_subtitle">Mở đầu cuối trên thiết bị.</string>
     <string name="diagnostics_battery_subtitle">Kiểm tra tế bào SOH và đóng gói số liệu thống kê.</string>
     <string name="diagnostics_settings_subtitle">Ưu tiên ứng dụng, chủ đề và ngôn ngữ.</string>
+    <!-- SOTA Integrations page -->
     <string name="integrations_hero_title">Kết hợp</string>
     <string name="integrations_hero_subtitle">Kết nối Overdrive với dịch vụ của bạn.</string>
     <string name="integrations_status_unknown">Nhấn để cấu hình</string>
@@ -509,19 +663,31 @@
     <string name="integrations_mqtt_desc">Thông báo điện đo xe cho trợ lý nhà hoặc bất kỳ nhà môi giới MQTT nào.</string>
     <string name="integrations_byd_cloud_desc">Kết nối tài khoản ứng dụng BYD của bạn để bật các lệnh từ xa như khóa cửa, nháy đèn và còi.</string>
     <string name="integrations_configure_button">Thiết lập</string>
+    <!-- Settings → About / Privacy actions (rows) -->
     <string name="settings_action_check_update">Kiểm tra các bản cập nhật</string>
     <string name="settings_action_reset_data">Đặt lại dữ liệu...</string>
+    <!-- Content descriptions for rail / segmented controls -->
     <string name="cd_brand_logo">OverDrive</string>
+    <!-- ============================================================== -->
+    <!-- Dashboard SOTA revamp                                            -->
+    <!-- ============================================================== -->
+    <!-- Hero card -->
+    <!-- SOTA hero headline. Static identity statement (not a time-of-day
+         greeting) — pairs with the OVERDRIVE overline above and the live
+         status row of chips below. Locale catalogs auto-translate. -->
     <string name="dashboard_hero_headline">Đang canh chừng</string>
     <string name="dashboard_subtitle_all_systems">Tất cả hệ thống trực tuyến</string>
     <string name="dashboard_subtitle_some_offline">%1$d của các dịch vụ %2$d trực tuyến</string>
     <string name="dashboard_subtitle_no_tunnel">Truy cập từ xa offline</string>
+    <!-- Metric tiles -->
     <string name="dashboard_metric_recordings">Các bản ghi âm ngày hôm nay</string>
     <string name="dashboard_metric_storage">Kho lưu trữ được sử dụng</string>
     <string name="dashboard_metric_tunnel">Truy cập từ xa</string>
     <string name="dashboard_metric_services">Dịch vụ nền</string>
     <string name="dashboard_metric_value_pending">—</string>
     <string name="dashboard_metric_vehicle">Chiếc xe</string>
+    <!-- Hero chips: at-a-glance pills under the greeting that summarize the
+         three most important live signals (tunnel, services, recording). -->
     <string name="dashboard_chip_recording_active">Đang ghi âm</string>
     <string name="dashboard_chip_recording_idle">Rảnh</string>
     <string name="dashboard_vehicle_tap_to_set">Nhấn để thiết lập</string>
@@ -540,36 +706,56 @@
     <string name="vehicle_dialog_summary_model">Mô hình: %1$s</string>
     <string name="vehicle_dialog_summary_calibration">Đường độ cuối cùng: %1$.1f%% trên %2$s</string>
     <string name="vehicle_dialog_soh_unavailable">không có sẵn</string>
+    <!-- Combined Recordings+Storage chip: e.g. "8.4 GB used · 12 GB free" -->
     <string name="dashboard_metric_storage_chip">%1$s được sử dụng · %2$s miễn phí</string>
     <string name="dashboard_metric_storage_chip_pending">Đài lưu trữ </string>
     <string name="dashboard_tunnel_offline">Không liên kết</string>
     <string name="dashboard_tunnel_online">Trên mạng</string>
     <string name="dashboard_tunnel_connecting">Kết nối...</string>
+    <!-- Quick actions (now rendered as same-size tiles, not chips) -->
     <string name="dashboard_action_live">Hình ảnh trực tiếp</string>
     <string name="dashboard_action_live_subtitle">Khám ảnh mở</string>
     <string name="dashboard_action_recordings">Bản ghi</string>
     <string name="dashboard_action_settings">Cài đặt</string>
     <string name="dashboard_action_settings_subtitle">Ưu tiên và về</string>
+    <!-- ============================================================ -->
+    <!-- Settings — SOTA portrait hub + section pages                  -->
+    <!-- ============================================================ -->
+    <!-- Hero -->
     <string name="settings_hero_title">Cài đặt</string>
     <string name="settings_hero_overline">TÔNG CÁN</string>
     <string name="settings_hero_subtitle">Định hướng ngoại hình, ghi lại, giám sát và dữ liệu trên thiết bị.</string>
+    <!-- Section overlines -->
     <string name="settings_overline_preferences">TƯU ĐC</string>
     <string name="settings_overline_about_data">Về &amp; DATA</string>
+    <!-- Quick toggles -->
     <string name="settings_quick_theme_label">Chủ đề</string>
     <string name="settings_quick_language_label">Ngôn ngữ</string>
+    <!-- Section row subtitles (portrait) -->
     <string name="settings_section_recording_subtitle">Các bộ đệm trước / sau, codec, giới hạn lưu trữ.</string>
     <string name="settings_section_surveillance_subtitle">Khu vực phát hiện, lịch trình, độ nhạy chuyển động.</string>
     <string name="settings_section_daemons_subtitle">Cloudflared, Zrok, Telegram, MQTT chạy bộ.</string>
+    <!-- About / data row subtitles -->
     <string name="settings_about_row_title">Về OverDrive</string>
     <string name="settings_about_row_subtitle">Phiên bản, giấy phép, hỗ trợ phát triển.</string>
     <string name="settings_reset_row_subtitle">Chọn âm thanh, sự kiện, hoặc tất cả các kho lưu trữ.</string>
+    <!-- Footer -->
     <string name="settings_footer_format">OverDrive %1$s · %2$s</string>
+    <!-- ============================================================ -->
+    <!-- Appearance pane — SOTA visual theme picker                    -->
+    <!-- ============================================================ -->
     <string name="settings_appearance_subtitle">Chủ đề, ngôn ngữ và sở thích hình ảnh.</string>
     <string name="settings_theme_active_auto_caption">Auto theo chủ đề hệ thống của bạn.</string>
     <string name="settings_theme_active_light_caption">Điện thoại ánh sáng luôn bật.</string>
     <string name="settings_theme_active_dark_caption">Chủ đề tối luôn được bật.</string>
     <string name="settings_language_count_format">%1$d của các ngôn ngữ %2$d có sẵn</string>
     <string name="settings_language_card_title">Ngôn ngữ hiển thị</string>
+    <!-- ============================================================ -->
+    <!-- Vehicle data pane — manifest permissions + integrations       -->
+    <!-- ============================================================ -->
+    <!-- ============================================================ -->
+    <!-- Privacy pane — stance + storage summary + reset               -->
+    <!-- ============================================================ -->
     <string name="settings_privacy_stance_title">Trên thiết bị theo mặc định</string>
     <string name="settings_privacy_stance_body">OverDrive chạy hoàn toàn trên đơn vị đầu, không có điện đo rời khỏi xe của bạn ngoại trừ thông qua các đường hầm và tích hợp mà bạn đã thiết lập rõ ràng.</string>
     <string name="settings_privacy_overline_storage">Lưu trữ tại địa phương</string>
@@ -580,43 +766,66 @@
     <string name="settings_privacy_storage_count_format">Clip %1$d</string>
     <string name="settings_privacy_storage_count_format_plural">Các clip %1$d</string>
     <string name="settings_privacy_reset_subtitle">Chọn các loại: ghi âm, sự kiện, cấu hình con quỷ, bộ nhớ điện thoại trong cache...</string>
+    <!-- Place tagging (reverse geocoding) — recording row chip fallback. -->
     <string name="recording_unknown_location">Không có vị trí</string>
+    <!-- ============================================================== -->
+    <!-- Diagnostics health-tile values (Camera + Battery)                -->
+    <!-- ============================================================== -->
+    <!-- Camera tile primary value: %1$d is the probed camera id (0..N). -->
     <string name="diagnostics_camera_value_camera_n">Máy ảnh %1$d</string>
+    <!-- Camera tile primary value when manual override is active. -->
     <string name="diagnostics_camera_value_camera_n_manual">Máy ảnh %1$d (là tay)</string>
     <string name="diagnostics_camera_value_probing">Chọn tra...</string>
     <string name="diagnostics_camera_value_offline">Không liên kết</string>
+    <!-- Battery tile primary value: %1$.0f is the SOH percent (0..100). -->
     <string name="diagnostics_battery_value_soh">%1$.0f%%</string>
     <string name="diagnostics_battery_value_pending">Dữ liệu chờ đợi</string>
+    <!-- Dashboard recordings tile: live-record indicator prefix.
+         %1$d is today's clip count. The leading bullet is the red dot. -->
     <string name="dashboard_recordings_value_live">● %1$d</string>
+    <!-- ============================================================== -->
+    <!-- Dashboard hero subtitle — auto-rotating insights carousel        -->
+    <!-- ============================================================== -->
+    <!-- Each line replaces the static subtitle for ~5s, then cross-fades
+         to the next available insight. Numbers are bolded + tinted in the
+         provider, so translators should keep numeric placeholders intact
+         (do not spell out the digits). -->
+    <!-- First-launch welcome — only shown on the very first dashboard visit. -->
     <string name="dashboard_insight_welcome">Chào mừng  Overdrive giờ là đôi mắt thứ hai của bạn.</string>
+    <!-- Parking delta. %1$s = absolute SOC delta string ("8%"); %2$s = absolute kWh string ("4 kWh"). -->
     <string name="dashboard_insight_parked_charged_kwh">Nhặt %1$s (≈%2$s) trong khi đỗ xe</string>
     <string name="dashboard_insight_parked_charged">Nhặt %1$s trong khi đỗ xe</string>
     <string name="dashboard_insight_parked_drained_kwh">Sử dụng %1$s (≈%2$s) kể từ khi bạn đậu xe</string>
     <string name="dashboard_insight_parked_drained">Tôi đã sử dụng %1$s kể từ khi bạn đỗ xe.</string>
+    <!-- Most recent surveillance clip. %1$s = relative time, e.g. "2 hr. ago" / "yesterday". -->
     <string name="dashboard_insight_last_alert">Báo cảnh giám sát cuối cùng: %1$s</string>
+    <!-- Most recent completed charging session in the last 24h.
+         %1$s = energy added (e.g. "12.4 kWh"); %2$s = duration (e.g. "1 hr 45 min"). -->
     <string name="dashboard_insight_last_charge">Lạc cuối cùng: +%1$s trong %2$s</string>
+    <!-- Storage milestone. %1$d = clip count; %2$s = total size (e.g. "42 GB"). -->
     <string name="dashboard_insight_storage_milestone">Các clip %1$d · %2$s ghi lại</string>
+    <!-- Number formatters used inside other insights. Translators may localize
+         the unit suffix (e.g. "키와트" / "квт·ч") but should leave the float
+         placeholder shape so the bold-ifier still finds the digits. -->
     <string name="dashboard_insight_kwh_format">%1$.1f kWh</string>
     <string name="dashboard_insight_percent_format">%1$.1f%%</string>
     <string name="dashboard_insight_hours_minutes">%1$d hr %2$d min</string>
+    <!-- Today's clips. -->
     <plurals name="dashboard_insight_today_clips">
-        <item quantity="one">Video %1$d được ghi lại hôm nay</item>
         <item quantity="other">Các đoạn phim %1$d được ghi lại hôm nay</item>
     </plurals>
+    <!-- Process uptime. Days form takes (days, hours); hours form takes hours only. -->
     <plurals name="dashboard_insight_uptime_days_hours">
-        <item quantity="one">Chuyển trên mạng cho ngày %1$d, %2$d giờ</item>
         <item quantity="other">Chuyển đường trên mạng trong %1$d ngày, %2$d giờ</item>
     </plurals>
     <plurals name="dashboard_insight_uptime_hours">
-        <item quantity="one">Chuyển đường trên mạng trong giờ %1$d</item>
         <item quantity="other">Chuyển đường trên mạng trong %1$d giờ</item>
     </plurals>
+    <!-- Duration helpers used inside insights (last_charge etc.). -->
     <plurals name="dashboard_insight_minutes">
-        <item quantity="one">%1$d min</item>
         <item quantity="other">%1$d min</item>
     </plurals>
     <plurals name="dashboard_insight_hours">
-        <item quantity="one">%1$d hr</item>
         <item quantity="other">%1$d hr</item>
     </plurals>
 </resources>

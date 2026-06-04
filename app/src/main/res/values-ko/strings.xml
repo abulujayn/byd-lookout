@@ -1,17 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">OverDrive</string>
+    <!-- Accessibility Service -->
     <string name="accessibility_service_description">이 서비스는 스크린 콘텐츠를 읽거나 상호 작용하지 않습니다.</string>
+    <!-- Recording Mode Labels -->
+    <!-- Proximity Guard Settings Labels -->
+    <!-- Quality Settings Labels -->
+    <!-- Storage Labels -->
+    <!-- Recording Status Labels -->
+    <!-- Event Types -->
+    <!-- Filter Labels -->
+    <!-- Storage Breakdown -->
+    <!-- Recording Controls -->
+    <!-- Slider Range Labels -->
+    <!-- ============================================================
+         i18n string extraction (Step 1: Layouts)
+         ============================================================ -->
+    <!-- Drawer menu -->
+    <!-- Common buttons / labels -->
     <string name="action_cancel">취소</string>
     <string name="action_clear_plain">지우기</string>
     <string name="action_select_all">모든 것을 선택</string>
     <string name="action_select_all_short">모두들</string>
     <string name="action_delete">삭제</string>
+    <string name="action_share">Share</string>
     <string name="action_done">완료</string>
     <string name="action_remind_me_later">나중에 기억해</string>
     <string name="action_retry">다시 시도</string>
     <string name="action_run">도망쳐</string>
     <string name="action_clear_output">명확한 출력</string>
+    <!-- Nav header -->
+    <!-- Common content descriptions -->
     <string name="cd_camera">카메라</string>
     <string name="cd_qr">QR</string>
     <string name="cd_qr_code">QR 코드</string>
@@ -32,7 +51,13 @@
     <string name="cd_player_maximize">플레이어를 극대화</string>
     <string name="cd_player_minimize">출구 풀스크린</string>
     <string name="cd_player_mute">오디오를 변경</string>
+    <string name="cd_player_quadrant_all">Show all cameras</string>
+    <string name="cd_player_quadrant_front">Show front camera</string>
+    <string name="cd_player_quadrant_right">Show right camera</string>
+    <string name="cd_player_quadrant_rear">Show rear camera</string>
+    <string name="cd_player_quadrant_left">Show left camera</string>
     <string name="cd_delete">삭제</string>
+    <string name="cd_share">Share</string>
     <string name="cd_expand">확장</string>
     <string name="cd_configure">구성</string>
     <string name="cd_download_log">다운로드 로그</string>
@@ -40,23 +65,33 @@
     <string name="cd_battery">배터리</string>
     <string name="cd_step_completed">단계 완료</string>
     <string name="cd_permission_granted">허가</string>
+    <!-- overlay_status -->
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">트립</string>
     <string name="overlay_mic_inactive_label">MIC</string>
+    <!-- item_log_entry placeholders (timestamp/tag/message are runtime, but these are
+         placeholder/preview text used at design time and visible in some empty states) -->
     <string name="log_entry_default_timestamp">12시 34분56분</string>
     <string name="log_entry_default_tag">[ TAG]</string>
     <string name="log_entry_default_message">로그 메시지는 여기</string>
+    <!-- item_safe_location -->
+    <!-- item_daemon_card -->
     <string name="daemon_card_default_name">데몬 이름</string>
     <string name="daemon_card_default_status">상태 메시지</string>
     <string name="daemon_card_subprocesses">부처리 과정</string>
+    <!-- item_time_window -->
+    <!-- fragment_logs_panel -->
     <string name="logs_panel_title">로그</string>
+    <!-- activity_main_new / activity_main-land -->
     <string name="url_connecting">연결...</string>
+    <!-- dialog_tailscale_settings -->
     <string name="tailscale_generate_login_url">로그인 URL를 생성</string>
     <string name="tailscale_scan_to_login">로그인으로 스캔</string>
     <string name="tailscale_qr_waiting">로그인 URL를 기다리고 있습니다.</string>
     <string name="tailscale_enable_proxy">Tailscale 프록시를 활성화</string>
     <string name="tailscale_proxy_explainer">MQTT에서 Tailscale로 이동하여 포트 송신 없이 개인 브로커에 연락할 수 있습니다.</string>
     <string name="tailscale_proxy_warning">MQTT를 공개 브로커 (HiveMQ, AWS IoT, 등) 로 설정할 때, Tailscale는 당신의 꼬리망으로 가는 길에서만 실패합니다. 저장은 데이몬을 다시 시작합니다.</string>
+    <!-- Camera ingestion mode selector (Default vs DiLink 4) -->
     <string name="camera_mode_title">섭취 방식</string>
     <string name="camera_mode_subtitle">머리 단위와 일치하는 경로를 선택하십시오. 기본적으로 대부분의 BYD 모델에 적합합니다. AVM HAL가 미리 꿰매 2x2 모자이크를 방출하는 최신 트림 (Han / Tang 2024+) 에서 DiLink 4이 필요합니다.</string>
     <string name="camera_mode_option_default">기본  Seal, Atto, Dolphin (대부분의 자동차) 에서 작동합니다</string>
@@ -65,12 +100,14 @@
     <string name="camera_mode_current_dilink4">현재: DiLink 4</string>
     <string name="camera_mode_save">적용 모드</string>
     <string name="camera_mode_hint">모드를 변경하면 daemon 카메라가 다시 시작됩니다. 비디오가 잘못 보인 경우 (부러진, 사각형이 빠진, 빨간색 덮개) 다른 모드를 시도하십시오.</string>
+    <!-- DiLink 4 quadrant tweaks (only effective when cameraMode = DiLink 4) -->
     <string name="camera_dilink4_tweaks_title">디링크 4 쿼던트 트위크</string>
     <string name="camera_dilink4_tweaks_subtitle">디링크 4 경로를 위한 차량별 조정. 위의 디링크 4 모드가 선택되면만 유효합니다.</string>
     <string name="camera_dilink4_save">수정사항을 적용</string>
-    <string name="camera_dilink4_hint">HAL가 피드 위에 빨간색 "계급 실패" 크롬을 칠할 경우만 이 기능을 전환하십시오. Daemon 재부팅은 변경 사항을 적용합니다.</string>
+    <string name="camera_dilink4_hint">HAL가 피드 위에 빨간색 \"계급 실패\" 크롬을 칠할 경우만 이 기능을 전환하십시오. Daemon 재부팅은 변경 사항을 적용합니다.</string>
     <string name="camera_dilink4_red_mask_label">빨간색 캘리브레이션 오버레이 (GL) 를 억제합니다.</string>
-    <string name="camera_dilink4_red_mask_subtitle">밝은 빨간색 HAL "계산 실패" 픽셀을 감지하고 이웃 샘플 (또는 깃발이 칠하기에는 너무 큰 경우 광명 회색) 으로 대체하는 조각-상태 패스를 추가합니다. 화장품만 가 근본적인 캘리버레이션 상태에 영향을 미치지 않습니다.</string>
+    <string name="camera_dilink4_red_mask_subtitle">밝은 빨간색 HAL \"계산 실패\" 픽셀을 감지하고 이웃 샘플 (또는 깃발이 칠하기에는 너무 큰 경우 광명 회색) 으로 대체하는 조각-상태 패스를 추가합니다. 화장품만 가 근본적인 캘리버레이션 상태에 영향을 미치지 않습니다.</string>
+    <!-- dialog_camera_selection -->
     <string name="camera_selection_title">카메라 선택</string>
     <string name="camera_selection_subtitle">파노라마 카메라 소스를 선택</string>
     <string name="camera_current_auto">현재: 자동</string>
@@ -82,6 +119,21 @@
     <string name="camera_option_4">카메라 4</string>
     <string name="camera_option_5">카메라 5</string>
     <string name="camera_selection_hint">자동으로 각 부트에서 트리밍에 적합한 카메라를 선택합니다. 카메라 1 = BYD Seal, 카메라 0 = Atto 트리밍. 설정이 효력을 발휘하기 위해 카메라 ID를 변경한 후 다이몬을 다시 시작하십시오.</string>
+    <!-- OEM Dashcam camera ID picker (Phase 5: separate forward-sensor pipeline) -->
+    <string name="camera_oem_dashcam_title">OEM Dashcam Camera ID</string>
+    <string name="camera_oem_dashcam_hint">Pick the AVMCamera id that points at the forward dashcam sensor. Dashcam is the OPPOSITE of pano: Seal/Han pano = 1 → dashcam = 0; Atto / Tang pano = 0 → dashcam = 1. Leave on Auto to let OverDrive pick.</string>
+    <string name="camera_oem_dashcam_auto_resolved">Auto — using id %1$d (pano is id %2$d)</string>
+    <string name="camera_oem_dashcam_auto_unavailable">Auto — pano id is %1$d, can\'t infer dashcam</string>
+    <string name="camera_oem_dashcam_save">Save</string>
+    <!-- Dashcam-side camera labels — REVERSE of the pano labels above. The
+         OEM dashcam id is the opposite of the pano id, so the helpful
+         "this is what your trim should pick" hint flips between the two
+         dialogs. Without these strings the dashcam picker re-used the pano
+         labels and told Seal owners to pick "Camera 1 — Seal" for their
+         dashcam, which is the pano camera, not the dashcam. -->
+    <string name="camera_oem_option_0">Camera 0 — Seal / Han (default)</string>
+    <string name="camera_oem_option_1">Camera 1 — Atto / Tang</string>
+    <!-- Camera mapping dialog (multi-vehicle role-to-slice routing) -->
     <string name="camera_mapping_title">카메라 지도</string>
     <string name="camera_role_label">역할 지도</string>
     <string name="camera_candidate_previous">이전</string>
@@ -96,6 +148,7 @@
     <string name="camera_mapping_current_format">현재 지도: %1$s</string>
     <string name="camera_mapping_current_none">현재 지도: 자동 / 기본</string>
     <string name="camera_mapping_hint">OverDrive는 기본으로 기존의 시작 동작을 유지하지만, 이제 통합된 판로마 스트립을 올바르게 캘리브 할 수 있습니다. 각 원료 통합된 슬라이드를 미리 볼 수 있으며, 논리적 360 역할이 실제로 차량에 앞/오른/뒤/왼쪽을 표시하는 슬라이드에 지도를 매핑하고, 데몬은 다시 시작 후 녹화, 스트리밍 및 AI를 위해 그 레이아웃을 재사용합니다.</string>
+    <!-- fragment_dashboard -->
     <string name="dashboard_scan_to_connect">연결하기 위해 스캔</string>
     <string name="dashboard_qr_waiting">터널을 기다렸어</string>
     <string name="dashboard_daemons_running_default">0/5 실행</string>
@@ -103,6 +156,8 @@
     <string name="dashboard_access_code">액세스 코드</string>
     <string name="dashboard_token_masked">••••••••</string>
     <string name="dashboard_regenerate_token">재생식 표본</string>
+    <!-- fragment_recording_controls -->
+    <!-- dialog_setup_guide -->
     <string name="setup_guide_title">시작</string>
     <string name="setup_guide_subtitle">최고의 경험을 얻기 위한 세 가지 빠른 단계:</string>
     <string name="setup_step_one_label">1</string>
@@ -117,13 +172,21 @@
     <string name="setup_overlay_title">다른 앱에서 표시할 수 있도록 하십시오</string>
     <string name="setup_overlay_body">다른 앱에 녹화 및 여행 추적을 위한 부동 상태 지표를 표시하기 위해 이것을 활성화하십시오.</string>
     <string name="setup_overlay_button">겹치기 설정을 열</string>
+    <!-- Language picker (drawer footer + bottom sheet) -->
     <string name="cd_close">닫기</string>
     <string name="language_picker_title">언어</string>
+    <!-- Subtitle on the language-picker bottom sheet. %1$d is the supported
+         language count (Auto adds an extra row but isn't counted). -->
     <string name="language_picker_subtitle_fmt">사용 가능한 %1$d 언어</string>
+    <!-- Subtitle placeholder while the count is being computed. -->
     <string name="language_picker_subtitle_pending">언어 를 선택 하십시오</string>
     <string name="language_auto_title">자동차</string>
+    <!-- %1$s is the native-script name of the locale that "Auto" currently
+         resolves to, e.g. "Auto · English". -->
     <string name="language_auto_subtitle">추적 시스템 · %1$s</string>
+    <!-- Drawer footer subtitle when on Auto, e.g. "English · Auto". -->
     <string name="language_label_auto_fmt">%1$s · 자동</string>
+    <!-- fragment_adb_console -->
     <string name="adb_prompt">$</string>
     <string name="adb_command_hint">명령에 들어가...</string>
     <string name="adb_preset_commands_header">미리 설정 명령어</string>
@@ -131,13 +194,17 @@
     <string name="adb_output_ready">명령에 대비해...</string>
     <string name="adb_console_hero_title">ADB 콘솔</string>
     <string name="adb_console_hero_subtitle">장치에서 shell 명령어를 실행</string>
+    <!-- fragment_webview -->
     <string name="webview_loading">로딩...</string>
     <string name="webview_camera_daemon_not_running">카메라 데이몬이 작동하지 않습니다</string>
     <string name="webview_start_camera_daemon">이 페이지에 접속하기 위해 카메라 데몬을 데몬 화면에서 시작하세요.</string>
+    <!-- dialog_roi_drawing -->
+    <!-- dialog_zrok_token -->
     <string name="zrok_enable_token_hint">토큰을 활성화</string>
     <string name="zrok_token_storage_note">토큰은 안전하게 저장되어 앱과 데몬 프로세스 사이에 공유됩니다.</string>
     <string name="zrok_reset_environment">Zrok 환경을 다시 설정</string>
     <string name="zrok_reset_environment_desc">환경과 토큰을 제거합니다. 토큰으로 다시 활성화해야 합니다 (기기 슬롯을 사용합니다).</string>
+    <!-- dialog_reset_data -->
     <string name="reset_title">재설정 데이터</string>
     <string name="reset_subtitle">축적된 데이터를 카테고리별로 삭제</string>
     <string name="reset_warning">이 작업 을 취소 할 수 없습니다. 녹음, 여행 및 배터리 역사 는 영구 히 삭제 됩니다.</string>
@@ -159,6 +226,8 @@
     <string name="reset_cat_proximity_desc">레이더 트리거된 이벤트 MP4</string>
     <string name="reset_cat_trip_files">여행 텔레메트리 파일</string>
     <string name="reset_cat_trip_files_desc">디스크에 있는 여행당 JSON 텔레메트리</string>
+    <!-- fragment_abrp_settings -->
+    <!-- fragment_recording_library -->
     <string name="recording_lib_chip_any">어떤 것도</string>
     <string name="recording_lib_chip_person">개인</string>
     <string name="recording_lib_chip_vehicle">차량</string>
@@ -168,6 +237,7 @@
     <string name="recording_lib_chip_critical">비평적</string>
     <string name="recording_lib_selected_count_zero">0 선택</string>
     <string name="recording_lib_no_recordings">녹음도 없다</string>
+    <!-- v4 redesign: collapsible filter bar + single-row date jump -->
     <string name="recording_lib_filter_button">필터</string>
     <string name="recording_lib_filter_button_active">필터 · %1$d</string>
     <string name="recording_lib_filter_sheet_title">필터 녹음</string>
@@ -177,6 +247,7 @@
     <string name="recording_lib_filter_section_severity">심각성</string>
     <string name="recording_lib_filter_section_type">유형</string>
     <string name="recording_lib_filter_section_place">장소</string>
+    <string name="recording_lib_place_search_hint">Search places…</string>
     <string name="recording_lib_chip_type_normal">보통</string>
     <string name="recording_lib_chip_type_proximity">거리</string>
     <string name="recording_lib_date_today">오늘날</string>
@@ -194,14 +265,46 @@
     <string name="cd_next_day">다음 날</string>
     <string name="cd_open_filters">열 필터</string>
     <string name="cd_clear_filter">맑은 필터</string>
+    <!-- v5 redesign: SOTA empty state with CTA + tile type badges -->
+    <string name="recording_lib_empty_title">No recordings match</string>
+    <string name="recording_lib_empty_body">Try adjusting your date range or chip filters.</string>
+    <string name="recording_lib_empty_clear_filters">Clear filters</string>
+    <!-- Shown on the empty-state body when there are zero clips on disk
+         (no filter is active). Sets a friendlier tone than "No recordings match". -->
+    <string name="recording_lib_empty_disk_title">Nothing recorded yet</string>
+    <string name="recording_lib_empty_disk_body">Captures will appear here as soon as the dashcam or surveillance pipeline writes a clip.</string>
+    <!-- Shown while the daemon is warming the H2 recording index on cold
+         start. Includes a progress counter when the daemon reports done/total,
+         otherwise a static body. The library re-polls every 1.5s and
+         transitions out automatically once results land. -->
+    <string name="recording_lib_building_index_title">Building library index</string>
+    <string name="recording_lib_building_index_body">One moment while the daemon scans your recordings.</string>
+    <string name="recording_lib_building_index_progress">Indexed %1$d of %2$d clips…</string>
+    <!-- Tile type badge labels — short, glanceable, mirrors the on-disk
+         filename prefix (cam_/event_/dvr_/proximity_) so power users can
+         map a tile back to its file group at a glance. -->
+    <string name="recording_lib_type_normal">CAM</string>
+    <string name="recording_lib_type_event">EVENT</string>
+    <string name="recording_lib_type_proximity">PROX</string>
+    <string name="recording_lib_type_oem">OEM</string>
+    <!-- Toast shown when a multi-select share is dispatched. -->
+    <string name="toast_share_recordings">Sharing %1$d recordings</string>
+    <!-- fragment_sentry_config -->
+    <!-- fragment_video_player -->
     <string name="player_title_recording">녹음</string>
     <string name="player_time_zero">0:00</string>
     <string name="player_time_separator"> / </string>
+    <!-- fragment_daemons -->
     <string name="daemons_hero_title">배경 서비스</string>
+    <!-- Subtitle on the Daemons hero header before the first state arrives. -->
     <string name="daemons_count_pending">로딩 서비스...</string>
+    <!-- Subtitle on the Daemons hero header. %1$d running, %2$d total. -->
     <string name="daemons_count_fmt">실행 중인 %1$d의 %2$d</string>
+    <!-- dialog_time_window -->
+    <!-- dialog_update_progress -->
     <string name="update_preparing">업데이트를 준비하고 있어요</string>
     <string name="update_percent_zero">0%</string>
+    <!-- dialog_battery_health -->
     <string name="battery_health_title">배터리 건강</string>
     <string name="battery_health_subtitle">건강 상태</string>
     <string name="battery_health_dashes">--</string>
@@ -232,19 +335,27 @@
     <string name="toast_soh_observed_value_saved">%1$.1f kWh로 업데이트 된 패키지 용량은</string>
     <string name="toast_soh_observed_value_failed">패키지 용량을 업데이트할 수 없었다 (%1$s).</string>
     <string name="diagnostics_battery_needs_review">검토 필요</string>
+    <!-- ============================================================
+         Step 2: Kotlin / Java UI literal extraction
+         ============================================================ -->
+    <!-- Notifications -->
+    <!-- Toasts / dialogs -->
     <string name="dialog_ok">확인</string>
+    <!-- Dynamic format strings -->
+    <!-- Plurals -->
     <plurals name="recordings_deleted_count">
-        <item quantity="one">%d 기록이 삭제되었습니다</item>
         <item quantity="other">삭제된 %d 기록</item>
     </plurals>
     <plurals name="delete_recordings_title">
-        <item quantity="one">%d 녹음을 삭제</item>
         <item quantity="other">%d 녹음을 삭제</item>
     </plurals>
     <plurals name="delete_recordings_message">
-        <item quantity="one">이것은 %d 녹음을 영구적으로 삭제합니다. 이것은 취소할 수 없습니다.</item>
         <item quantity="other">이것은 %d 녹음을 영구적으로 삭제합니다. 이것은 취소할 수 없습니다.</item>
     </plurals>
+    <!-- ============================================================
+         Step 2 (continued): MainActivity, fragments, dialogs
+         ============================================================ -->
+    <!-- MainActivity -->
     <string name="toast_updated_to">%1$s로 업데이트</string>
     <string name="toast_update_install_failed">업데이트 설치 실패: %1$s</string>
     <string name="toast_checking_for_updates">업데이트를 확인하고...</string>
@@ -294,6 +405,7 @@
     <string name="dialog_traffic_reboot_message">변경 사항이 적용되었습니다. 이제 하드 재부팅을 수행하십시오. 중앙 콘솔 버튼을 5 초 동안 누르십시오.</string>
     <string name="traffic_monitor_loading">교통 모니터: 확인...</string>
     <string name="traffic_monitor_tap_to_check">트래픽 모니터 (검색하기 위해 클릭)</string>
+    <!-- Reset categories -->
     <string name="reset_label_trips">주행 기록</string>
     <string name="reset_label_soc_history">SoC + 12V의 역사</string>
     <string name="reset_label_soh">SOH 캘리브레이션</string>
@@ -303,6 +415,10 @@
     <string name="reset_label_sentry_events">감시 이벤트</string>
     <string name="reset_label_proximity">근접 기록</string>
     <string name="reset_label_trip_files">여행 텔레메트리 파일</string>
+    <!-- ROI dialog -->
+    <!-- Sentry config -->
+    <!-- Format helpers -->
+    <!-- Dashboard -->
     <string name="toast_access_code_copied">액세스 코드를 복사</string>
     <string name="dialog_regenerate_token_title">재생식 표본</string>
     <string name="dialog_regenerate_token_message">이것은 현재 토큰을 무효화합니다. 모든 활성 세션이 로그 아웃됩니다. 계속하세요?</string>
@@ -319,6 +435,7 @@
     <string name="tunnel_label_cloudflared">구름이 흐르는</string>
     <string name="tunnel_label_zrok">Zrok</string>
     <string name="tunnel_label_tailscale">Tailscale</string>
+    <!-- Daemon names — shown on the Daemons list and dashboard. -->
     <string name="daemon_name_camera">카메라 Daemon</string>
     <string name="daemon_name_surveillance">감시 Daemon</string>
     <string name="daemon_name_acc_surveillance">ACC 감시</string>
@@ -329,6 +446,8 @@
     <string name="daemon_name_telegram">Telegram 보트</string>
     <string name="clip_label_access_code">액세스 코드</string>
     <string name="clip_label_url">URL</string>
+    <!-- ABRP -->
+    <!-- Daemons fragment -->
     <string name="toast_no_config_needed">%1$s에 대한 구성이 필요하지 않습니다.</string>
     <string name="dialog_zrok_token_title">Zrok 터널 토큰</string>
     <string name="dialog_zrok_token_message">Zrok 활성화 토큰을 입력합니다.</string>
@@ -370,6 +489,8 @@
     <string name="log_header_source">출처: %1$s</string>
     <string name="log_header_exported">수출: %1$s</string>
     <string name="log_header_truncated">참고: 줄여서 10000 라인까지의 로그 (전체: %1$d 라인)</string>
+    <!-- Recording controls -->
+    <!-- Recording library -->
     <string name="toast_cannot_play_video">비디오 재생 불가능: %1$s</string>
     <string name="dialog_delete_recording_title">녹음을 삭제</string>
     <string name="dialog_delete_recording_message">%1$s를 삭제하세요</string>
@@ -377,30 +498,42 @@
     <string name="toast_recording_delete_failed">녹음을 삭제하지 못함</string>
     <string name="toast_batch_delete_partial">%1$d는 삭제되었고, %2$d는 실패했습니다.</string>
     <string name="play_with_chooser">놀아</string>
+    <!-- Setup guide -->
     <string name="setup_version_banner">v%1$s에 업데이트  자동 시작을 다시 확인, BYD는 모든 설치에서 그것을 지워</string>
     <string name="setup_overlay_already_granted">이미 승인 되었습니다</string>
+    <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">팁 &amp; 문제 해결</string>
     <string name="setup_traffic_title">BYD 트래픽 모니터를 비활성화</string>
     <string name="setup_traffic_body">BYD 트래픽 모니터는 인터넷에 접속하는 제3자 앱을 차단합니다. 이를 비활성화하면 OverDrive 및 설치하는 다른 앱이 실제로 네트워크를 사용할 수 있습니다. 이후 하드 리부팅이 필요합니다.</string>
     <string name="setup_traffic_button">개방형 교통 모니터</string>
     <string name="setup_camera_fix_title">카메라가 검정색이나 틀렸나요?</string>
     <string name="setup_camera_fix_body">진단을 열 → 카메라 탐사선, 카메라 ID를 0으로 설정하고 저장 버튼을 누르면 카메라 데이몬을 다시 시작하십시오. 피드가 여전히 잘못되면 카메라 ID 1으로 반복하십시오. 지도 섹션을 손상시키지 마십시오.</string>
+    <!-- Recording storage path -->
+    <!-- MainActivity status -->
     <string name="camera_current_manual">현재: 카메라 %1$d (동동)</string>
     <string name="camera_current_auto_label">현재: 자동</string>
     <string name="soh_estimation_active">추정 활동</string>
     <string name="soh_no_estimate_yet">아직 추정치 없습니다  자료를 기다리고 있습니다</string>
+    <!-- Recording tabs -->
+    <!-- Misc -->
     <string name="recording_lib_selected_count">선택된 %1$d</string>
     <string name="video_player_playback_error">재생 오류</string>
     <string name="video_player_no_events">사건은 없습니다</string>
     <string name="daemon_configuration_required">필요한 구성</string>
     <string name="daemon_configuration_message">%1$s</string>
+    <!-- Navigation graph fragment labels (shown as toolbar/ActionBar titles) -->
     <string name="nav_page_video_player">비디오 플레이어</string>
     <string name="nav_page_telegram">Telegram</string>
     <string name="nav_page_abrp">ABRP</string>
     <string name="nav_page_mqtt">MQTT</string>
     <string name="nav_page_byd_cloud">BYD Cloud</string>
+    <!-- StatusOverlayService persistent notification (foreground service) -->
     <string name="status_overlay_notif_title">OverDrive 상태</string>
     <string name="status_overlay_notif_text">상태 덮개 활성</string>
+    <!-- ============================================================== -->
+    <!-- M3 Revamp: navigation rail + settings sub-rail + theme picker  -->
+    <!-- ============================================================== -->
+    <!-- Top-level destinations (navigation rail labels) -->
     <string name="rail_dashboard">대시보드</string>
     <string name="rail_live">생생하게</string>
     <string name="rail_recordings">녹화</string>
@@ -409,6 +542,7 @@
     <string name="rail_integrations">통합</string>
     <string name="rail_diagnostics">진단</string>
     <string name="rail_settings">설정</string>
+    <!-- Settings sub-rail -->
     <string name="settings_section_appearance">겉모습</string>
     <string name="settings_section_recording">녹음</string>
     <string name="settings_section_surveillance">감시</string>
@@ -420,15 +554,24 @@
     <string name="settings_overlay_camera_subtitle">녹화가 활발한 상태에서 REC/ PROX 배지를 표시하십시오.</string>
     <string name="settings_overlay_trip_title">또는 Trip을 나타냅니다</string>
     <string name="settings_overlay_trip_subtitle">여행 탐지가 실행되는 동안 TRIP 배지를 보여주십시오.</string>
+    <!-- Was "About & updates" — Check for Updates row was removed from
+         the About page, so the menu / rail label is now just "About". -->
     <string name="settings_section_about">정보</string>
+    <!-- Settings sub-rail (landscape) — overline + a11y -->
     <string name="settings_subrail_overline">설정</string>
     <string name="cd_settings_subrail">설정 하부 철도</string>
+    <!-- Settings → Vehicle data placeholder pane -->
+    <!-- Settings → Privacy pane copy -->
     <string name="settings_privacy_title">개인 정보 보호 &amp; 데이터</string>
     <string name="settings_privacy_body">리셋은 녹음 인덱스, 캐시 된 인증서, 데몬 상태 및 장치 상의 선호도를 클리어합니다. 이 동작은 취소할 수 없습니다.</string>
+    <!-- Settings → About pane copy -->
     <string name="settings_about_title">OverDrive에 대해</string>
     <string name="settings_about_version_label">버전</string>
     <string name="settings_about_package_label">건설</string>
     <string name="settings_about_check_update_value">최신 GitHub 릴리스를 확인하고 최신 버전인 경우 설치하십시오.</string>
+    <!-- Support-development section: tiered options, low-cost first.
+         star → spread → coffee, in that visual order. Copy aims for
+         personality without being corny — short, warm, specific. -->
     <string name="settings_about_support_section">당신 같은 사람들로부터</string>
     <string name="settings_about_support_share_title">다른 차주에게도 알려주세요</string>
     <string name="settings_about_support_share_value">공유된 모든 링크는 다른 BYD 소유자가 오버드라이브를 발견하는 데 도움이 됩니다.</string>
@@ -438,40 +581,45 @@
     <string name="settings_about_open_link_copied">브라우저가 없습니다. URL 복사: %1$s</string>
     <string name="settings_about_support_kofi_title">다음 발매에 연료</string>
     <string name="settings_about_support_kofi_value">Ko-Fi에 커피 한잔하면 늦은 밤의 약속이 올 수 있습니다.</string>
-    <string name="settings_about_support_kofi_url">[http://ko-fi.com/E1E71XALHX]</string>
     <string name="settings_about_license_title">라이센스</string>
     <string name="settings_about_license_value">MIT  오픈소스. 전체 텍스트를 보기 위해 누르십시오.</string>
     <string name="settings_about_source_title">소스 코드</string>
     <string name="settings_about_source_value">github.com/yash-srivastava/Overdrive-release</string>
-    <string name="settings_about_license_url">[http://github.com/yash-srivastava/Overdrive-release/blob/main/LICENSE]</string>
-    <string name="settings_about_source_url">[http://github.com/yash-srivastava/Overdrive-release]</string>
     <string name="settings_about_star_title">GitHub에 를 던지십시오</string>
     <string name="settings_about_star_value">잠깐만요, 많은 것을 의미하죠</string>
-    <string name="settings_about_star_url">[http://github.com/yash-srivastava/Overdrive-release]</string>
     <string name="settings_about_thanks_title">감사합니다</string>
     <string name="settings_about_thanks_subtitle">기여자와 후원자의 도움으로 만들어졌습니다.</string>
     <string name="settings_about_contributors_title">기여자</string>
     <string name="settings_about_supporters_title">후원자</string>
     <string name="settings_about_thanks_empty">사람들이 참여하면 목록이 채워집니다.</string>
+    <!-- Settings → General -->
     <string name="settings_theme_label">주제</string>
     <string name="settings_theme_auto">자동 (따르기 시스템)</string>
     <string name="settings_theme_light">빛</string>
     <string name="settings_theme_dark">어둠</string>
     <string name="settings_language_label">언어</string>
+    <!-- Recordings page (header + segmented control + page actions) -->
     <string name="recordings_title">녹화</string>
     <string name="recordings_segment_dashcam">대시캠</string>
     <string name="recordings_segment_surveillance">감시</string>
     <string name="recordings_action_settings">설정</string>
+    <!-- Hero subtitle: "%1$d today · %2$d total · %3$s" where %3$s is a pre-formatted size like "42 GB". -->
     <string name="recordings_summary_format">오늘 %1$d · %2$d 총 · %3$s</string>
+    <!-- Per-segment label with running count, e.g. "Dashcam · 118". -->
     <string name="recordings_segment_dashcam_count">DASHCAM · %d</string>
     <string name="recordings_segment_surveillance_count">감시 · %d</string>
+    <!-- Layout-time placeholder for the counts subtitle before the scan completes. -->
     <string name="recordings_summary_pending">—</string>
+    <!-- Landscape recordings preview placeholder (right pane). -->
     <string name="recordings_preview_placeholder_title">녹음을 선택</string>
     <string name="recordings_preview_placeholder_body">왼쪽에 있는 모든 항목을 누르면 재생할 수 있습니다.</string>
+    <!-- Diagnostics page -->
     <string name="diagnostics_section_adb_console">ADB 콘솔</string>
     <string name="diagnostics_section_traffic">교통 모니터</string>
     <string name="diagnostics_section_camera_probe">카메라 탐사선</string>
     <string name="diagnostics_section_battery">배터리 건강</string>
+    <!-- Sub-label used on diagnostics utility cards in landscape (hint to tap). -->
+    <!-- SOTA Diagnostics dashboard -->
     <string name="diagnostics_hero_title">시스템 진단</string>
     <string name="diagnostics_hero_subtitle">생체 건강, 로그, 그리고 기기의 탐사.</string>
     <string name="diagnostics_health_clear">모든 것이 정해졌어요</string>
@@ -482,14 +630,19 @@
     <string name="diagnostics_health_battery">배터리</string>
     <string name="diagnostics_metric_pending">—</string>
     <string name="diagnostics_metric_online">온라인</string>
+    <!-- Network tile: bottom line tunnel state (e.g. "Tunnel · Online"). %1$s is one of
+         tunnel_state_online / tunnel_state_offline / tunnel_state_connecting. -->
     <string name="diagnostics_network_tunnel_label">터널 · %1$s</string>
     <string name="diagnostics_tunnel_state_online">온라인</string>
     <string name="diagnostics_tunnel_state_offline">오프라인</string>
     <string name="diagnostics_tunnel_state_connecting">연결</string>
+    <!-- Network top-line fallbacks when no Wi-Fi SSID is available. -->
     <string name="diagnostics_network_mobile">이동통신</string>
     <string name="diagnostics_network_ethernet">이더넷</string>
     <string name="diagnostics_network_offline">오프라인</string>
+    <!-- Storage tile lines. %1$d clip count, %2$s human-readable used size. -->
     <string name="diagnostics_storage_used_line">%1$d 클립 · %2$s 사용</string>
+    <!-- Storage tile bottom line. %1$s human-readable free size. -->
     <string name="diagnostics_storage_free_line">%1$s 무료</string>
     <string name="diagnostics_logs_card_title">라이브 이벤트 로그</string>
     <string name="diagnostics_logs_card_subtitle">실행 서비스에서 스트리밍 출력</string>
@@ -499,6 +652,7 @@
     <string name="diagnostics_adb_subtitle">장치에 연결된 터미널을 열고</string>
     <string name="diagnostics_battery_subtitle">SOH 셀을 검사하고 통계를 포장하세요.</string>
     <string name="diagnostics_settings_subtitle">앱 선호도, 테마, 언어</string>
+    <!-- SOTA Integrations page -->
     <string name="integrations_hero_title">통합</string>
     <string name="integrations_hero_subtitle">오버드라이브를 서비스로 연결하세요.</string>
     <string name="integrations_status_unknown">설정하기 위해 탭</string>
@@ -509,19 +663,31 @@
     <string name="integrations_mqtt_desc">차량의 텔레메트리를 홈 어시스턴트 또는 MQTT 중개자에게 게시하십시오.</string>
     <string name="integrations_byd_cloud_desc">BYD 앱 계정을 연결하여 도어 잠금, 헤드라이트 깜박임, 경적과 같은 원격 명령을 활성화합니다.</string>
     <string name="integrations_configure_button">구성</string>
+    <!-- Settings → About / Privacy actions (rows) -->
     <string name="settings_action_check_update">업데이트 확인</string>
     <string name="settings_action_reset_data">데이터 리셋...</string>
+    <!-- Content descriptions for rail / segmented controls -->
     <string name="cd_brand_logo">OverDrive</string>
+    <!-- ============================================================== -->
+    <!-- Dashboard SOTA revamp                                            -->
+    <!-- ============================================================== -->
+    <!-- Hero card -->
+    <!-- SOTA hero headline. Static identity statement (not a time-of-day
+         greeting) — pairs with the OVERDRIVE overline above and the live
+         status row of chips below. Locale catalogs auto-translate. -->
     <string name="dashboard_hero_headline">감시 중</string>
     <string name="dashboard_subtitle_all_systems">모든 시스템 온라인</string>
     <string name="dashboard_subtitle_some_offline">%1$d의 %2$d 온라인 서비스</string>
     <string name="dashboard_subtitle_no_tunnel">오프라인에서 원격 액세스</string>
+    <!-- Metric tiles -->
     <string name="dashboard_metric_recordings">오늘 녹음</string>
     <string name="dashboard_metric_storage">사용된 저장장치</string>
     <string name="dashboard_metric_tunnel">원격 접근</string>
     <string name="dashboard_metric_services">배경 서비스</string>
     <string name="dashboard_metric_value_pending">—</string>
     <string name="dashboard_metric_vehicle">차량</string>
+    <!-- Hero chips: at-a-glance pills under the greeting that summarize the
+         three most important live signals (tunnel, services, recording). -->
     <string name="dashboard_chip_recording_active">등기</string>
     <string name="dashboard_chip_recording_idle">유휴</string>
     <string name="dashboard_vehicle_tap_to_set">설정하기 위해 탭</string>
@@ -540,36 +706,56 @@
     <string name="vehicle_dialog_summary_model">모델: %1$s</string>
     <string name="vehicle_dialog_summary_calibration">마지막 캘리브레이션: %1$.1f%% %2$s</string>
     <string name="vehicle_dialog_soh_unavailable">사용할 수 없습니다</string>
+    <!-- Combined Recordings+Storage chip: e.g. "8.4 GB used · 12 GB free" -->
     <string name="dashboard_metric_storage_chip">사용 된 %1$s · %2$s 무료</string>
     <string name="dashboard_metric_storage_chip_pending">저장 </string>
     <string name="dashboard_tunnel_offline">오프라인</string>
     <string name="dashboard_tunnel_online">온라인</string>
     <string name="dashboard_tunnel_connecting">연결...</string>
+    <!-- Quick actions (now rendered as same-size tiles, not chips) -->
     <string name="dashboard_action_live">라이브 뷰</string>
     <string name="dashboard_action_live_subtitle">카메라 뷰 오픈</string>
     <string name="dashboard_action_recordings">녹화</string>
     <string name="dashboard_action_settings">설정</string>
     <string name="dashboard_action_settings_subtitle">우선 순위 및 약</string>
+    <!-- ============================================================ -->
+    <!-- Settings — SOTA portrait hub + section pages                  -->
+    <!-- ============================================================ -->
+    <!-- Hero -->
     <string name="settings_hero_title">설정</string>
     <string name="settings_hero_overline">과잉 운전</string>
     <string name="settings_hero_subtitle">외모, 녹음, 감시 및 장치에 있는 데이터를 조정하십시오.</string>
+    <!-- Section overlines -->
     <string name="settings_overline_preferences">우선순위</string>
     <string name="settings_overline_about_data">에 관한 &amp; DATA</string>
+    <!-- Quick toggles -->
     <string name="settings_quick_theme_label">주제</string>
     <string name="settings_quick_language_label">언어</string>
+    <!-- Section row subtitles (portrait) -->
     <string name="settings_section_recording_subtitle">전/후 버퍼, 코덱, 저장 제한</string>
     <string name="settings_section_surveillance_subtitle">탐지 구역, 일정, 움직임 감수성</string>
     <string name="settings_section_daemons_subtitle">클라우드플러러드, Zrok, Telegram, MQTT 러너</string>
+    <!-- About / data row subtitles -->
     <string name="settings_about_row_title">OverDrive에 대해</string>
     <string name="settings_about_row_subtitle">버전, 라이선스, 지원 개발.</string>
     <string name="settings_reset_row_subtitle">녹음, 사건, 또는 모든 캐시</string>
+    <!-- Footer -->
     <string name="settings_footer_format">OverDrive %1$s · %2$s</string>
+    <!-- ============================================================ -->
+    <!-- Appearance pane — SOTA visual theme picker                    -->
+    <!-- ============================================================ -->
     <string name="settings_appearance_subtitle">테마, 언어, 시각적 선호도</string>
     <string name="settings_theme_active_auto_caption">자동으로 시스템 테마를 따라갑니다.</string>
     <string name="settings_theme_active_light_caption">빛의 주제는 항상 켜져 있습니다.</string>
     <string name="settings_theme_active_dark_caption">어두운 테마는 항상 켜져 있어요.</string>
     <string name="settings_language_count_format">사용 가능한 %1$d의 %2$d 언어</string>
     <string name="settings_language_card_title">디스플레이 언어</string>
+    <!-- ============================================================ -->
+    <!-- Vehicle data pane — manifest permissions + integrations       -->
+    <!-- ============================================================ -->
+    <!-- ============================================================ -->
+    <!-- Privacy pane — stance + storage summary + reset               -->
+    <!-- ============================================================ -->
     <string name="settings_privacy_stance_title">기본 장치</string>
     <string name="settings_privacy_stance_body">OverDrive는 전용으로 작동합니다. 당신이 명시적으로 구성한 터널과 통합을 제외하고는 차에서 탈퇴할 수 없습니다.</string>
     <string name="settings_privacy_overline_storage">로컬 스토리지</string>
@@ -580,43 +766,66 @@
     <string name="settings_privacy_storage_count_format">%1$d 클립</string>
     <string name="settings_privacy_storage_count_format_plural">%1$d 클립</string>
     <string name="settings_privacy_reset_subtitle">카테고리를 선택하세요: 녹음, 이벤트, 데몬 구성, 캐시된 텔레메트리...</string>
+    <!-- Place tagging (reverse geocoding) — recording row chip fallback. -->
     <string name="recording_unknown_location">위치가 없습니다</string>
+    <!-- ============================================================== -->
+    <!-- Diagnostics health-tile values (Camera + Battery)                -->
+    <!-- ============================================================== -->
+    <!-- Camera tile primary value: %1$d is the probed camera id (0..N). -->
     <string name="diagnostics_camera_value_camera_n">카메라 %1$d</string>
+    <!-- Camera tile primary value when manual override is active. -->
     <string name="diagnostics_camera_value_camera_n_manual">카메라 %1$d (손잡이)</string>
     <string name="diagnostics_camera_value_probing">탐구...</string>
     <string name="diagnostics_camera_value_offline">오프라인</string>
+    <!-- Battery tile primary value: %1$.0f is the SOH percent (0..100). -->
     <string name="diagnostics_battery_value_soh">%1$.0f%%</string>
     <string name="diagnostics_battery_value_pending">대기하는 자료</string>
+    <!-- Dashboard recordings tile: live-record indicator prefix.
+         %1$d is today's clip count. The leading bullet is the red dot. -->
     <string name="dashboard_recordings_value_live">● %1$d</string>
+    <!-- ============================================================== -->
+    <!-- Dashboard hero subtitle — auto-rotating insights carousel        -->
+    <!-- ============================================================== -->
+    <!-- Each line replaces the static subtitle for ~5s, then cross-fades
+         to the next available insight. Numbers are bolded + tinted in the
+         provider, so translators should keep numeric placeholders intact
+         (do not spell out the digits). -->
+    <!-- First-launch welcome — only shown on the very first dashboard visit. -->
     <string name="dashboard_insight_welcome">환영합니다  오버드라이브는 이제 두 번째 눈입니다.</string>
+    <!-- Parking delta. %1$s = absolute SOC delta string ("8%"); %2$s = absolute kWh string ("4 kWh"). -->
     <string name="dashboard_insight_parked_charged_kwh">주차 중 %1$s (≈%2$s) 를 가져왔습니다</string>
     <string name="dashboard_insight_parked_charged">주차 중 %1$s를 가져왔어요</string>
     <string name="dashboard_insight_parked_drained_kwh">주차한 이후로 %1$s (≈%2$s) 를 사용했어요</string>
     <string name="dashboard_insight_parked_drained">주차한 이후로 %1$s를 사용했어요</string>
+    <!-- Most recent surveillance clip. %1$s = relative time, e.g. "2 hr. ago" / "yesterday". -->
     <string name="dashboard_insight_last_alert">마지막 감시 경보: %1$s</string>
+    <!-- Most recent completed charging session in the last 24h.
+         %1$s = energy added (e.g. "12.4 kWh"); %2$s = duration (e.g. "1 hr 45 min"). -->
     <string name="dashboard_insight_last_charge">마지막 충전: %2$s에서 +%1$s</string>
+    <!-- Storage milestone. %1$d = clip count; %2$s = total size (e.g. "42 GB"). -->
     <string name="dashboard_insight_storage_milestone">%1$d 클립 · %2$s 녹음</string>
+    <!-- Number formatters used inside other insights. Translators may localize
+         the unit suffix (e.g. "키와트" / "квт·ч") but should leave the float
+         placeholder shape so the bold-ifier still finds the digits. -->
     <string name="dashboard_insight_kwh_format">%1$.1f kWh</string>
     <string name="dashboard_insight_percent_format">%1$.1f%%</string>
     <string name="dashboard_insight_hours_minutes">%1$d hr %2$d min</string>
+    <!-- Today's clips. -->
     <plurals name="dashboard_insight_today_clips">
-        <item quantity="one">오늘 녹음된 %1$d 클립</item>
         <item quantity="other">오늘 녹음된 %1$d 클립</item>
     </plurals>
+    <!-- Process uptime. Days form takes (days, hours); hours form takes hours only. -->
     <plurals name="dashboard_insight_uptime_days_hours">
-        <item quantity="one">%1$d 일, %2$d 시간 동안 오프라인 운전</item>
         <item quantity="other">%1$d 일 동안 온라인에서 오버 드라이브, %2$d hr</item>
     </plurals>
     <plurals name="dashboard_insight_uptime_hours">
-        <item quantity="one">%1$d 시간 동안 오버 드라이브 온라인</item>
         <item quantity="other">%1$d 시간 동안 오프라인 운전</item>
     </plurals>
+    <!-- Duration helpers used inside insights (last_charge etc.). -->
     <plurals name="dashboard_insight_minutes">
-        <item quantity="one">%1$d 분</item>
         <item quantity="other">%1$d 분</item>
     </plurals>
     <plurals name="dashboard_insight_hours">
-        <item quantity="one">%1$d hr</item>
         <item quantity="other">%1$d hr</item>
     </plurals>
 </resources>

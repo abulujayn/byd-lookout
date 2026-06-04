@@ -140,7 +140,7 @@
     "rate_limited": "命令はまだ進行中です 待って数秒",
     "not_supported": "この制御は現在利用できません",
     "find_car_label": "車を探す",
-    "battery_heat_label": "熱気球",
+    "battery_heat_label": "バッテリー熱",
     "close_all_windows_label": "すべての窓を閉じる"
   },
   "messages": {

@@ -140,8 +140,8 @@
     "rate_limited": "Ein Befehl ist noch im Gange  Warten Sie ein paar Sekunden",
     "not_supported": "Die Steuerung ist nicht verfügbar.",
     "find_car_label": "Finden Sie ein Auto .",
-    "battery_heat_label": "Heizung Battery",
-    "close_all_windows_label": "Alle Fenster schließen"
+    "battery_heat_label": "Batterieheizung",
+    "close_all_windows_label": "Schließen Sie alle Fenster ."
   },
   "messages": {
     "logged_out": "Sie sind ausgerufen .",

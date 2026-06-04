@@ -1,17 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">OverDrive</string>
+    <!-- Accessibility Service -->
     <string name="accessibility_service_description">在背景下保持Overdrive车辆监测活动. 该服务不会读取或与屏幕内容交互.</string>
+    <!-- Recording Mode Labels -->
+    <!-- Proximity Guard Settings Labels -->
+    <!-- Quality Settings Labels -->
+    <!-- Storage Labels -->
+    <!-- Recording Status Labels -->
+    <!-- Event Types -->
+    <!-- Filter Labels -->
+    <!-- Storage Breakdown -->
+    <!-- Recording Controls -->
+    <!-- Slider Range Labels -->
+    <!-- ============================================================
+         i18n string extraction (Step 1: Layouts)
+         ============================================================ -->
+    <!-- Drawer menu -->
+    <!-- Common buttons / labels -->
     <string name="action_cancel">取消</string>
     <string name="action_clear_plain">清除</string>
     <string name="action_select_all">选择所有</string>
     <string name="action_select_all_short">所有的</string>
     <string name="action_delete">删除</string>
+    <string name="action_share">Share</string>
     <string name="action_done">完成</string>
     <string name="action_remind_me_later">提醒我之后</string>
     <string name="action_retry">重试</string>
     <string name="action_run">跑步</string>
     <string name="action_clear_output">清晰的输出</string>
+    <!-- Nav header -->
+    <!-- Common content descriptions -->
     <string name="cd_camera">摄像头</string>
     <string name="cd_qr">问题问题</string>
     <string name="cd_qr_code">问答方式</string>
@@ -32,7 +51,13 @@
     <string name="cd_player_maximize">最大化玩家</string>
     <string name="cd_player_minimize">出口全屏幕</string>
     <string name="cd_player_mute">转换音频</string>
+    <string name="cd_player_quadrant_all">Show all cameras</string>
+    <string name="cd_player_quadrant_front">Show front camera</string>
+    <string name="cd_player_quadrant_right">Show right camera</string>
+    <string name="cd_player_quadrant_rear">Show rear camera</string>
+    <string name="cd_player_quadrant_left">Show left camera</string>
     <string name="cd_delete">删除</string>
+    <string name="cd_share">Share</string>
     <string name="cd_expand">扩展</string>
     <string name="cd_configure">配置</string>
     <string name="cd_download_log">下载日志</string>
@@ -40,23 +65,33 @@
     <string name="cd_battery">电池</string>
     <string name="cd_step_completed">完成的步骤</string>
     <string name="cd_permission_granted">授权</string>
+    <!-- overlay_status -->
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">旅行</string>
     <string name="overlay_mic_inactive_label">产品</string>
+    <!-- item_log_entry placeholders (timestamp/tag/message are runtime, but these are
+         placeholder/preview text used at design time and visible in some empty states) -->
     <string name="log_entry_default_timestamp">时间:12:34:56</string>
     <string name="log_entry_default_tag">现在,我们要做什么呢?</string>
     <string name="log_entry_default_message">在此记录消息</string>
+    <!-- item_safe_location -->
+    <!-- item_daemon_card -->
     <string name="daemon_card_default_name">妖怪的名字</string>
     <string name="daemon_card_default_status">状态信息</string>
     <string name="daemon_card_subprocesses">超级进程</string>
+    <!-- item_time_window -->
+    <!-- fragment_logs_panel -->
     <string name="logs_panel_title">长木</string>
+    <!-- activity_main_new / activity_main-land -->
     <string name="url_connecting">连接...</string>
+    <!-- dialog_tailscale_settings -->
     <string name="tailscale_generate_login_url">创建登录URL</string>
     <string name="tailscale_scan_to_login">扫描到登录</string>
     <string name="tailscale_qr_waiting">等着登录URL...</string>
     <string name="tailscale_enable_proxy">启用Tailscale代理</string>
     <string name="tailscale_proxy_explainer">通过MQTT到Tailscale的路线,这样你就可以在你的尾网上联系一个私人经纪人,</string>
     <string name="tailscale_proxy_warning">在启用时,MQTT向公共经纪人 (HiveMQ, AWS IoT等) 将失败 Z0XX只将通往尾网.</string>
+    <!-- Camera ingestion mode selector (Default vs DiLink 4) -->
     <string name="camera_mode_title">摄入方式</string>
     <string name="camera_mode_subtitle">默认适用于大多数BYD车型;DiLink 4是需要在更新的装饰 (Han / Tang 2024+) 上,其中AVM HAL 发射预先接的2x2 mozaic.</string>
     <string name="camera_mode_option_default">默认  在Seal,Atto,Dolphin (大多数汽车) 上工作</string>
@@ -65,12 +100,14 @@
     <string name="camera_mode_current_dilink4">目前:DiLink 4</string>
     <string name="camera_mode_save">应用模式</string>
     <string name="camera_mode_hint">如果视频看起来错误 (缩,缺失四方形,红色覆盖),请尝试另一个模式.</string>
+    <!-- DiLink 4 quadrant tweaks (only effective when cameraMode = DiLink 4) -->
     <string name="camera_dilink4_tweaks_title">迪林克四方形调整</string>
     <string name="camera_dilink4_tweaks_subtitle">对于DiLink 4路径的车辆调整.只有在上面选择DiLink 4模式时才有效.</string>
     <string name="camera_dilink4_save">应用调整</string>
-    <string name="camera_dilink4_hint">只有在HAL将红色的"校准失败"染色符涂在源上,只能切换这些.</string>
+    <string name="camera_dilink4_hint">只有在HAL将红色的\"校准失败\"染色符涂在源上,只能切换这些.</string>
     <string name="camera_dilink4_red_mask_label">压制红色校准覆盖 (GL)</string>
-    <string name="camera_dilink4_red_mask_subtitle">添加一个碎片遮光器通过,检测到明亮红色的HAL"校准失败"像素,并将其取代为邻居样本 (或光度灰色,当横幅太大不能涂料时). 只有化品 不会影响底层校准状态.</string>
+    <string name="camera_dilink4_red_mask_subtitle">添加一个碎片遮光器通过,检测到明亮红色的HAL\"校准失败\"像素,并将其取代为邻居样本 (或光度灰色,当横幅太大不能涂料时). 只有化品 不会影响底层校准状态.</string>
+    <!-- dialog_camera_selection -->
     <string name="camera_selection_title">摄像机的选择</string>
     <string name="camera_selection_subtitle">选择全景摄像头源</string>
     <string name="camera_current_auto">电流:自动</string>
@@ -82,6 +119,21 @@
     <string name="camera_option_4">摄像头4</string>
     <string name="camera_option_5">摄像头5</string>
     <string name="camera_selection_hint">机器自动选择适合您的装饰的相机.相机1=BYD Seal,相机0=Atto装饰. 改变相机的身份证后重新启动.</string>
+    <!-- OEM Dashcam camera ID picker (Phase 5: separate forward-sensor pipeline) -->
+    <string name="camera_oem_dashcam_title">OEM Dashcam Camera ID</string>
+    <string name="camera_oem_dashcam_hint">Pick the AVMCamera id that points at the forward dashcam sensor. Dashcam is the OPPOSITE of pano: Seal/Han pano = 1 → dashcam = 0; Atto / Tang pano = 0 → dashcam = 1. Leave on Auto to let OverDrive pick.</string>
+    <string name="camera_oem_dashcam_auto_resolved">Auto — using id %1$d (pano is id %2$d)</string>
+    <string name="camera_oem_dashcam_auto_unavailable">Auto — pano id is %1$d, can\'t infer dashcam</string>
+    <string name="camera_oem_dashcam_save">Save</string>
+    <!-- Dashcam-side camera labels — REVERSE of the pano labels above. The
+         OEM dashcam id is the opposite of the pano id, so the helpful
+         "this is what your trim should pick" hint flips between the two
+         dialogs. Without these strings the dashcam picker re-used the pano
+         labels and told Seal owners to pick "Camera 1 — Seal" for their
+         dashcam, which is the pano camera, not the dashcam. -->
+    <string name="camera_oem_option_0">Camera 0 — Seal / Han (default)</string>
+    <string name="camera_oem_option_1">Camera 1 — Atto / Tang</string>
+    <!-- Camera mapping dialog (multi-vehicle role-to-slice routing) -->
     <string name="camera_mapping_title">摄像机映射</string>
     <string name="camera_role_label">角色映射</string>
     <string name="camera_candidate_previous">上一篇:</string>
@@ -96,6 +148,7 @@
     <string name="camera_mapping_current_format">电流映射:%1$s</string>
     <string name="camera_mapping_current_none">当前映射:自动 /默认</string>
     <string name="camera_mapping_hint">OverDrive默认保留了传统的启动行为,但现在允许您正确校准合并的全景带. 预览每个原始合并的片段,将逻辑的360角色映射到实际显示车辆前/右/后/左的片段,然后恶魔将重新使用该布局进行录音,流媒体和AI重新启动后.</string>
+    <!-- fragment_dashboard -->
     <string name="dashboard_scan_to_connect">扫描到连接</string>
     <string name="dashboard_qr_waiting">等待道...</string>
     <string name="dashboard_daemons_running_default">0/5 运行</string>
@@ -103,6 +156,8 @@
     <string name="dashboard_access_code">访问代码</string>
     <string name="dashboard_token_masked">••••••••</string>
     <string name="dashboard_regenerate_token">复兴标志</string>
+    <!-- fragment_recording_controls -->
+    <!-- dialog_setup_guide -->
     <string name="setup_guide_title">开始</string>
     <string name="setup_guide_subtitle">获得最佳体验的三个快速步骤:</string>
     <string name="setup_step_one_label">其他</string>
@@ -117,13 +172,21 @@
     <string name="setup_overlay_title">允许在其他应用程序上显示</string>
     <string name="setup_overlay_body">在其他应用程序上,可显示浮动状态指标,以便记录和跟踪旅行.</string>
     <string name="setup_overlay_button">打开叠加设置</string>
+    <!-- Language picker (drawer footer + bottom sheet) -->
     <string name="cd_close">关闭</string>
     <string name="language_picker_title">语言</string>
+    <!-- Subtitle on the language-picker bottom sheet. %1$d is the supported
+         language count (Auto adds an extra row but isn't counted). -->
     <string name="language_picker_subtitle_fmt">可用的%1$d语言</string>
+    <!-- Subtitle placeholder while the count is being computed. -->
     <string name="language_picker_subtitle_pending">选择一个语言</string>
     <string name="language_auto_title">汽车</string>
+    <!-- %1$s is the native-script name of the locale that "Auto" currently
+         resolves to, e.g. "Auto · English". -->
     <string name="language_auto_subtitle">追踪系统 · %1$s</string>
+    <!-- Drawer footer subtitle when on Auto, e.g. "English · Auto". -->
     <string name="language_label_auto_fmt">%1$s · 自动</string>
+    <!-- fragment_adb_console -->
     <string name="adb_prompt">其他类型</string>
     <string name="adb_command_hint">进入命令...</string>
     <string name="adb_preset_commands_header">预设命令</string>
@@ -131,13 +194,17 @@
     <string name="adb_output_ready">准备命令...</string>
     <string name="adb_console_hero_title">电脑控制台</string>
     <string name="adb_console_hero_subtitle">在设备上运行 shell 命令</string>
+    <!-- fragment_webview -->
     <string name="webview_loading">装载...</string>
     <string name="webview_camera_daemon_not_running">摄像头戴蒙没有运行</string>
     <string name="webview_start_camera_daemon">启动摄像头大魔从大魔屏幕访问这个页面.</string>
+    <!-- dialog_roi_drawing -->
+    <!-- dialog_zrok_token -->
     <string name="zrok_enable_token_hint">启用代码</string>
     <string name="zrok_token_storage_note">代币是安全存储的,并且在应用程序和代モン进程之间共享.</string>
     <string name="zrok_reset_environment">重置Zrok环境</string>
     <string name="zrok_reset_environment_desc">您需要使用您的代币重新启用 (使用设备插槽).</string>
+    <!-- dialog_reset_data -->
     <string name="reset_title">重新设置数据</string>
     <string name="reset_subtitle">按类别清除积累的数据</string>
     <string name="reset_warning">这不能撤销.记录,旅行和电池历史将永久删除.</string>
@@ -159,6 +226,8 @@
     <string name="reset_cat_proximity_desc">雷达触发事件MP4</string>
     <string name="reset_cat_trip_files">旅行遥测文件</string>
     <string name="reset_cat_trip_files_desc">每次旅行JSON电磁盘遥测</string>
+    <!-- fragment_abrp_settings -->
+    <!-- fragment_recording_library -->
     <string name="recording_lib_chip_any">任何一个</string>
     <string name="recording_lib_chip_person">个人</string>
     <string name="recording_lib_chip_vehicle">车辆</string>
@@ -168,6 +237,7 @@
     <string name="recording_lib_chip_critical">关键</string>
     <string name="recording_lib_selected_count_zero">0 选择</string>
     <string name="recording_lib_no_recordings">没有录音</string>
+    <!-- v4 redesign: collapsible filter bar + single-row date jump -->
     <string name="recording_lib_filter_button">过器</string>
     <string name="recording_lib_filter_button_active">过器 · %1$d</string>
     <string name="recording_lib_filter_sheet_title">过记录</string>
@@ -177,6 +247,7 @@
     <string name="recording_lib_filter_section_severity">严重性</string>
     <string name="recording_lib_filter_section_type">类型</string>
     <string name="recording_lib_filter_section_place">地方</string>
+    <string name="recording_lib_place_search_hint">Search places…</string>
     <string name="recording_lib_chip_type_normal">正常</string>
     <string name="recording_lib_chip_type_proximity">邻近度</string>
     <string name="recording_lib_date_today">今天</string>
@@ -194,14 +265,46 @@
     <string name="cd_next_day">第二天</string>
     <string name="cd_open_filters">开放过器</string>
     <string name="cd_clear_filter">清晰的过器</string>
+    <!-- v5 redesign: SOTA empty state with CTA + tile type badges -->
+    <string name="recording_lib_empty_title">No recordings match</string>
+    <string name="recording_lib_empty_body">Try adjusting your date range or chip filters.</string>
+    <string name="recording_lib_empty_clear_filters">Clear filters</string>
+    <!-- Shown on the empty-state body when there are zero clips on disk
+         (no filter is active). Sets a friendlier tone than "No recordings match". -->
+    <string name="recording_lib_empty_disk_title">Nothing recorded yet</string>
+    <string name="recording_lib_empty_disk_body">Captures will appear here as soon as the dashcam or surveillance pipeline writes a clip.</string>
+    <!-- Shown while the daemon is warming the H2 recording index on cold
+         start. Includes a progress counter when the daemon reports done/total,
+         otherwise a static body. The library re-polls every 1.5s and
+         transitions out automatically once results land. -->
+    <string name="recording_lib_building_index_title">Building library index</string>
+    <string name="recording_lib_building_index_body">One moment while the daemon scans your recordings.</string>
+    <string name="recording_lib_building_index_progress">Indexed %1$d of %2$d clips…</string>
+    <!-- Tile type badge labels — short, glanceable, mirrors the on-disk
+         filename prefix (cam_/event_/dvr_/proximity_) so power users can
+         map a tile back to its file group at a glance. -->
+    <string name="recording_lib_type_normal">CAM</string>
+    <string name="recording_lib_type_event">EVENT</string>
+    <string name="recording_lib_type_proximity">PROX</string>
+    <string name="recording_lib_type_oem">OEM</string>
+    <!-- Toast shown when a multi-select share is dispatched. -->
+    <string name="toast_share_recordings">Sharing %1$d recordings</string>
+    <!-- fragment_sentry_config -->
+    <!-- fragment_video_player -->
     <string name="player_title_recording">录制</string>
     <string name="player_time_zero">时间:</string>
     <string name="player_time_separator"> / </string>
+    <!-- fragment_daemons -->
     <string name="daemons_hero_title">背景服务</string>
+    <!-- Subtitle on the Daemons hero header before the first state arrives. -->
     <string name="daemons_count_pending">货运服务...</string>
+    <!-- Subtitle on the Daemons hero header. %1$d running, %2$d total. -->
     <string name="daemons_count_fmt">运行的%1$d或%2$d</string>
+    <!-- dialog_time_window -->
+    <!-- dialog_update_progress -->
     <string name="update_preparing">准备更新...</string>
     <string name="update_percent_zero">百分点</string>
+    <!-- dialog_battery_health -->
     <string name="battery_health_title">电池健康</string>
     <string name="battery_health_subtitle">卫生状况</string>
     <string name="battery_health_dashes">--</string>
@@ -232,19 +335,27 @@
     <string name="toast_soh_observed_value_saved">包装容量更新至%1$.1f kWh.</string>
     <string name="toast_soh_observed_value_failed">无法更新包装容量 (%1$s).</string>
     <string name="diagnostics_battery_needs_review">需要确认</string>
+    <!-- ============================================================
+         Step 2: Kotlin / Java UI literal extraction
+         ============================================================ -->
+    <!-- Notifications -->
+    <!-- Toasts / dialogs -->
     <string name="dialog_ok">确定</string>
+    <!-- Dynamic format strings -->
+    <!-- Plurals -->
     <plurals name="recordings_deleted_count">
-        <item quantity="one">删除%d记录</item>
         <item quantity="other">删除了%d录音</item>
     </plurals>
     <plurals name="delete_recordings_title">
-        <item quantity="one">删除%d录音</item>
         <item quantity="other">删除%d录音</item>
     </plurals>
     <plurals name="delete_recordings_message">
-        <item quantity="one">这将永久删除%d录音.</item>
         <item quantity="other">这将永久删除%d录音.</item>
     </plurals>
+    <!-- ============================================================
+         Step 2 (continued): MainActivity, fragments, dialogs
+         ============================================================ -->
+    <!-- MainActivity -->
     <string name="toast_updated_to">更新至%1$s</string>
     <string name="toast_update_install_failed">更新安装失败:%1$s</string>
     <string name="toast_checking_for_updates">检查是否有更新...</string>
@@ -294,6 +405,7 @@
     <string name="dialog_traffic_reboot_message">现在请重启: 按下并保持中央控制台按5秒.</string>
     <string name="traffic_monitor_loading">交通监视器:检查...</string>
     <string name="traffic_monitor_tap_to_check">交通监测器 (点击查看)</string>
+    <!-- Reset categories -->
     <string name="reset_label_trips">行程</string>
     <string name="reset_label_soc_history">SoC + 12V 历史记录</string>
     <string name="reset_label_soh">SOH校准</string>
@@ -303,6 +415,10 @@
     <string name="reset_label_sentry_events">监控活动</string>
     <string name="reset_label_proximity">近距离记录</string>
     <string name="reset_label_trip_files">旅行遥测文件</string>
+    <!-- ROI dialog -->
+    <!-- Sentry config -->
+    <!-- Format helpers -->
+    <!-- Dashboard -->
     <string name="toast_access_code_copied">复制访问代码</string>
     <string name="dialog_regenerate_token_title">复兴标志</string>
     <string name="dialog_regenerate_token_message">这将使当前的代币无效.所有活跃的会议将被登录.继续?</string>
@@ -319,6 +435,7 @@
     <string name="tunnel_label_cloudflared">云的</string>
     <string name="tunnel_label_zrok">Zrok</string>
     <string name="tunnel_label_tailscale">Tailscale</string>
+    <!-- Daemon names — shown on the Daemons list and dashboard. -->
     <string name="daemon_name_camera">摄像头 Daemon</string>
     <string name="daemon_name_surveillance">监控 Daemon</string>
     <string name="daemon_name_acc_surveillance">ACC 监控</string>
@@ -329,6 +446,8 @@
     <string name="daemon_name_telegram">Telegram 机器人</string>
     <string name="clip_label_access_code">访问代码</string>
     <string name="clip_label_url">URL</string>
+    <!-- ABRP -->
+    <!-- Daemons fragment -->
     <string name="toast_no_config_needed">对于%1$s没有配置</string>
     <string name="dialog_zrok_token_title">Zrok道标志</string>
     <string name="dialog_zrok_token_message">输入Zrok启用代币.</string>
@@ -370,6 +489,8 @@
     <string name="log_header_source">来源:%1$s</string>
     <string name="log_header_exported">出口:%1$s</string>
     <string name="log_header_truncated">注:截至10000行的日志 (总数:%1$d行)</string>
+    <!-- Recording controls -->
+    <!-- Recording library -->
     <string name="toast_cannot_play_video">无法播放视频:%1$s</string>
     <string name="dialog_delete_recording_title">删除录音</string>
     <string name="dialog_delete_recording_message">删除%1$s?</string>
@@ -377,30 +498,42 @@
     <string name="toast_recording_delete_failed">无法删除记录</string>
     <string name="toast_batch_delete_partial">已删除%1$d,失败的%2$d</string>
     <string name="play_with_chooser">玩一下</string>
+    <!-- Setup guide -->
     <string name="setup_version_banner">更新到v%1$s 重新确认自动启动,BYD在每次安装时都会擦除它</string>
     <string name="setup_overlay_already_granted">已授予</string>
+    <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">提示 &amp; 解决问题</string>
     <string name="setup_traffic_title">禁用BYD交通监视器</string>
     <string name="setup_traffic_body">BYD 交通监测器阻止第三方应用访问互联网. 禁用它使OverDrive和其他安装的应用程序实际上使用网络. 之后需要硬式重新启动.</string>
     <string name="setup_traffic_button">开放的交通监测器</string>
     <string name="setup_camera_fix_title">摄像头显示黑色还是错误?</string>
     <string name="setup_camera_fix_body">打开诊断 → 摄像头探测器,设置摄像头ID为0,点击保存,然后重新启动摄像头模特.如果传输仍然错误,请使用摄像头ID重复1.</string>
+    <!-- Recording storage path -->
+    <!-- MainActivity status -->
     <string name="camera_current_manual">目前:摄像头%1$d (手动)</string>
     <string name="camera_current_auto_label">电流:自动</string>
     <string name="soh_estimation_active">估计活动</string>
     <string name="soh_no_estimate_yet">尚未估计 等待数据</string>
+    <!-- Recording tabs -->
+    <!-- Misc -->
     <string name="recording_lib_selected_count">选择%1$d</string>
     <string name="video_player_playback_error">播放错误</string>
     <string name="video_player_no_events">没有事件</string>
     <string name="daemon_configuration_required">需要配置</string>
     <string name="daemon_configuration_message">%1$s</string>
+    <!-- Navigation graph fragment labels (shown as toolbar/ActionBar titles) -->
     <string name="nav_page_video_player">视频播放器</string>
     <string name="nav_page_telegram">Telegram</string>
     <string name="nav_page_abrp">ABRP</string>
     <string name="nav_page_mqtt">MQTT</string>
     <string name="nav_page_byd_cloud">BYD Cloud</string>
+    <!-- StatusOverlayService persistent notification (foreground service) -->
     <string name="status_overlay_notif_title">OverDrive 状态</string>
     <string name="status_overlay_notif_text">状态覆盖活动</string>
+    <!-- ============================================================== -->
+    <!-- M3 Revamp: navigation rail + settings sub-rail + theme picker  -->
+    <!-- ============================================================== -->
+    <!-- Top-level destinations (navigation rail labels) -->
     <string name="rail_dashboard">仪表板</string>
     <string name="rail_live">活着</string>
     <string name="rail_recordings">录像</string>
@@ -409,6 +542,7 @@
     <string name="rail_integrations">集成</string>
     <string name="rail_diagnostics">诊断</string>
     <string name="rail_settings">设置</string>
+    <!-- Settings sub-rail -->
     <string name="settings_section_appearance">外观</string>
     <string name="settings_section_recording">录制</string>
     <string name="settings_section_surveillance">监控</string>
@@ -420,15 +554,24 @@
     <string name="settings_overlay_camera_subtitle">在录音活动期间显示REC/ PROX标志.</string>
     <string name="settings_overlay_trip_title">指向旅行</string>
     <string name="settings_overlay_trip_subtitle">在旅行检测正在运行时,请显示TRIP标志.</string>
+    <!-- Was "About & updates" — Check for Updates row was removed from
+         the About page, so the menu / rail label is now just "About". -->
     <string name="settings_section_about">关于</string>
+    <!-- Settings sub-rail (landscape) — overline + a11y -->
     <string name="settings_subrail_overline">设置</string>
     <string name="cd_settings_subrail">设置子轨道</string>
+    <!-- Settings → Vehicle data placeholder pane -->
+    <!-- Settings → Privacy pane copy -->
     <string name="settings_privacy_title">隐私与数据</string>
     <string name="settings_privacy_body">恢复清除录音索引,缓存凭证,魔鬼状态和设备上偏好.</string>
+    <!-- Settings → About pane copy -->
     <string name="settings_about_title">关于OverDrive</string>
     <string name="settings_about_version_label">版本</string>
     <string name="settings_about_package_label">建设</string>
     <string name="settings_about_check_update_value">检查最新的GitHub版本，如果更新，请安装。</string>
+    <!-- Support-development section: tiered options, low-cost first.
+         star → spread → coffee, in that visual order. Copy aims for
+         personality without being corny — short, warm, specific. -->
     <string name="settings_about_support_section">由像你这样的人来推动</string>
     <string name="settings_about_support_share_title">告诉另一位车主</string>
     <string name="settings_about_support_share_value">每个共享的链接都能帮助另一个BYD的所有者发现Overdrive.</string>
@@ -438,40 +581,45 @@
     <string name="settings_about_open_link_copied">没有浏览器. URL复制: %1$s</string>
     <string name="settings_about_support_kofi_title">在下一个版本中加油</string>
     <string name="settings_about_support_kofi_value">一杯咖啡让晚上的承诺持续下去.</string>
-    <string name="settings_about_support_kofi_url">其他国家:</string>
     <string name="settings_about_license_title">许可证</string>
     <string name="settings_about_license_value">开源. 点击查看全文.</string>
     <string name="settings_about_source_title">源代码</string>
     <string name="settings_about_source_value">其他类型的设备:</string>
-    <string name="settings_about_license_url">其他国家和地区:</string>
-    <string name="settings_about_source_url">现在,我们已经开始了.</string>
     <string name="settings_about_star_title">在 GitHub 上放一个</string>
     <string name="settings_about_star_value">需要一秒钟,这意味着很多.</string>
-    <string name="settings_about_star_url">现在,我们已经开始了.</string>
     <string name="settings_about_thanks_title">致谢</string>
     <string name="settings_about_thanks_subtitle">在贡献者和支持者的帮助下打造。</string>
     <string name="settings_about_contributors_title">贡献者</string>
     <string name="settings_about_supporters_title">支持者</string>
     <string name="settings_about_thanks_empty">随着大家加入,这里会被填满。</string>
+    <!-- Settings → General -->
     <string name="settings_theme_label">主题</string>
     <string name="settings_theme_auto">自动 (跟踪系统)</string>
     <string name="settings_theme_light">灯光</string>
     <string name="settings_theme_dark">黑暗</string>
     <string name="settings_language_label">语言</string>
+    <!-- Recordings page (header + segmented control + page actions) -->
     <string name="recordings_title">录像</string>
     <string name="recordings_segment_dashcam">幕</string>
     <string name="recordings_segment_surveillance">监控</string>
     <string name="recordings_action_settings">设置</string>
+    <!-- Hero subtitle: "%1$d today · %2$d total · %3$s" where %3$s is a pre-formatted size like "42 GB". -->
     <string name="recordings_summary_format">今天的%1$d · %2$d总数 · %3$s</string>
+    <!-- Per-segment label with running count, e.g. "Dashcam · 118". -->
     <string name="recordings_segment_dashcam_count">达什卡姆 · %d</string>
     <string name="recordings_segment_surveillance_count">监控 · %d</string>
+    <!-- Layout-time placeholder for the counts subtitle before the scan completes. -->
     <string name="recordings_summary_pending">—</string>
+    <!-- Landscape recordings preview placeholder (right pane). -->
     <string name="recordings_preview_placeholder_title">选择录音</string>
     <string name="recordings_preview_placeholder_body">在左边点击任何东西来播放.</string>
+    <!-- Diagnostics page -->
     <string name="diagnostics_section_adb_console">电脑控制台</string>
     <string name="diagnostics_section_traffic">交通监视器</string>
     <string name="diagnostics_section_camera_probe">摄像头探测器</string>
     <string name="diagnostics_section_battery">电池健康</string>
+    <!-- Sub-label used on diagnostics utility cards in landscape (hint to tap). -->
+    <!-- SOTA Diagnostics dashboard -->
     <string name="diagnostics_hero_title">系统诊断</string>
     <string name="diagnostics_hero_subtitle">现场健康,记录和探测器.</string>
     <string name="diagnostics_health_clear">一切都清了.</string>
@@ -482,14 +630,19 @@
     <string name="diagnostics_health_battery">电池</string>
     <string name="diagnostics_metric_pending">—</string>
     <string name="diagnostics_metric_online">在线</string>
+    <!-- Network tile: bottom line tunnel state (e.g. "Tunnel · Online"). %1$s is one of
+         tunnel_state_online / tunnel_state_offline / tunnel_state_connecting. -->
     <string name="diagnostics_network_tunnel_label">道 · %1$s</string>
     <string name="diagnostics_tunnel_state_online">在线</string>
     <string name="diagnostics_tunnel_state_offline">在线</string>
     <string name="diagnostics_tunnel_state_connecting">连接</string>
+    <!-- Network top-line fallbacks when no Wi-Fi SSID is available. -->
     <string name="diagnostics_network_mobile">移动</string>
     <string name="diagnostics_network_ethernet">互联网</string>
     <string name="diagnostics_network_offline">在线</string>
+    <!-- Storage tile lines. %1$d clip count, %2$s human-readable used size. -->
     <string name="diagnostics_storage_used_line">使用的%1$d剪辑 ·%2$s</string>
+    <!-- Storage tile bottom line. %1$s human-readable free size. -->
     <string name="diagnostics_storage_free_line">免费的%1$s</string>
     <string name="diagnostics_logs_card_title">现场活动日志</string>
     <string name="diagnostics_logs_card_subtitle">从运行服务中流出输出.</string>
@@ -499,29 +652,42 @@
     <string name="diagnostics_adb_subtitle">打开设备上的终端.</string>
     <string name="diagnostics_battery_subtitle">检查细胞SOH和数据包.</string>
     <string name="diagnostics_settings_subtitle">应用程序偏好,主题和语言.</string>
+    <!-- SOTA Integrations page -->
     <string name="integrations_hero_title">集成</string>
     <string name="integrations_hero_subtitle">连接Overdrive到您的服务.</string>
     <string name="integrations_status_unknown">按下设置</string>
     <string name="integrations_status_configured">配置</string>
     <string name="integrations_status_not_set_up">没有设置</string>
     <string name="integrations_telegram_desc">发送驱动器总结,运动警报和SOS通知给您的私人Telegram机器人.</string>
-    <string name="integrations_abrp_desc">推出电池和路线数据到"更好的路线规划者"来预测充电.</string>
+    <string name="integrations_abrp_desc">推出电池和路线数据到\"更好的路线规划者\"来预测充电.</string>
     <string name="integrations_mqtt_desc">发布车辆远程测量给家庭助理或任何MQTT经纪人.</string>
     <string name="integrations_byd_cloud_desc">连接您的BYD应用账户以启用远程命令，如车门锁定、闪灯和喇叭。</string>
     <string name="integrations_configure_button">配置</string>
+    <!-- Settings → About / Privacy actions (rows) -->
     <string name="settings_action_check_update">查看是否有更新</string>
     <string name="settings_action_reset_data">设置数据...</string>
+    <!-- Content descriptions for rail / segmented controls -->
     <string name="cd_brand_logo">OverDrive</string>
+    <!-- ============================================================== -->
+    <!-- Dashboard SOTA revamp                                            -->
+    <!-- ============================================================== -->
+    <!-- Hero card -->
+    <!-- SOTA hero headline. Static identity statement (not a time-of-day
+         greeting) — pairs with the OVERDRIVE overline above and the live
+         status row of chips below. Locale catalogs auto-translate. -->
     <string name="dashboard_hero_headline">守望中</string>
     <string name="dashboard_subtitle_all_systems">所有系统在线</string>
     <string name="dashboard_subtitle_some_offline">在线提供%1$d的%2$d服务</string>
     <string name="dashboard_subtitle_no_tunnel">离线远程访问</string>
+    <!-- Metric tiles -->
     <string name="dashboard_metric_recordings">今天的录音</string>
     <string name="dashboard_metric_storage">使用的存储</string>
     <string name="dashboard_metric_tunnel">远程访问</string>
     <string name="dashboard_metric_services">背景服务</string>
     <string name="dashboard_metric_value_pending">—</string>
     <string name="dashboard_metric_vehicle">车辆</string>
+    <!-- Hero chips: at-a-glance pills under the greeting that summarize the
+         three most important live signals (tunnel, services, recording). -->
     <string name="dashboard_chip_recording_active">收音</string>
     <string name="dashboard_chip_recording_idle">空闲</string>
     <string name="dashboard_vehicle_tap_to_set">按下设置</string>
@@ -540,36 +706,56 @@
     <string name="vehicle_dialog_summary_model">型号:%1$s</string>
     <string name="vehicle_dialog_summary_calibration">最后校准:%1$.1f%% 在%2$s</string>
     <string name="vehicle_dialog_soh_unavailable">无法使用</string>
+    <!-- Combined Recordings+Storage chip: e.g. "8.4 GB used · 12 GB free" -->
     <string name="dashboard_metric_storage_chip">使用的%1$s ·免费的%2$s</string>
     <string name="dashboard_metric_storage_chip_pending">存储</string>
     <string name="dashboard_tunnel_offline">在线</string>
     <string name="dashboard_tunnel_online">在线</string>
     <string name="dashboard_tunnel_connecting">连接...</string>
+    <!-- Quick actions (now rendered as same-size tiles, not chips) -->
     <string name="dashboard_action_live">现场视频</string>
     <string name="dashboard_action_live_subtitle">开放式摄像头视图</string>
     <string name="dashboard_action_recordings">录像</string>
     <string name="dashboard_action_settings">设置</string>
     <string name="dashboard_action_settings_subtitle">偏好和关于</string>
+    <!-- ============================================================ -->
+    <!-- Settings — SOTA portrait hub + section pages                  -->
+    <!-- ============================================================ -->
+    <!-- Hero -->
     <string name="settings_hero_title">设置</string>
     <string name="settings_hero_overline">过度驱动</string>
     <string name="settings_hero_subtitle">调整外观,录音,监控和设备上的数据.</string>
+    <!-- Section overlines -->
     <string name="settings_overline_preferences">预见</string>
     <string name="settings_overline_about_data">关于 &amp; DATA</string>
+    <!-- Quick toggles -->
     <string name="settings_quick_theme_label">主题</string>
     <string name="settings_quick_language_label">语言</string>
+    <!-- Section row subtitles (portrait) -->
     <string name="settings_section_recording_subtitle">预/后缓冲器,代码,存储限制.</string>
     <string name="settings_section_surveillance_subtitle">检测区域,时间表,运动敏感性.</string>
     <string name="settings_section_daemons_subtitle">云,Zrok,Telegram,MQTT的跑步者.</string>
+    <!-- About / data row subtitles -->
     <string name="settings_about_row_title">关于OverDrive</string>
     <string name="settings_about_row_subtitle">版本,许可证,支持开发.</string>
     <string name="settings_reset_row_subtitle">清晰的录音,事件,或所有隐藏.</string>
+    <!-- Footer -->
     <string name="settings_footer_format">OverDrive %1$s · %2$s</string>
+    <!-- ============================================================ -->
+    <!-- Appearance pane — SOTA visual theme picker                    -->
+    <!-- ============================================================ -->
     <string name="settings_appearance_subtitle">的主题,语言和视觉偏好.</string>
     <string name="settings_theme_active_auto_caption">自动跟踪你的系统主题.</string>
     <string name="settings_theme_active_light_caption">灯光主题总是开放.</string>
     <string name="settings_theme_active_dark_caption">黑暗的主题总是开放.</string>
     <string name="settings_language_count_format">可用的%1$d的%2$d语言</string>
     <string name="settings_language_card_title">显示语言</string>
+    <!-- ============================================================ -->
+    <!-- Vehicle data pane — manifest permissions + integrations       -->
+    <!-- ============================================================ -->
+    <!-- ============================================================ -->
+    <!-- Privacy pane — stance + storage summary + reset               -->
+    <!-- ============================================================ -->
     <string name="settings_privacy_stance_title">默认的设备上</string>
     <string name="settings_privacy_stance_body">只有通过你明确配置的道和集成器才能从你的车出走.</string>
     <string name="settings_privacy_overline_storage">地方储存</string>
@@ -580,43 +766,66 @@
     <string name="settings_privacy_storage_count_format">%1$d剪辑</string>
     <string name="settings_privacy_storage_count_format_plural">片%1$d</string>
     <string name="settings_privacy_reset_subtitle">选择类别:录音,事件,恶魔配置,缓存远程测量...</string>
+    <!-- Place tagging (reverse geocoding) — recording row chip fallback. -->
     <string name="recording_unknown_location">没有位置</string>
+    <!-- ============================================================== -->
+    <!-- Diagnostics health-tile values (Camera + Battery)                -->
+    <!-- ============================================================== -->
+    <!-- Camera tile primary value: %1$d is the probed camera id (0..N). -->
     <string name="diagnostics_camera_value_camera_n">摄像头%1$d</string>
+    <!-- Camera tile primary value when manual override is active. -->
     <string name="diagnostics_camera_value_camera_n_manual">摄像头%1$d (手动)</string>
     <string name="diagnostics_camera_value_probing">探测...</string>
     <string name="diagnostics_camera_value_offline">在线</string>
+    <!-- Battery tile primary value: %1$.0f is the SOH percent (0..100). -->
     <string name="diagnostics_battery_value_soh">%1$.0f%%</string>
     <string name="diagnostics_battery_value_pending">待定数据</string>
+    <!-- Dashboard recordings tile: live-record indicator prefix.
+         %1$d is today's clip count. The leading bullet is the red dot. -->
     <string name="dashboard_recordings_value_live">●%1$d</string>
+    <!-- ============================================================== -->
+    <!-- Dashboard hero subtitle — auto-rotating insights carousel        -->
+    <!-- ============================================================== -->
+    <!-- Each line replaces the static subtitle for ~5s, then cross-fades
+         to the next available insight. Numbers are bolded + tinted in the
+         provider, so translators should keep numeric placeholders intact
+         (do not spell out the digits). -->
+    <!-- First-launch welcome — only shown on the very first dashboard visit. -->
     <string name="dashboard_insight_welcome">欢迎您 过度驱动是您的第二双眼睛.</string>
+    <!-- Parking delta. %1$s = absolute SOC delta string ("8%"); %2$s = absolute kWh string ("4 kWh"). -->
     <string name="dashboard_insight_parked_charged_kwh">在停车时拿到%1$s (≈%2$s)</string>
     <string name="dashboard_insight_parked_charged">在停车时拿到%1$s</string>
     <string name="dashboard_insight_parked_drained_kwh">自从你停车以来,一直使用%1$s (≈%2$s)</string>
     <string name="dashboard_insight_parked_drained">自从你停车以来,一直使用%1$s</string>
+    <!-- Most recent surveillance clip. %1$s = relative time, e.g. "2 hr. ago" / "yesterday". -->
     <string name="dashboard_insight_last_alert">最后的监控警报:%1$s</string>
+    <!-- Most recent completed charging session in the last 24h.
+         %1$s = energy added (e.g. "12.4 kWh"); %2$s = duration (e.g. "1 hr 45 min"). -->
     <string name="dashboard_insight_last_charge">最后的电荷:%2$s中的%1$s</string>
+    <!-- Storage milestone. %1$d = clip count; %2$s = total size (e.g. "42 GB"). -->
     <string name="dashboard_insight_storage_milestone">记录的%1$d剪辑 · 记录的%2$s</string>
+    <!-- Number formatters used inside other insights. Translators may localize
+         the unit suffix (e.g. "키와트" / "квт·ч") but should leave the float
+         placeholder shape so the bold-ifier still finds the digits. -->
     <string name="dashboard_insight_kwh_format">%1$.1f kWh</string>
     <string name="dashboard_insight_percent_format">%1$.1f%%</string>
     <string name="dashboard_insight_hours_minutes">时间:%1$d小时%2$d分钟</string>
+    <!-- Today's clips. -->
     <plurals name="dashboard_insight_today_clips">
-        <item quantity="one">今天录制的%1$d片段</item>
         <item quantity="other">今天录制的%1$d片段</item>
     </plurals>
+    <!-- Process uptime. Days form takes (days, hours); hours form takes hours only. -->
     <plurals name="dashboard_insight_uptime_days_hours">
-        <item quantity="one">在线开车%1$d天,%2$d小时</item>
         <item quantity="other">在线开车%1$d天,%2$d小时</item>
     </plurals>
     <plurals name="dashboard_insight_uptime_hours">
-        <item quantity="one">在%1$d小时上网过车</item>
         <item quantity="other">在线开车%1$d小时</item>
     </plurals>
+    <!-- Duration helpers used inside insights (last_charge etc.). -->
     <plurals name="dashboard_insight_minutes">
-        <item quantity="one">%1$d min</item>
         <item quantity="other">%1$d min</item>
     </plurals>
     <plurals name="dashboard_insight_hours">
-        <item quantity="one">%1$d hr</item>
         <item quantity="other">%1$d hr</item>
     </plurals>
 </resources>

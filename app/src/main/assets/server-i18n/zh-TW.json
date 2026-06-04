@@ -140,8 +140,8 @@
     "rate_limited": "命令仍在進行中 等待幾秒",
     "not_supported": "這種控制器目前無法使用.",
     "find_car_label": "找一個車",
-    "battery_heat_label": "熱熱的電池",
-    "close_all_windows_label": "所有的窗戶關閉"
+    "battery_heat_label": "電池的熱量",
+    "close_all_windows_label": "關閉所有窗口"
   },
   "messages": {
     "logged_out": "已登入",

@@ -140,8 +140,8 @@
     "rate_limited": "Une commande est toujours en cours  Attendez quelques secondes",
     "not_supported": "Ce contrôle n'est pas disponible en ce moment.",
     "find_car_label": "Trouvez une voiture.",
-    "battery_heat_label": "La chaleur de la batterie",
-    "close_all_windows_label": "Toutes les fenêtres fermées"
+    "battery_heat_label": "Chaleur de la batterie",
+    "close_all_windows_label": "Fermez toutes les fenêtres"
   },
   "messages": {
     "logged_out": "Déconnecté",

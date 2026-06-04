@@ -140,8 +140,8 @@
     "rate_limited": "Un comando todavía está en proceso  esperar unos segundos",
     "not_supported": "Este control no está disponible en este momento",
     "find_car_label": "Encuentra un coche",
-    "battery_heat_label": "El calor de la batería",
-    "close_all_windows_label": "todas las ventanas cerradas"
+    "battery_heat_label": "Calentamiento de la batería",
+    "close_all_windows_label": "Cierra todas las ventanas."
   },
   "messages": {
     "logged_out": "Se logró .",
