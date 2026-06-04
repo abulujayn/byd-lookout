@@ -57,31 +57,18 @@ files:
         nb: nb
 
   # ─── Native Android XML (res/values-{lang}/strings.xml) ───
-  # Crowdin's %android_code% defaults to region-qualified codes (de-rDE,
-  # fr-rFR, etc.), but our Android repo uses language-only directories
-  # (values-de/, values-fr/, ...) for everything except the four
-  # region-distinct locales. Map each language-only locale to its bare code,
-  # and pass the region-qualified ones through unchanged.
+  # Use %two_letters_code% (de, fr, it, ...) to match our language-only
+  # values-* directories, then override the four region-distinct locales
+  # to add the Android "rXX" region tag (zh-rCN, zh-rTW, pt-rBR).
+  # This mirrors the JSON section's mapping pattern that already works.
   - source: /app/src/main/res/values/strings.xml
-    translation: /app/src/main/res/values-%android_code%/strings.xml
+    translation: /app/src/main/res/values-%two_letters_code%/strings.xml
     type: android
     update_option: update_as_unapproved
     translate_attributes: 0
     languages_mapping:
-      android_code:
-        de: de
-        es: es
-        fr: fr
-        hi: hi
-        it: it
-        ja: ja
-        ko: ko
-        nb: nb
-        nl: nl
-        ru: ru
-        th: th
-        tr: tr
-        vi: vi
+      two_letters_code:
         zh-CN: zh-rCN
         zh-TW: zh-rTW
         pt-BR: pt-rBR
+        nb: nb
