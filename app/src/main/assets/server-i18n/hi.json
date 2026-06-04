@@ -140,7 +140,7 @@
     "rate_limited": "एक कमांड अभी भी चल रहा है  कुछ सेकंड प्रतीक्षा करें",
     "not_supported": "यह नियंत्रण अभी उपलब्ध नहीं है",
     "find_car_label": "कार खोजें",
-    "battery_heat_label": "गर्मी की बल्लेबाजी",
+    "battery_heat_label": "बैटरी गर्मी",
     "close_all_windows_label": "सभी खिड़कियां बंद करें"
   },
   "messages": {
