@@ -761,7 +761,7 @@
     "place_search_hint": "Rechercher des lieux…",
     "place_search_hits": {
       "one": "Match {count}",
-      "other": "{count} matches"
+      "other": "{count} correspondances"
     },
     "actor_any": "Tous",
     "actor_person": "Personnes",
@@ -1208,11 +1208,11 @@
     "enable_desc": "Commencez à publier immédiatement après avoir enregistré",
     "save_connection": "Enregistrer la connexion",
     "tab_add": "Ajouter",
-    "field_min_interval": "Min interval — fastest",
+    "field_min_interval": "Intervalle minimum — le plus rapide",
     "field_max_interval": "Max interval — heartbeat",
-    "change_only": "Publish only on change",
+    "change_only": "Publier uniquement en cas de changement",
     "change_only_desc": "Skip publishing when no values changed (a heartbeat still fires at the max interval)",
-    "change_short": "on change",
+    "change_short": "en cas de changement",
     "ha_discovery": "Home Assistant discovery",
     "ha_discovery_desc": "Auto-create entities in Home Assistant. Publishes per-field retained topics (no aggregate JSON).",
     "ha_prefix": "Discovery prefix",

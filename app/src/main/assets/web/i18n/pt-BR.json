@@ -760,7 +760,7 @@
     "filter_place": "Localização:",
     "place_search_hint": "Procurar lugares…",
     "place_search_hits": {
-      "one": "{count} match",
+      "one": "{count} correspondência",
       "other": "Partidas {count}"
     },
     "actor_any": "Qualquer",

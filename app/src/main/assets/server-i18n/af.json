@@ -130,18 +130,18 @@
     "proximity_alert": "🚨 Proximity Alert\nTime: {0}\nTrigger: {1} ({2})\nRecording started..."
   },
   "vehicle_control": {
-    "cloud_required": "Connect a BYD account in Settings to use this control",
-    "cloud_sent": "Sent via cloud",
-    "cloud_unavailable_used_local": "Cloud unavailable — used direct connection",
-    "local_sent": "Sent over direct connection",
-    "cloud_offline_used_local": "Cloud offline — used direct connection",
-    "local_unavailable_used_cloud": "Direct connection unavailable — sent via cloud",
-    "cloud_failed": "Couldn't reach the car — try again when the vehicle is awake",
-    "rate_limited": "A command is still in progress — wait a few seconds",
-    "not_supported": "This control isn't available right now",
-    "find_car_label": "Find car",
-    "battery_heat_label": "Battery heat",
-    "close_all_windows_label": "Close all windows"
+    "cloud_required": "Koppel 'n BYD-rekening in Instellings om hierdie beheer te gebruik",
+    "cloud_sent": "Gestuur via wolk",
+    "cloud_unavailable_used_local": "Wolk onbeskikbaar — direkte verbinding is gebruik",
+    "local_sent": "Gestuur oor direkte verbinding",
+    "cloud_offline_used_local": "Wolk vanlyn — direkte verbinding is gebruik",
+    "local_unavailable_used_cloud": "Direkte verbinding onbeskikbaar — gestuur via wolk",
+    "cloud_failed": "Kon nie die motor bereik nie — probeer weer wanneer die voertuig wakker is",
+    "rate_limited": "'n Opdrag is nog besig — wag 'n paar sekondes",
+    "not_supported": "Hierdie beheer is nie nou beskikbaar nie",
+    "find_car_label": "Vind motor",
+    "battery_heat_label": "Batteryverhitting",
+    "close_all_windows_label": "Maak alle vensters toe"
   },
   "messages": {
     "logged_out": "Logged out",

@@ -130,18 +130,18 @@
     "proximity_alert": "🚨 Proximity Alert\nTime: {0}\nTrigger: {1} ({2})\nRecording started..."
   },
   "vehicle_control": {
-    "cloud_required": "Connect a BYD account in Settings to use this control",
-    "cloud_sent": "Sent via cloud",
-    "cloud_unavailable_used_local": "Cloud unavailable — used direct connection",
-    "local_sent": "Sent over direct connection",
-    "cloud_offline_used_local": "Cloud offline — used direct connection",
-    "local_unavailable_used_cloud": "Direct connection unavailable — sent via cloud",
-    "cloud_failed": "Couldn't reach the car — try again when the vehicle is awake",
-    "rate_limited": "A command is still in progress — wait a few seconds",
-    "not_supported": "This control isn't available right now",
-    "find_car_label": "Find car",
-    "battery_heat_label": "Battery heat",
-    "close_all_windows_label": "Close all windows"
+    "cloud_required": "Connecteu un compte de BYD a Configuració per utilitzar aquest control",
+    "cloud_sent": "Enviat mitjançant el núvol",
+    "cloud_unavailable_used_local": "Núvol no disponible; s'ha utilitzat la connexió directa",
+    "local_sent": "Enviat mitjançant connexió directa",
+    "cloud_offline_used_local": "Núvol fora de línia; s'ha utilitzat la connexió directa",
+    "local_unavailable_used_cloud": "Connexió directa no disponible; enviat mitjançant el núvol",
+    "cloud_failed": "No s'ha pogut connectar amb el cotxe; torneu-ho a provar quan el vehicle estigui actiu",
+    "rate_limited": "Hi ha una ordre en curs; espereu uns segons",
+    "not_supported": "Aquest control no està disponible en aquest moment",
+    "find_car_label": "Cerca el cotxe",
+    "battery_heat_label": "Calefacció de la bateria",
+    "close_all_windows_label": "Tancar totes les finestres"
   },
   "messages": {
     "logged_out": "Logged out",
