@@ -10,6 +10,7 @@
   <a href="https://discord.gg/PZutk9fg4h">Discord</a> •
   <a href="#features">Features</a> •
   <a href="#quick-start-use-pre-built-apk">Setup Guide</a> •
+  <a href="#home-assistant-integration">Home Assistant</a> •
   <a href="#translations">Translate</a>
 </p>
 <p align="center">
@@ -115,6 +116,109 @@ Free, with no bandwidth limits. Connect from any device connected to tailscale.
 With tailscale enabled, the tailscale proxy can be enabled from the tailscale settings.
 This allows accessing an MQTT server through tailscale without port forwarding.
 This can be accessed via the tailscale IP or a subnet that has been advertised on tailscale.
+
+## Home Assistant Integration
+
+OverDrive can publish your vehicle's live telemetry to [Home Assistant](https://www.home-assistant.io/) over MQTT **and** let Home Assistant send commands back to the car (climate, windows, seats, charge limit, and more). Entities appear in Home Assistant automatically — **no YAML editing required**.
+
+> **Everything is local.** Commands are sent straight to the car's own software (the BYD SDK on the head unit). They **never** go through the BYD cloud. Your data and controls stay between your car and your Home Assistant.
+
+### What you get
+
+- **Sensors (read-only):** battery %, range, speed, location (as a device tracker on your HA map), tyre pressures, cabin/battery temperature, charging state, doors/windows status, and more.
+- **Controls (optional, off by default):** climate on/off + temperature + fan, windows, tailgate, sunroof/sunshade, seat heating/ventilation, daytime running lights, charge limit, child lock, wireless phone charger, and assorted car settings.
+
+### Before you start — what you need
+
+1. A running **MQTT broker**. If you use the [Mosquitto add-on](https://github.com/home-assistant/addons/tree/master/mosquitto) in Home Assistant, you already have one.
+2. The **MQTT integration** enabled in Home Assistant (Settings → Devices & Services → Add Integration → MQTT).
+3. Your broker's **address and port** (default port is `1883`, or `8883` for TLS), and a **username/password** if your broker requires one.
+4. Your car and Home Assistant able to reach each other on the network. If they're not on the same LAN, enable the **Tailscale proxy** (see [Tailscale proxy](#tailscale-proxy) above) so the car can reach your broker without port forwarding.
+
+### Step 1 — Add the connection in OverDrive
+
+Open OverDrive → **MQTT** (sidebar or app drawer) → **Add Connection**, then fill in:
+
+| Field | What to enter |
+|---|---|
+| **Connection Name** | Anything, e.g. `Home Assistant` |
+| **Broker URL** | Your broker's host, e.g. `192.168.1.10` (or `mqtts://...` for TLS) |
+| **Port** | `1883` (plain) or `8883` (TLS) |
+| **Username / Password** | Only if your broker requires login (leave blank otherwise) |
+| **Topic** | Leave the default `overdrive/vehicle/telemetry` unless you have a reason to change it |
+
+> **Self-signed / Mosquitto TLS certificate?** Enable the **trust self-signed certificates** option on the connection so OverDrive accepts your broker's cert.
+
+### Step 2 — Turn on Home Assistant discovery
+
+1. Switch on **Home Assistant discovery**.
+2. Leave **Discovery prefix** as `homeassistant` (this matches Home Assistant's default — only change it if you customised yours).
+3. Save. Within a few seconds a new **OverDrive** device appears in Home Assistant under Settings → Devices & Services → MQTT, with all the sensors already populated.
+
+That's it for read-only telemetry. ✅
+
+### Step 3 — Enable controls (optional)
+
+By default OverDrive only *publishes* data — it ignores any command. To let Home Assistant actually control the car:
+
+1. On the same MQTT connection, turn on **Allow vehicle control** (this option only appears once Home Assistant discovery is enabled).
+2. Save. The controllable entities (climate, windows, seats, charge limit, …) now show up on the OverDrive device in Home Assistant, and you can operate them from any dashboard, automation, or voice assistant.
+
+> ⚠️ **Safety:** "Allow vehicle control" is **off by default** and is a real control path to your car. Some actions move physical parts (windows, tailgate, sunroof). Only enable it on a broker you trust, behind a username/password, and ideally on a private network or your Tailscale tailnet.
+
+### Using the controls
+
+Once discovery + control are on, the entities are standard Home Assistant entities — drag them onto a dashboard, call them from automations, or ask your voice assistant. No topic juggling needed.
+
+#### Advanced: sending commands manually
+
+Under the hood every control listens on `<topic>/<key>/set` (where `<topic>` is the connection's Topic from Step 1, default `overdrive/vehicle/telemetry`). Handy for testing with `mosquitto_pub` or for templated automations:
+
+```bash
+# Climate: turn on, set 21 °C, fan speed 3
+mosquitto_pub -t 'overdrive/vehicle/telemetry/climate/mode/set'        -m 'auto'
+mosquitto_pub -t 'overdrive/vehicle/telemetry/climate/temperature/set' -m '21'
+mosquitto_pub -t 'overdrive/vehicle/telemetry/climate/fan_mode/set'    -m '3'
+
+# Vent the cabin / open windows
+mosquitto_pub -t 'overdrive/vehicle/telemetry/windows_all/set' -m 'OPEN'   # or CLOSE / STOP
+
+# Charge limit: enable and cap at 80 %
+mosquitto_pub -t 'overdrive/vehicle/telemetry/charge_cap_enabled/set' -m '1'
+mosquitto_pub -t 'overdrive/vehicle/telemetry/charge_cap_percent/set' -m '80'
+
+# Daytime running lights on
+mosquitto_pub -t 'overdrive/vehicle/telemetry/drl/set' -m 'on'
+```
+
+Full list of controllable entities and their accepted payloads:
+
+| Control | Key | Payloads |
+|---|---|---|
+| Climate mode | `climate/mode` | `off`, `auto` |
+| Climate temperature | `climate/temperature` | `17`–`33` (°C) |
+| Climate fan | `climate/fan_mode` | `0`–`7` |
+| Windows | `windows_all` | `OPEN`, `CLOSE`, `STOP` |
+| Tailgate | `tailgate` | `OPEN`, `CLOSE`, `STOP` |
+| Sunroof | `sunroof` | `OPEN`, `CLOSE`, `STOP` |
+| Sunshade | `sunshade` | `OPEN`, `CLOSE`, `STOP` |
+| Driver / passenger seat heating | `seat_heat_driver`, `seat_heat_passenger` | `off`, `low`, `medium`, `high` |
+| Driver / passenger seat ventilation | `seat_vent_driver`, `seat_vent_passenger` | `off`, `low`, `medium`, `high` |
+| Recall driver seat memory | `seat_memory_driver` | `PRESS` |
+| Daytime running lights | `drl` | `on` / `off` (or `1` / `0`) |
+| Speed-limit warning | `adas_slw` | `on` / `off` |
+| Charge limit on/off | `charge_cap_enabled` | `1` / `0` |
+| Charge limit % | `charge_cap_percent` | `50`–`100` (step 5) |
+| Child lock | `child_lock` | `1` / `0` |
+| Phone wireless charger | `wireless_charging` | `1` / `0` |
+| Car settings | `setting_<name>` | depends on setting (on/off, a number, or a fixed list) |
+
+### Troubleshooting
+
+- **No OverDrive device in Home Assistant?** Check the MQTT connection shows **Connected** in OverDrive, confirm the **Discovery prefix** matches HA's (default `homeassistant`), and make sure the HA MQTT integration points at the *same* broker.
+- **Sensors show but controls are missing?** "Allow vehicle control" isn't enabled — see Step 3 (it only appears after discovery is on).
+- **A command does nothing?** The car must be awake/accessible to the head-unit SDK for that action. OverDrive optimistically updates the entity, then the next telemetry refresh reconciles the true state.
+- **Broker on a different network?** Enable the [Tailscale proxy](#tailscale-proxy) so the car can reach it without port forwarding.
 
 ## Tech Specs
 
