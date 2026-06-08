@@ -51,11 +51,11 @@
     <string name="cd_player_maximize">Tăng tối đa người chơi</string>
     <string name="cd_player_minimize">Chiếc màn hình đầy đủ xuất hiện</string>
     <string name="cd_player_mute">Đổi âm thanh</string>
-    <string name="cd_player_quadrant_all">Show all cameras</string>
-    <string name="cd_player_quadrant_front">Show front camera</string>
-    <string name="cd_player_quadrant_right">Show right camera</string>
-    <string name="cd_player_quadrant_rear">Show rear camera</string>
-    <string name="cd_player_quadrant_left">Show left camera</string>
+    <string name="cd_player_quadrant_all">Hiển thị tất cả camera</string>
+    <string name="cd_player_quadrant_front">Hiển thị camera trước</string>
+    <string name="cd_player_quadrant_right">Hiển thị camera phải</string>
+    <string name="cd_player_quadrant_rear">Hiển thị camera sau</string>
+    <string name="cd_player_quadrant_left">Hiển thị camera trái</string>
     <string name="cd_delete">Xoá</string>
     <string name="cd_share">Share</string>
     <string name="cd_expand">Tăng cường</string>
@@ -442,7 +442,7 @@
     <string name="dashboard_starting_tailscale">Bắt đầu đường hầm Tailscale...</string>
     <string name="dashboard_waiting_url">Chờ đường hầm URL...</string>
     <string name="dashboard_daemons_running">%1$d/%2$d chạy</string>
-    <string name="tunnel_label_cloudflared">Tự nhiên</string>
+    <string name="tunnel_label_cloudflared">Cloudflared</string>
     <string name="tunnel_label_zrok">Zrok</string>
     <string name="tunnel_label_tailscale">Tailscale</string>
     <!-- Daemon names — shown on the Daemons list and dashboard. -->
@@ -596,7 +596,7 @@
     <string name="settings_about_support_share_title">Hãy nói với chủ xe khác</string>
     <string name="settings_about_support_share_value">Mỗi liên kết được chia sẻ giúp một chủ sở hữu BYD khác khám phá Overdrive.</string>
     <string name="settings_about_support_share_message">Kiểm tra Overdrive  giám sát nguồn mở &amp; dashcam cho BYD: https://overdrive-5lc.pages.dev/</string>
-    <string name="settings_about_support_share_chooser">Chia sẻ quá mức</string>
+    <string name="settings_about_support_share_chooser">Chia sẻ Overdrive</string>
     <string name="settings_about_open_link_failed">Không thể mở liên kết.</string>
     <string name="settings_about_open_link_copied">Không tìm thấy trình duyệt. URL sao chép: %1$s</string>
     <string name="settings_about_support_kofi_title">Chất nhiên liệu phát hành tiếp theo</string>
@@ -958,6 +958,9 @@
     <string name="roadsense_confirm_reject">Not a hazard</string>
     <string name="roadsense_confirm_accept">Confirm</string>
     <!-- content descriptions -->
-    <string name="roadsense_cd_cal_level">Route calibration level</string>
+    <string name="roadsense_cd_cal_level">Vehicle calibration level</string>
     <string name="roadsense_cd_direction">Direction to next hazard</string>
+    <!-- Blind Spot overlay labels (native overlay window). -->
+    <string name="blindspot_overlay_left">LEFT</string>
+    <string name="blindspot_overlay_right">RIGHT</string>
 </resources>
