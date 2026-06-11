@@ -94,6 +94,9 @@
     <string name="logs_panel_title">Logy</string>
     <!-- activity_main_new / activity_main-land -->
     <string name="url_connecting">Připojování…</string>
+    <!-- Shown when an external link can't open (no browser on the head unit):
+         the URL is copied to the clipboard instead. %1$s = the URL. -->
+    <string name="url_copied_no_browser">Nebyl nalezen žádný prohlížeč. Odkaz zkopírován: %1$s</string>
     <!-- dialog_tailscale_settings -->
     <string name="tailscale_generate_login_url">Vygenerovat přihlašovací URL</string>
     <string name="tailscale_scan_to_login">Skenovat pro přihlášení</string>
@@ -135,6 +138,8 @@
     <string name="camera_oem_dashcam_auto_resolved">Automatické použití id %1$d (pano je id %2$d)</string>
     <string name="camera_oem_dashcam_auto_unavailable">Auto — pano id je %1$d, nelze odvodit dashcam</string>
     <string name="camera_oem_dashcam_save">Uložit</string>
+    <string name="camera_concurrent_probe_label">Testovat podporu duální kamery při příštím startu</string>
+    <string name="camera_concurrent_probe_subtitle">Jednorázová kontrola, která otevře obě kamery najednou, aby bylo potvrzeno, že toto vozidlo může současně spustit pano + dashcam. Spustí jednou při příštím restartu při zaparkování. Ponechte vypnuté, pokud se nahrávky nezdaří — není to nutné a může krátce přerušit nahrávání, pokud je aktivní při jeho spuštění.</string>
     <!-- Dashcam-side camera labels — REVERSE of the pano labels above. The
          OEM dashcam id is the opposite of the pano id, so the helpful
          "this is what your trim should pick" hint flips between the two
@@ -945,6 +950,7 @@
          RoadSense — road-hazard detection feature
          ============================================================ -->
     <string name="rail_roadsense">Silnice</string>
+    <string name="rail_hazard_map">Mapa</string>
     <string name="roadsense_title">Silnice</string>
     <string name="roadsense_pill_scanning">Skenování</string>
     <string name="roadsense_pill_idle">Silnice</string>
@@ -987,4 +993,105 @@
     <!-- content descriptions -->
     <string name="roadsense_cd_cal_level">Úroveň kalibrace trasy</string>
     <string name="roadsense_cd_direction">Směr k dalšímu nebezpečí</string>
+    <!-- Blind Spot overlay labels (native overlay window). -->
+    <string name="blindspot_overlay_left">LEFT</string>
+    <string name="blindspot_overlay_right">PRÁVO</string>
+    <!-- ============================================================== -->
+    <!-- RoadSense Map (native MapLibre map view + tap-to-verify sheet). -->
+    <!-- ============================================================== -->
+    <string name="roadsense_map_title">Mapa</string>
+    <string name="roadsense_map_route_clear">Vyčistit</string>
+    <string name="roadsense_map_route_unmapped">Zatím nemapováno</string>
+    <string name="roadsense_map_back">Zpět</string>
+    <string name="roadsense_map_recenter">Zopakovat na mé poloze</string>
+    <!-- Tap-to-verify bottom sheet -->
+    <string name="roadsense_map_severity_label">Závažnost</string>
+    <string name="roadsense_map_type_label">Typ</string>
+    <string name="roadsense_map_type_unknown">Neznámý</string>
+    <string name="roadsense_map_confirm">Potvrdit</string>
+    <string name="roadsense_map_delete">Vymazat</string>
+    <!-- Status chip labels: candidate / on-device / shared with fleet -->
+    <string name="roadsense_map_status_candidate">Kandidát</string>
+    <string name="roadsense_map_status_local">Na zařízení</string>
+    <string name="roadsense_map_status_cloud">Sdíleno</string>
+    <!-- Meta line: "Moderate · 82% confidence · 3 reports" -->
+    <string name="roadsense_map_meta_format">%1$s · %2$d%% důvěra · %3$s</string>
+    <!-- "3 reports" / "1 report" -->
+    <plurals name="roadsense_map_reports">
+        <item quantity="one">%1$d report</item>
+        <item quantity="few">%1$d reports</item>
+        <item quantity="many">%1$d reports</item>
+        <item quantity="other">%1$d reports</item>
+    </plurals>
+    <!-- Snackbar / toast confirmations -->
+    <string name="roadsense_map_confirmed_toast">Nebezpečí bylo potvrzeno</string>
+    <string name="roadsense_map_deleted_toast">Odstraněno nebezpečí</string>
+    <string name="roadsense_map_action_failed">Nepodařilo se dosáhnout RoadSense. Zkuste to znovu.</string>
+    <string name="roadsense_map_no_location">Čekání na opravu GPS…</string>
+    <!-- Navigation: search + routing + turn-by-turn -->
+    <string name="roadsense_map_search_hint">Hledat cíl</string>
+    <string name="roadsense_map_search_action">Hledat</string>
+    <string name="roadsense_map_searching">Vyhledávání…</string>
+    <string name="roadsense_map_no_results">Nebyla nalezena žádná místa</string>
+    <string name="roadsense_map_pick_destination">Vyberte cíl</string>
+    <string name="roadsense_map_routing">Hledání trasy…</string>
+    <string name="roadsense_map_route_failed">Nelze najít trasu. Zkuste to znovu.</string>
+    <string name="roadsense_map_need_key">Přidejte klíč směrování v nastavení RoadSense pro navigaci.</string>
+    <string name="roadsense_map_rerouting">Mimo trať – přepočítání…</string>
+    <string name="roadsense_map_arrived">Přijel jste.</string>
+    <string name="roadsense_map_nav_started">Navigace do %1$s</string>
+    <string name="roadsense_map_nav_ended">Navigace ukončena</string>
+    <string name="roadsense_map_end_nav">Ukončit navigaci</string>
+    <string name="roadsense_map_zoom_in">Přiblížit</string>
+    <string name="roadsense_map_zoom_out">Oddálit</string>
+    <!-- Hazard visibility filter -->
+    <string name="roadsense_map_hazards_filter">Viditelnost nebezpečí</string>
+    <string name="roadsense_map_hazards_all">Zobrazit všechna nebezpečí</string>
+    <string name="roadsense_map_hazards_moderate">Mírný a silný</string>
+    <string name="roadsense_map_hazards_severe">Pouze těžká</string>
+    <string name="roadsense_map_hazards_hidden">Skrýt nebezpečí</string>
+    <!-- POI along route (EV charging / fuel) -->
+    <string name="roadsense_map_poi_toggle">Nabíjení a palivo</string>
+    <!-- 2D / 3D buildings toggle -->
+    <string name="roadsense_map_dimension_toggle">Budovy 2D / 3D</string>
+    <string name="roadsense_map_3d_on">Budovy 3D na</string>
+    <string name="roadsense_map_3d_off">3D budovy mimo</string>
+    <string name="roadsense_map_poi_loading">Zjišťování nabíjení a zastavení paliva…</string>
+    <string name="roadsense_map_poi_none">V okolí nebyly nalezeny žádné stanice</string>
+    <string name="roadsense_map_poi_need_route">Nejprve vyberte cíl</string>
+    <!-- POI tap action sheet -->
+    <string name="roadsense_map_stop_added">Zastavit přidání</string>
+    <string name="roadsense_map_remove_stop_action">Odstranit zastávku</string>
+    <string name="roadsense_map_poi_navigate">Navigovat zde</string>
+    <string name="roadsense_map_poi_kind_charging">Nabíjecí stanice</string>
+    <string name="roadsense_map_poi_kind_fuel">Palivová stanice</string>
+    <string name="roadsense_map_poi_charging_generic">Nabíjecí stanice</string>
+    <string name="roadsense_map_poi_fuel_generic">Palivová stanice</string>
+    <string name="roadsense_map_route_switched">Přepnutá trasa</string>
+    <!-- Hazards-along-route pills (%1$d = count) -->
+    <string name="roadsense_map_pill_severe">%1$d těžký</string>
+    <string name="roadsense_map_pill_moderate">%1$d mírné</string>
+    <string name="roadsense_map_pill_minor">%1$d nezletilý</string>
+    <!-- Shown briefly if the basemap can\'t be reached. -->
+    <string name="roadsense_map_offline">Mapová data jsou nedostupná offline</string>
+    <!-- Navigation: autocomplete + route options -->
+    <string name="roadsense_map_clear_search">Vymazat hledání</string>
+    <!-- Route-options sheet -->
+    <string name="roadsense_map_routes_title">Vyberte trasu</string>
+    <string name="roadsense_map_routes_to">Cesty do %1$s</string>
+    <string name="roadsense_map_routes_cancel">Zrušit</string>
+    <!-- Per-route row label, %1$d is the 1-based route number. -->
+    <string name="roadsense_map_route_option">Trasa %1$d</string>
+    <string name="roadsense_map_fastest">Nejrychlejší</string>
+    <string name="roadsense_map_start">Začít</string>
+    <!-- Stops / waypoints in the route-options sheet -->
+    <string name="roadsense_map_your_location">Vaše poloha</string>
+    <string name="roadsense_map_add_stop">Přidat zastávku</string>
+    <string name="roadsense_map_add_stop_hint">Vyhledejte stop pro přidání</string>
+    <string name="roadsense_map_stop_removed">Zastavit odebrán</string>
+    <string name="roadsense_map_remove_stop">Odstranit zastávku</string>
+    <string name="roadsense_map_move_stop_up">Přesunout zastavení nahoru</string>
+    <string name="roadsense_map_move_stop_down">Přesunout zastavení dolů</string>
+    <!-- %1$d is the maximum number of stops allowed. -->
+    <string name="roadsense_map_max_stops">Až %1$d povoleny zastávky</string>
 </resources>

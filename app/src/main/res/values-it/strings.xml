@@ -2,7 +2,7 @@
 <resources>
     <string name="app_name">OverDrive</string>
     <!-- Accessibility Service -->
-    <string name="accessibility_service_description">Mantiene attivo in background il monitoraggio del veicolo Overdrive. Questo servizio non legge ne interagisce con il contenuto dello schermo.</string>
+    <string name="accessibility_service_description">Mantiene attivo in background il monitoraggio del veicolo OverDrive. Questo servizio non legge ne interagisce con il contenuto dello schermo.</string>
     <!-- Recording Mode Labels -->
     <!-- Proximity Guard Settings Labels -->
     <!-- Quality Settings Labels -->
@@ -94,6 +94,9 @@
     <string name="logs_panel_title">Log</string>
     <!-- activity_main_new / activity_main-land -->
     <string name="url_connecting">Connessione...</string>
+    <!-- Shown when an external link can't open (no browser on the head unit):
+         the URL is copied to the clipboard instead. %1$s = the URL. -->
+    <string name="url_copied_no_browser">Nessun browser trovato. Link copiato: %1$s</string>
     <!-- dialog_tailscale_settings -->
     <string name="tailscale_generate_login_url">Genera URL di accesso</string>
     <string name="tailscale_scan_to_login">Scansiona per accedere</string>
@@ -135,6 +138,8 @@
     <string name="camera_oem_dashcam_auto_resolved">Auto — usando id %1$d (pano is id %2$d)</string>
     <string name="camera_oem_dashcam_auto_unavailable">Auto — pano id è %1$d, impossibile dedurre la dashcam</string>
     <string name="camera_oem_dashcam_save">Salva</string>
+    <string name="camera_concurrent_probe_label">Prova il supporto dual-camera all\'avvio successivo</string>
+    <string name="camera_concurrent_probe_subtitle">Verificare una volta che entrambe le telecamere in una sola volta per confermare questo veicolo può eseguire pano + dashcam contemporaneamente. Esegue una volta al prossimo riavvio durante il parcheggio. Lascia OFF a meno che le registrazioni non abbiano un aspetto sbagliato — non è necessario e può interrompere brevemente una registrazione se è attiva quando viene eseguita.</string>
     <!-- Dashcam-side camera labels — REVERSE of the pano labels above. The
          OEM dashcam id is the opposite of the pano id, so the helpful
          "this is what your trim should pick" hint flips between the two
@@ -599,9 +604,9 @@ Questa azione non puo essere annullata.</string>
          personality without being corny — short, warm, specific. -->
     <string name="settings_about_support_section">Reso possibile da persone come te</string>
     <string name="settings_about_support_share_title">Dillo a un altro proprietario</string>
-    <string name="settings_about_support_share_value">Ogni link condiviso aiuta un altro proprietario BYD a scoprire Overdrive.</string>
-    <string name="settings_about_support_share_message">Controlla Overdrive monitoraggio open source e dashcam per BYD: https://overdrive-5lc.pages.dev/</string>
-    <string name="settings_about_support_share_chooser">Condividi Overdrive</string>
+    <string name="settings_about_support_share_value">Ogni link condiviso aiuta un altro proprietario BYD a scoprire OverDrive.</string>
+    <string name="settings_about_support_share_message">Controlla OverDrive monitoraggio open source e dashcam per BYD: https://overdrive-5lc.pages.dev/</string>
+    <string name="settings_about_support_share_chooser">Condividi OverDrive</string>
     <string name="settings_about_open_link_failed">Impossibile aprire il link.</string>
     <string name="settings_about_open_link_copied">Nessun browser trovato. URL copiato: %1$s</string>
     <string name="settings_about_support_kofi_title">Fuel il prossimo rilascio</string>
@@ -609,7 +614,7 @@ Questa azione non puo essere annullata.</string>
     <string name="settings_about_license_title">Licenza</string>
     <string name="settings_about_license_value">MIT — open source. Tocca per vedere il testo completo.</string>
     <string name="settings_about_source_title">Codice sorgente</string>
-    <string name="settings_about_source_value">github.com/yash-srivastava/Overdrive-release</string>
+    <string name="settings_about_source_value">github.com/yash-srivastava/OverDrive-release</string>
     <string name="settings_about_star_title">Metti una stella su GitHub</string>
     <string name="settings_about_star_value">Ci vuole un secondo. Conta molto.</string>
     <string name="settings_about_thanks_title">Grazie</string>
@@ -679,7 +684,7 @@ Questa azione non puo essere annullata.</string>
     <string name="diagnostics_settings_subtitle">Preferenze app, tema e lingua.</string>
     <!-- SOTA Integrations page -->
     <string name="integrations_hero_title">Integrazioni</string>
-    <string name="integrations_hero_subtitle">Collega Overdrive ai tuoi servizi.</string>
+    <string name="integrations_hero_subtitle">Collega OverDrive ai tuoi servizi.</string>
     <string name="integrations_status_unknown">Tocca per configurare</string>
     <string name="integrations_status_configured">Configurato</string>
     <string name="integrations_status_not_set_up">Non configurato</string>
@@ -883,7 +888,7 @@ Questa azione non puo essere annullata.</string>
          provider, so translators should keep numeric placeholders intact
          (do not spell out the digits). -->
     <!-- First-launch welcome — only shown on the very first dashboard visit. -->
-    <string name="dashboard_insight_welcome">Benvenuto — Overdrive e ora il tuo secondo paio di occhi.</string>
+    <string name="dashboard_insight_welcome">Benvenuto — OverDrive e ora il tuo secondo paio di occhi.</string>
     <!-- Parking delta. %1$s = absolute SOC delta string ("8%"); %2$s = absolute kWh string ("4 kWh"). -->
     <string name="dashboard_insight_parked_charged_kwh">Guadagnato %1$s (≈%2$s) durante la sosta</string>
     <string name="dashboard_insight_parked_charged">Guadagnato %1$s durante la sosta</string>
@@ -929,6 +934,7 @@ Questa azione non puo essere annullata.</string>
          RoadSense — road-hazard detection feature
          ============================================================ -->
     <string name="rail_roadsense">RoadSense</string>
+    <string name="rail_hazard_map">Mappa</string>
     <string name="roadsense_title">RoadSense</string>
     <string name="roadsense_pill_scanning">Scansione</string>
     <string name="roadsense_pill_idle">RoadSense</string>
@@ -971,6 +977,103 @@ Questa azione non puo essere annullata.</string>
     <!-- content descriptions -->
     <string name="roadsense_cd_cal_level">Livello di calibrazione del percorso</string>
     <string name="roadsense_cd_direction">Direzione al pericolo successivo</string>
-    <string name="blindspot_overlay_right">DIRITTO</string>
+    <!-- Blind Spot overlay labels (native overlay window). -->
     <string name="blindspot_overlay_left">SINISTRA</string>
+    <string name="blindspot_overlay_right">DIRITTO</string>
+    <!-- ============================================================== -->
+    <!-- RoadSense Map (native MapLibre map view + tap-to-verify sheet). -->
+    <!-- ============================================================== -->
+    <string name="roadsense_map_title">Mappa</string>
+    <string name="roadsense_map_route_clear">Pulisci</string>
+    <string name="roadsense_map_route_unmapped">Non ancora mappato</string>
+    <string name="roadsense_map_back">Indietro</string>
+    <string name="roadsense_map_recenter">Richiedi la mia posizione</string>
+    <!-- Tap-to-verify bottom sheet -->
+    <string name="roadsense_map_severity_label">Gravità</string>
+    <string name="roadsense_map_type_label">Tipo</string>
+    <string name="roadsense_map_type_unknown">Sconosciuto</string>
+    <string name="roadsense_map_confirm">Conferma</string>
+    <string name="roadsense_map_delete">Elimina</string>
+    <!-- Status chip labels: candidate / on-device / shared with fleet -->
+    <string name="roadsense_map_status_candidate">Candidato</string>
+    <string name="roadsense_map_status_local">Sul dispositivo</string>
+    <string name="roadsense_map_status_cloud">Condiviso</string>
+    <!-- Meta line: "Moderate · 82% confidence · 3 reports" -->
+    <string name="roadsense_map_meta_format">%1$s · %2$d%% di fiducia · %3$s</string>
+    <!-- "3 reports" / "1 report" -->
+    <plurals name="roadsense_map_reports">
+        <item quantity="one">Relazione %1$d</item>
+        <item quantity="other">Relazioni %1$d</item>
+    </plurals>
+    <!-- Snackbar / toast confirmations -->
+    <string name="roadsense_map_confirmed_toast">Rischio confermato</string>
+    <string name="roadsense_map_deleted_toast">Rischio rimosso</string>
+    <string name="roadsense_map_action_failed">Impossibile raggiungere RoadSense. Riprova.</string>
+    <string name="roadsense_map_no_location">In attesa della correzione GPS…</string>
+    <!-- Navigation: search + routing + turn-by-turn -->
+    <string name="roadsense_map_search_hint">Ricerca destinazione</string>
+    <string name="roadsense_map_search_action">Cerca</string>
+    <string name="roadsense_map_searching">Ricerca…</string>
+    <string name="roadsense_map_no_results">Nessun posto trovato</string>
+    <string name="roadsense_map_pick_destination">Scegli destinazione</string>
+    <string name="roadsense_map_routing">Ricerca percorso…</string>
+    <string name="roadsense_map_route_failed">Impossibile trovare un percorso. Riprova.</string>
+    <string name="roadsense_map_need_key">Aggiungi una chiave di routing nelle impostazioni di RoadSense per navigare.</string>
+    <string name="roadsense_map_rerouting">Fuori rotta — ricalcolo…</string>
+    <string name="roadsense_map_arrived">Siete arrivate.</string>
+    <string name="roadsense_map_nav_started">Navigazione in %1$s</string>
+    <string name="roadsense_map_nav_ended">Navigazione terminata</string>
+    <string name="roadsense_map_end_nav">Fine navigazione</string>
+    <string name="roadsense_map_zoom_in">Aumenta ingrandimento</string>
+    <string name="roadsense_map_zoom_out">Riduci ingrandimento</string>
+    <!-- Hazard visibility filter -->
+    <string name="roadsense_map_hazards_filter">Visibilità dei rischi</string>
+    <string name="roadsense_map_hazards_all">Mostra tutti i pericoli</string>
+    <string name="roadsense_map_hazards_moderate">Moderato e grave</string>
+    <string name="roadsense_map_hazards_severe">Solo severo</string>
+    <string name="roadsense_map_hazards_hidden">Nascondi i pericoli</string>
+    <!-- POI along route (EV charging / fuel) -->
+    <string name="roadsense_map_poi_toggle">Carica e carburante</string>
+    <!-- 2D / 3D buildings toggle -->
+    <string name="roadsense_map_dimension_toggle">Edifici 2D / 3D</string>
+    <string name="roadsense_map_3d_on">Edifici 3D su</string>
+    <string name="roadsense_map_3d_off">Edifici 3D off</string>
+    <string name="roadsense_map_poi_loading">Trovare la ricarica e le fermate di carburante…</string>
+    <string name="roadsense_map_poi_none">Nessuna stazione trovata nelle vicinanze</string>
+    <string name="roadsense_map_poi_need_route">Scegli prima una destinazione</string>
+    <!-- POI tap action sheet -->
+    <string name="roadsense_map_stop_added">Interrompi aggiunto</string>
+    <string name="roadsense_map_remove_stop_action">Rimuovi stop</string>
+    <string name="roadsense_map_poi_navigate">Naviga qui</string>
+    <string name="roadsense_map_poi_kind_charging">Stazione di ricarica</string>
+    <string name="roadsense_map_poi_kind_fuel">Stazione di rifornimento</string>
+    <string name="roadsense_map_poi_charging_generic">Stazione di ricarica</string>
+    <string name="roadsense_map_poi_fuel_generic">Stazione di rifornimento</string>
+    <string name="roadsense_map_route_switched">Percorso commutato</string>
+    <!-- Hazards-along-route pills (%1$d = count) -->
+    <string name="roadsense_map_pill_severe">%1$d grave</string>
+    <string name="roadsense_map_pill_moderate">%1$d moderato</string>
+    <string name="roadsense_map_pill_minor">%1$d minore</string>
+    <!-- Shown briefly if the basemap can\'t be reached. -->
+    <string name="roadsense_map_offline">Mappa dati non disponibili offline</string>
+    <!-- Navigation: autocomplete + route options -->
+    <string name="roadsense_map_clear_search">Cancella ricerca</string>
+    <!-- Route-options sheet -->
+    <string name="roadsense_map_routes_title">Scegli un percorso</string>
+    <string name="roadsense_map_routes_to">Itinerari a %1$s</string>
+    <string name="roadsense_map_routes_cancel">Annulla</string>
+    <!-- Per-route row label, %1$d is the 1-based route number. -->
+    <string name="roadsense_map_route_option">Percorso %1$d</string>
+    <string name="roadsense_map_fastest">Più Veloce</string>
+    <string name="roadsense_map_start">Inizia</string>
+    <!-- Stops / waypoints in the route-options sheet -->
+    <string name="roadsense_map_your_location">La tua posizione</string>
+    <string name="roadsense_map_add_stop">Aggiungi stop</string>
+    <string name="roadsense_map_add_stop_hint">Cerca uno stop da aggiungere</string>
+    <string name="roadsense_map_stop_removed">Ferma rimossa</string>
+    <string name="roadsense_map_remove_stop">Rimuovi stop</string>
+    <string name="roadsense_map_move_stop_up">Sposta arresto su</string>
+    <string name="roadsense_map_move_stop_down">Sposta stop in basso</string>
+    <!-- %1$d is the maximum number of stops allowed. -->
+    <string name="roadsense_map_max_stops">Fino a %1$d fermate consentite</string>
 </resources>

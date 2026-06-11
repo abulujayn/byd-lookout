@@ -94,6 +94,9 @@
     <string name="logs_panel_title">Logfiler</string>
     <!-- activity_main_new / activity_main-land -->
     <string name="url_connecting">Forbinder…</string>
+    <!-- Shown when an external link can't open (no browser on the head unit):
+         the URL is copied to the clipboard instead. %1$s = the URL. -->
+    <string name="url_copied_no_browser">Ingen browser fundet. Link kopieret: %1$s</string>
     <!-- dialog_tailscale_settings -->
     <string name="tailscale_generate_login_url">Generer login-URL</string>
     <string name="tailscale_scan_to_login">Scan for at logge ind</string>
@@ -135,6 +138,8 @@
     <string name="camera_oem_dashcam_auto_resolved">Auto — brug af id %1$d (pano er id %2$d)</string>
     <string name="camera_oem_dashcam_auto_unavailable">Auto — pano-id er %1$d, kan ikke udlede dashcam</string>
     <string name="camera_oem_dashcam_save">Gem</string>
+    <string name="camera_concurrent_probe_label">Test understøttelse af dual-kamera ved næste opstart</string>
+    <string name="camera_concurrent_probe_subtitle">Engangskontrol, der åbner begge kameraer på én gang for at bekræfte, at denne bil kan køre pano + dashcam samtidig. Kører én gang ved næste genstart mens parkeret. Efterlad slukket, medmindre optagelserne ser forkert ud — det er ikke påkrævet og kan kortvarigt afbryde en optagelse, hvis en sådan er aktiv, når den kører.</string>
     <!-- Dashcam-side camera labels — REVERSE of the pano labels above. The
          OEM dashcam id is the opposite of the pano id, so the helpful
          "this is what your trim should pick" hint flips between the two
@@ -927,6 +932,7 @@
          RoadSense — road-hazard detection feature
          ============================================================ -->
     <string name="rail_roadsense">RoadSense</string>
+    <string name="rail_hazard_map">Kort</string>
     <string name="roadsense_title">RoadSense</string>
     <string name="roadsense_pill_scanning">Skanner</string>
     <string name="roadsense_pill_idle">RoadSense</string>
@@ -969,4 +975,103 @@
     <!-- content descriptions -->
     <string name="roadsense_cd_cal_level">Rute kalibreringsniveau</string>
     <string name="roadsense_cd_direction">Retning til næste fare</string>
+    <!-- Blind Spot overlay labels (native overlay window). -->
+    <string name="blindspot_overlay_left">VENSTRE</string>
+    <string name="blindspot_overlay_right">HØRE</string>
+    <!-- ============================================================== -->
+    <!-- RoadSense Map (native MapLibre map view + tap-to-verify sheet). -->
+    <!-- ============================================================== -->
+    <string name="roadsense_map_title">Kort</string>
+    <string name="roadsense_map_route_clear">Ryd</string>
+    <string name="roadsense_map_route_unmapped">Ikke kortlagt endnu</string>
+    <string name="roadsense_map_back">Tilbage</string>
+    <string name="roadsense_map_recenter">Recenter på min placering</string>
+    <!-- Tap-to-verify bottom sheet -->
+    <string name="roadsense_map_severity_label">Alvorlighed</string>
+    <string name="roadsense_map_type_label">Type</string>
+    <string name="roadsense_map_type_unknown">Ukendt</string>
+    <string name="roadsense_map_confirm">Bekræft</string>
+    <string name="roadsense_map_delete">Slet</string>
+    <!-- Status chip labels: candidate / on-device / shared with fleet -->
+    <string name="roadsense_map_status_candidate">Kandidater</string>
+    <string name="roadsense_map_status_local">På enhed</string>
+    <string name="roadsense_map_status_cloud">Delt</string>
+    <!-- Meta line: "Moderate · 82% confidence · 3 reports" -->
+    <string name="roadsense_map_meta_format">%1$s · %2$d%% tillid · %3$s</string>
+    <!-- "3 reports" / "1 report" -->
+    <plurals name="roadsense_map_reports">
+        <item quantity="one">Betænkning af %1$d</item>
+        <item quantity="other">%1$d rapporter</item>
+    </plurals>
+    <!-- Snackbar / toast confirmations -->
+    <string name="roadsense_map_confirmed_toast">Fare bekræftet</string>
+    <string name="roadsense_map_deleted_toast">Fare fjernet</string>
+    <string name="roadsense_map_action_failed">Kunne ikke nå RoadSense. Prøv igen.</string>
+    <string name="roadsense_map_no_location">Venter på GPS fix…</string>
+    <!-- Navigation: search + routing + turn-by-turn -->
+    <string name="roadsense_map_search_hint">Søg destination</string>
+    <string name="roadsense_map_search_action">Søg</string>
+    <string name="roadsense_map_searching">Søger…</string>
+    <string name="roadsense_map_no_results">Ingen steder fundet</string>
+    <string name="roadsense_map_pick_destination">Vælg destination</string>
+    <string name="roadsense_map_routing">Find rute…</string>
+    <string name="roadsense_map_route_failed">Kunne ikke finde en rute. Prøv igen.</string>
+    <string name="roadsense_map_need_key">Tilføj en routing nøgle i RoadSense indstillinger for at navigere.</string>
+    <string name="roadsense_map_rerouting">Sluk rute — genberegning af…</string>
+    <string name="roadsense_map_arrived">Du er ankommet.</string>
+    <string name="roadsense_map_nav_started">Navigerer til %1$s</string>
+    <string name="roadsense_map_nav_ended">Navigationen er afsluttet</string>
+    <string name="roadsense_map_end_nav">Afslut navigation</string>
+    <string name="roadsense_map_zoom_in">Zoom ind</string>
+    <string name="roadsense_map_zoom_out">Zoom ud</string>
+    <!-- Hazard visibility filter -->
+    <string name="roadsense_map_hazards_filter">Farlig synlighed</string>
+    <string name="roadsense_map_hazards_all">Vis alle farer</string>
+    <string name="roadsense_map_hazards_moderate">Moderat og svær</string>
+    <string name="roadsense_map_hazards_severe">Kun alvorlig</string>
+    <string name="roadsense_map_hazards_hidden">Skjul farer</string>
+    <!-- POI along route (EV charging / fuel) -->
+    <string name="roadsense_map_poi_toggle">Oplader og brændstof</string>
+    <!-- 2D / 3D buildings toggle -->
+    <string name="roadsense_map_dimension_toggle">2D / 3D bygninger</string>
+    <string name="roadsense_map_3d_on">3D bygninger på</string>
+    <string name="roadsense_map_3d_off">3D bygninger fra</string>
+    <string name="roadsense_map_poi_loading">At finde opladning og brændstof stopper…</string>
+    <string name="roadsense_map_poi_none">Ingen stationer fundet i nærheden</string>
+    <string name="roadsense_map_poi_need_route">Vælg en destination først</string>
+    <!-- POI tap action sheet -->
+    <string name="roadsense_map_stop_added">Stop tilføjet</string>
+    <string name="roadsense_map_remove_stop_action">Fjern stop</string>
+    <string name="roadsense_map_poi_navigate">Naviger her</string>
+    <string name="roadsense_map_poi_kind_charging">Opladningsstation</string>
+    <string name="roadsense_map_poi_kind_fuel">Brændstofstation</string>
+    <string name="roadsense_map_poi_charging_generic">Opladningsstation</string>
+    <string name="roadsense_map_poi_fuel_generic">Brændstofstation</string>
+    <string name="roadsense_map_route_switched">Skiftede rute</string>
+    <!-- Hazards-along-route pills (%1$d = count) -->
+    <string name="roadsense_map_pill_severe">%1$d alvorlig</string>
+    <string name="roadsense_map_pill_moderate">%1$d moderat</string>
+    <string name="roadsense_map_pill_minor">%1$d mindre</string>
+    <!-- Shown briefly if the basemap can\'t be reached. -->
+    <string name="roadsense_map_offline">Kort data utilgængelig offline</string>
+    <!-- Navigation: autocomplete + route options -->
+    <string name="roadsense_map_clear_search">Ryd søgning</string>
+    <!-- Route-options sheet -->
+    <string name="roadsense_map_routes_title">Vælg en rute</string>
+    <string name="roadsense_map_routes_to">Ruter til %1$s</string>
+    <string name="roadsense_map_routes_cancel">Annuller</string>
+    <!-- Per-route row label, %1$d is the 1-based route number. -->
+    <string name="roadsense_map_route_option">Rute %1$d</string>
+    <string name="roadsense_map_fastest">Hurtigste</string>
+    <string name="roadsense_map_start">Start</string>
+    <!-- Stops / waypoints in the route-options sheet -->
+    <string name="roadsense_map_your_location">Din placering</string>
+    <string name="roadsense_map_add_stop">Tilføj stop</string>
+    <string name="roadsense_map_add_stop_hint">Søg efter et stop for at tilføje</string>
+    <string name="roadsense_map_stop_removed">Stop fjernet</string>
+    <string name="roadsense_map_remove_stop">Fjern stop</string>
+    <string name="roadsense_map_move_stop_up">Flyt stop op</string>
+    <string name="roadsense_map_move_stop_down">Flyt stop ned</string>
+    <!-- %1$d is the maximum number of stops allowed. -->
+    <string name="roadsense_map_max_stops">Op til %1$d stopper tilladt</string>
 </resources>

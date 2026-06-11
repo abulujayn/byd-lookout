@@ -94,6 +94,9 @@
     <string name="logs_panel_title">السجلات</string>
     <!-- activity_main_new / activity_main-land -->
     <string name="url_connecting">جارٍ توصيل…</string>
+    <!-- Shown when an external link can't open (no browser on the head unit):
+         the URL is copied to the clipboard instead. %1$s = the URL. -->
+    <string name="url_copied_no_browser">لم يتم العثور على المتصفح. تم نسخ الرابط: %1$s</string>
     <!-- dialog_tailscale_settings -->
     <string name="tailscale_generate_login_url">إنشاء رابط تسجيل الدخول</string>
     <string name="tailscale_scan_to_login">مسح لتسجيل الدخول</string>
@@ -135,6 +138,8 @@
     <string name="camera_oem_dashcam_auto_resolved">تلقائي - استخدام معرف %1$d (معرف الذاكرة %2$d)</string>
     <string name="camera_oem_dashcam_auto_unavailable">تلقائيًا — معرف الذاكرة %1$d، لا يمكن استنتاج Dashcam</string>
     <string name="camera_oem_dashcam_save">حفظ</string>
+    <string name="camera_concurrent_probe_label">اختبار دعم ثنائي الكاميرا في التمهيد التالي</string>
+    <string name="camera_concurrent_probe_subtitle">التحقق لمرة واحدة من أن كلا الكاميرين يفتح مرة واحدة لتأكيد أن هذه السيارة يمكنها تشغيل بانو + داشكامم في نفس الوقت. تشغيل مرة واحدة في إعادة التشغيل التالية أثناء وقوفها. اتركه متوقفا ما لم تبدو التسجيلات خاطئة - ليس مطلوبا وقد يقطع التسجيل لفترة وجيزة إذا كان نشطا عند تشغيله.</string>
     <!-- Dashcam-side camera labels — REVERSE of the pano labels above. The
          OEM dashcam id is the opposite of the pano id, so the helpful
          "this is what your trim should pick" hint flips between the two
@@ -532,7 +537,7 @@
     <string name="setup_traffic_body">يمنع مراقب حركة المرور BYD تطبيقات الطرف الثالث من الوصول إلى الإنترنت. تعطيل هذا يسمح لـ OverDrive وأي تطبيقات أخرى تثبيتها في الواقع تستخدم الشبكة. مطلوب إعادة تشغيل صلبة بعد ذلك.</string>
     <string name="setup_traffic_button">فتح مراقبة حركة البيانات</string>
     <string name="setup_camera_fix_title">تغذية الكاميرا سوداء أو غير صحيحة؟</string>
-    <string name="setup_camera_fix_body">افتح التشخيصات > مسبار الكاميرا، عيّن معرف الكاميرا على 0، انقر على الحفظ، ثم أعد تشغيل مسبار الكاميرا. إذا كانت الخلاصات لا تزال خاطئة، قم بتكرارها مع معرف الكاميرا 1. اترك قسم رسم الخرائط دون أن يمس.</string>
+    <string name="setup_camera_fix_body">افتح التشخيصات &gt; مسبار الكاميرا، عيّن معرف الكاميرا على 0، انقر على الحفظ، ثم أعد تشغيل مسبار الكاميرا. إذا كانت الخلاصات لا تزال خاطئة، قم بتكرارها مع معرف الكاميرا 1. اترك قسم رسم الخرائط دون أن يمس.</string>
     <!-- Recording storage path -->
     <!-- MainActivity status -->
     <string name="camera_current_manual">حاليا: الكاميرا %1$d (ثانوي)</string>
@@ -963,6 +968,7 @@
          RoadSense — road-hazard detection feature
          ============================================================ -->
     <string name="rail_roadsense">حساس الطرق</string>
+    <string name="rail_hazard_map">الخريطة</string>
     <string name="roadsense_title">حساس الطرق</string>
     <string name="roadsense_pill_scanning">المسح</string>
     <string name="roadsense_pill_idle">حساس الطرق</string>
@@ -1005,4 +1011,107 @@
     <!-- content descriptions -->
     <string name="roadsense_cd_cal_level">مستوى معايرة المسار</string>
     <string name="roadsense_cd_direction">الاتجاه إلى الخطر التالي</string>
+    <!-- Blind Spot overlay labels (native overlay window). -->
+    <string name="blindspot_overlay_left">اليسار</string>
+    <string name="blindspot_overlay_right">حقوق</string>
+    <!-- ============================================================== -->
+    <!-- RoadSense Map (native MapLibre map view + tap-to-verify sheet). -->
+    <!-- ============================================================== -->
+    <string name="roadsense_map_title">الخريطة</string>
+    <string name="roadsense_map_route_clear">مسح</string>
+    <string name="roadsense_map_route_unmapped">لم يتم تعيينها بعد</string>
+    <string name="roadsense_map_back">الرجوع</string>
+    <string name="roadsense_map_recenter">تسجيل الدخول على موقعي</string>
+    <!-- Tap-to-verify bottom sheet -->
+    <string name="roadsense_map_severity_label">الخطورة</string>
+    <string name="roadsense_map_type_label">نوع</string>
+    <string name="roadsense_map_type_unknown">غير معروف</string>
+    <string name="roadsense_map_confirm">تأكيد</string>
+    <string name="roadsense_map_delete">حذف</string>
+    <!-- Status chip labels: candidate / on-device / shared with fleet -->
+    <string name="roadsense_map_status_candidate">المرشح</string>
+    <string name="roadsense_map_status_local">على الجهاز</string>
+    <string name="roadsense_map_status_cloud">مشترك</string>
+    <!-- Meta line: "Moderate · 82% confidence · 3 reports" -->
+    <string name="roadsense_map_meta_format">%1$s · %2$d%% الثقة · %3$s</string>
+    <!-- "3 reports" / "1 report" -->
+    <plurals name="roadsense_map_reports">
+        <item quantity="zero">تقارير %1$d</item>
+        <item quantity="one">تقرير %1$d</item>
+        <item quantity="two">تقارير %1$d</item>
+        <item quantity="few">تقارير %1$d</item>
+        <item quantity="many">تقارير %1$d</item>
+        <item quantity="other">تقارير %1$d</item>
+    </plurals>
+    <!-- Snackbar / toast confirmations -->
+    <string name="roadsense_map_confirmed_toast">تم تأكيد الخطر</string>
+    <string name="roadsense_map_deleted_toast">تم إزالة الخطر</string>
+    <string name="roadsense_map_action_failed">تعذر الوصول إلى حس الطرق. حاول مرة أخرى.</string>
+    <string name="roadsense_map_no_location">في انتظار إصلاح GPS…</string>
+    <!-- Navigation: search + routing + turn-by-turn -->
+    <string name="roadsense_map_search_hint">وجهة البحث</string>
+    <string name="roadsense_map_search_action">البحث</string>
+    <string name="roadsense_map_searching">البحث…</string>
+    <string name="roadsense_map_no_results">لم يتم العثور على أماكن</string>
+    <string name="roadsense_map_pick_destination">اختر الوجهة</string>
+    <string name="roadsense_map_routing">العثور على المسار…</string>
+    <string name="roadsense_map_route_failed">تعذر العثور على مسار. حاول مرة أخرى.</string>
+    <string name="roadsense_map_need_key">إضافة مفتاح توجيه في إعدادات RoadSense للتنقل.</string>
+    <string name="roadsense_map_rerouting">إيقاف المسار - إعادة حساب…</string>
+    <string name="roadsense_map_arrived">لقد وصلت.</string>
+    <string name="roadsense_map_nav_started">الانتقال إلى %1$s</string>
+    <string name="roadsense_map_nav_ended">انتهت الملاحة</string>
+    <string name="roadsense_map_end_nav">إنهاء التنقل</string>
+    <string name="roadsense_map_zoom_in">تكبير في</string>
+    <string name="roadsense_map_zoom_out">تكبير خارجي</string>
+    <!-- Hazard visibility filter -->
+    <string name="roadsense_map_hazards_filter">رؤية الخطر</string>
+    <string name="roadsense_map_hazards_all">إظهار جميع المخاطر</string>
+    <string name="roadsense_map_hazards_moderate">معتدلة وخطيرة</string>
+    <string name="roadsense_map_hazards_severe">شديد فقط</string>
+    <string name="roadsense_map_hazards_hidden">إخفاء المخاطر</string>
+    <!-- POI along route (EV charging / fuel) -->
+    <string name="roadsense_map_poi_toggle">الشحن والوقود</string>
+    <!-- 2D / 3D buildings toggle -->
+    <string name="roadsense_map_dimension_toggle">2D / المباني 3D</string>
+    <string name="roadsense_map_3d_on">مبان ثلاثية الأبعاد تعمل</string>
+    <string name="roadsense_map_3d_off">مبان ثلاثية الأبعاد معطلة</string>
+    <string name="roadsense_map_poi_loading">العثور على الشحن وتوقف الوقود…</string>
+    <string name="roadsense_map_poi_none">لم يتم العثور على محطات قريبة</string>
+    <string name="roadsense_map_poi_need_route">اختر الوجهة أولاً</string>
+    <!-- POI tap action sheet -->
+    <string name="roadsense_map_stop_added">إيقاف الإضافة</string>
+    <string name="roadsense_map_remove_stop_action">إيقاف الإزالة</string>
+    <string name="roadsense_map_poi_navigate">التنقل هنا</string>
+    <string name="roadsense_map_poi_kind_charging">محطة الشحن</string>
+    <string name="roadsense_map_poi_kind_fuel">محطة الوقود</string>
+    <string name="roadsense_map_poi_charging_generic">محطة الشحن</string>
+    <string name="roadsense_map_poi_fuel_generic">محطة الوقود</string>
+    <string name="roadsense_map_route_switched">مسار التبديل</string>
+    <!-- Hazards-along-route pills (%1$d = count) -->
+    <string name="roadsense_map_pill_severe">%1$d حادة</string>
+    <string name="roadsense_map_pill_moderate">%1$d moderate</string>
+    <string name="roadsense_map_pill_minor">%1$d قاصر</string>
+    <!-- Shown briefly if the basemap can\'t be reached. -->
+    <string name="roadsense_map_offline">بيانات الخريطة غير متوفرة دون اتصال</string>
+    <!-- Navigation: autocomplete + route options -->
+    <string name="roadsense_map_clear_search">مسح البحث</string>
+    <!-- Route-options sheet -->
+    <string name="roadsense_map_routes_title">اختر مسار</string>
+    <string name="roadsense_map_routes_to">الطرق إلى %1$s</string>
+    <string name="roadsense_map_routes_cancel">إلغاء</string>
+    <!-- Per-route row label, %1$d is the 1-based route number. -->
+    <string name="roadsense_map_route_option">الطريق %1$d</string>
+    <string name="roadsense_map_fastest">الأسرع</string>
+    <string name="roadsense_map_start">ابدأ</string>
+    <!-- Stops / waypoints in the route-options sheet -->
+    <string name="roadsense_map_your_location">موقعك</string>
+    <string name="roadsense_map_add_stop">إضافة إيقاف</string>
+    <string name="roadsense_map_add_stop_hint">البحث عن توقف لإضافته</string>
+    <string name="roadsense_map_stop_removed">إيقاف الإزالة</string>
+    <string name="roadsense_map_remove_stop">إيقاف الإزالة</string>
+    <string name="roadsense_map_move_stop_up">إيقاف الحركة للأعلى</string>
+    <string name="roadsense_map_move_stop_down">إيقاف الحركة للأسفل</string>
+    <!-- %1$d is the maximum number of stops allowed. -->
+    <string name="roadsense_map_max_stops">يسمح حتى %1$d محطات</string>
 </resources>
