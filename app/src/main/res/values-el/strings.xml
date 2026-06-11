@@ -94,6 +94,9 @@
     <string name="logs_panel_title">Καταγραφή</string>
     <!-- activity_main_new / activity_main-land -->
     <string name="url_connecting">Σύνδεση…</string>
+    <!-- Shown when an external link can't open (no browser on the head unit):
+         the URL is copied to the clipboard instead. %1$s = the URL. -->
+    <string name="url_copied_no_browser">Δεν βρέθηκε κανένα πρόγραμμα περιήγησης. Σύνδεσμος αντιγράφησε: %1$s</string>
     <!-- dialog_tailscale_settings -->
     <string name="tailscale_generate_login_url">Δημιουργία URL σύνδεσης</string>
     <string name="tailscale_scan_to_login">Σάρωση για σύνδεση</string>
@@ -135,6 +138,8 @@
     <string name="camera_oem_dashcam_auto_resolved">Αυτόματη — χρήση id %1$d (pano is id %2$d)</string>
     <string name="camera_oem_dashcam_auto_unavailable">Auto — pano id είναι %1$d, δεν μπορεί να εμφυσήσει dashcam</string>
     <string name="camera_oem_dashcam_save">Αποθήκευση</string>
+    <string name="camera_concurrent_probe_label">Δοκιμή υποστήριξης διπλής κάμερας κατά την επόμενη εκκίνηση</string>
+    <string name="camera_concurrent_probe_subtitle">Εφάπαξ έλεγχος που ανοίγει και τις δύο κάμερες ταυτόχρονα για να επιβεβαιώσει αυτό το όχημα μπορεί να τρέξει pano + dashcam ταυτόχρονα. Εκτελείται μία φορά στην επόμενη επανεκκίνηση ενώ σταθμεύσετε. Αφήστε απενεργοποιημένες τις εγγραφές εκτός και αν οι εγγραφές φαίνονται λανθασμένες - δεν απαιτείται και μπορεί να διακόψει σύντομα μια εγγραφή αν είναι ενεργή κατά την εκτέλεση.</string>
     <!-- Dashcam-side camera labels — REVERSE of the pano labels above. The
          OEM dashcam id is the opposite of the pano id, so the helpful
          "this is what your trim should pick" hint flips between the two
@@ -927,6 +932,7 @@
          RoadSense — road-hazard detection feature
          ============================================================ -->
     <string name="rail_roadsense">Οδική Αίσθηση</string>
+    <string name="rail_hazard_map">Χάρτης</string>
     <string name="roadsense_title">Οδική Αίσθηση</string>
     <string name="roadsense_pill_scanning">Σάρωση</string>
     <string name="roadsense_pill_idle">Οδική Αίσθηση</string>
@@ -972,4 +978,100 @@
     <!-- Blind Spot overlay labels (native overlay window). -->
     <string name="blindspot_overlay_left">ΑΡΙΣΤΕΡΟ</string>
     <string name="blindspot_overlay_right">ΔΙΚΑΙΩΜΑ</string>
+    <!-- ============================================================== -->
+    <!-- RoadSense Map (native MapLibre map view + tap-to-verify sheet). -->
+    <!-- ============================================================== -->
+    <string name="roadsense_map_title">Χάρτης</string>
+    <string name="roadsense_map_route_clear">Εκκαθάριση</string>
+    <string name="roadsense_map_route_unmapped">Δεν έχει χαρτογραφηθεί ακόμα</string>
+    <string name="roadsense_map_back">Πίσω</string>
+    <string name="roadsense_map_recenter">Επαναφορά στην τοποθεσία μου</string>
+    <!-- Tap-to-verify bottom sheet -->
+    <string name="roadsense_map_severity_label">Σοβαρότητα</string>
+    <string name="roadsense_map_type_label">Τύπος</string>
+    <string name="roadsense_map_type_unknown">Άγνωστο</string>
+    <string name="roadsense_map_confirm">Επιβεβαίωση</string>
+    <string name="roadsense_map_delete">Διαγραφή</string>
+    <!-- Status chip labels: candidate / on-device / shared with fleet -->
+    <string name="roadsense_map_status_candidate">Υποψήφιος</string>
+    <string name="roadsense_map_status_local">Στη συσκευή</string>
+    <string name="roadsense_map_status_cloud">Κοινόχρηστο</string>
+    <!-- Meta line: "Moderate · 82% confidence · 3 reports" -->
+    <string name="roadsense_map_meta_format">%1$s · %2$d%% confidence · %3$s</string>
+    <!-- "3 reports" / "1 report" -->
+    <plurals name="roadsense_map_reports">
+        <item quantity="one">Αναφορά %1$d</item>
+        <item quantity="other">%1$d αναφορές</item>
+    </plurals>
+    <!-- Snackbar / toast confirmations -->
+    <string name="roadsense_map_confirmed_toast">Ο κίνδυνος επιβεβαιώθηκε</string>
+    <string name="roadsense_map_deleted_toast">Ο κίνδυνος αφαιρέθηκε</string>
+    <string name="roadsense_map_action_failed">Δεν ήταν δυνατή η πρόσβαση στο RoadSense. Δοκιμάστε ξανά.</string>
+    <string name="roadsense_map_no_location">Αναμονή για διόρθωση GPS…</string>
+    <!-- Navigation: search + routing + turn-by-turn -->
+    <string name="roadsense_map_search_hint">Αναζήτηση προορισμού</string>
+    <string name="roadsense_map_search_action">Αναζήτηση</string>
+    <string name="roadsense_map_searching">Αναζήτηση…</string>
+    <string name="roadsense_map_no_results">Δεν βρέθηκαν μέρη</string>
+    <string name="roadsense_map_pick_destination">Επιλέξτε προορισμό</string>
+    <string name="roadsense_map_routing">Finding route…</string>
+    <string name="roadsense_map_route_failed">Αδυναμία εύρεσης διαδρομής. Δοκιμάστε ξανά.</string>
+    <string name="roadsense_map_need_key">Προσθέστε ένα κλειδί δρομολόγησης στις ρυθμίσεις του RoadSense για πλοήγηση.</string>
+    <string name="roadsense_map_rerouting">Off route — recalculating…</string>
+    <string name="roadsense_map_arrived">Έχετε φτάσει.</string>
+    <string name="roadsense_map_nav_started">Πλοήγηση στο %1$s</string>
+    <string name="roadsense_map_nav_ended">Η πλοήγηση τερματίστηκε</string>
+    <string name="roadsense_map_end_nav">Τέλος πλοήγησης</string>
+    <string name="roadsense_map_zoom_in">Μεγέθυνση</string>
+    <string name="roadsense_map_zoom_out">Σμίκρυνση</string>
+    <!-- Hazard visibility filter -->
+    <string name="roadsense_map_hazards_filter">Ορατότητα κινδύνου</string>
+    <string name="roadsense_map_hazards_all">Εμφάνιση όλων των κινδύνων</string>
+    <string name="roadsense_map_hazards_moderate">Μέτρια και σοβαρή</string>
+    <string name="roadsense_map_hazards_severe">Σοβαρή μόνο</string>
+    <string name="roadsense_map_hazards_hidden">Απόκρυψη κινδύνων</string>
+    <!-- POI along route (EV charging / fuel) -->
+    <string name="roadsense_map_poi_toggle">Φόρτιση και καύσιμο</string>
+    <!-- 2D / 3D buildings toggle -->
+    <string name="roadsense_map_dimension_toggle">2D / 3D κτίρια</string>
+    <string name="roadsense_map_3d_on">3D κτίρια σε</string>
+    <string name="roadsense_map_3d_off">3D κτίρια κλειστά</string>
+    <string name="roadsense_map_poi_loading">Βρίσκοντας στάσεις φόρτισης και καυσίμου…</string>
+    <string name="roadsense_map_poi_none">Δεν βρέθηκαν σταθμοί κοντά</string>
+    <string name="roadsense_map_poi_need_route">Επιλέξτε πρώτα έναν προορισμό</string>
+    <!-- POI tap action sheet -->
+    <string name="roadsense_map_stop_added">Η διακοπή προστέθηκε</string>
+    <string name="roadsense_map_remove_stop_action">Αφαίρεση στάσης</string>
+    <string name="roadsense_map_poi_navigate">Πλοηγηθείτε εδώ</string>
+    <string name="roadsense_map_poi_kind_charging">Σταθμός φόρτισης</string>
+    <string name="roadsense_map_poi_kind_fuel">Σταθμός καυσίμων</string>
+    <string name="roadsense_map_poi_charging_generic">Σταθμός φόρτισης</string>
+    <string name="roadsense_map_poi_fuel_generic">Σταθμός καυσίμων</string>
+    <string name="roadsense_map_route_switched">Εναλλαγή διαδρομής</string>
+    <!-- Hazards-along-route pills (%1$d = count) -->
+    <string name="roadsense_map_pill_severe">%1$d σοβαρή</string>
+    <string name="roadsense_map_pill_moderate">%1$d μέτρια</string>
+    <string name="roadsense_map_pill_minor">%1$d minor</string>
+    <!-- Shown briefly if the basemap can\'t be reached. -->
+    <string name="roadsense_map_offline">Μη διαθέσιμα δεδομένα χάρτη εκτός σύνδεσης</string>
+    <!-- Navigation: autocomplete + route options -->
+    <string name="roadsense_map_clear_search">Εκκαθάριση αναζήτησης</string>
+    <!-- Route-options sheet -->
+    <string name="roadsense_map_routes_title">Επιλέξτε μια διαδρομή</string>
+    <string name="roadsense_map_routes_to">Routes to %1$s</string>
+    <string name="roadsense_map_routes_cancel">Ακύρωση</string>
+    <!-- Per-route row label, %1$d is the 1-based route number. -->
+    <string name="roadsense_map_route_option">Διαδρομή %1$d</string>
+    <string name="roadsense_map_fastest">Ταχύτερη</string>
+    <string name="roadsense_map_start">Έναρξη</string>
+    <!-- Stops / waypoints in the route-options sheet -->
+    <string name="roadsense_map_your_location">Η τοποθεσία σας</string>
+    <string name="roadsense_map_add_stop">Προσθήκη στάσης</string>
+    <string name="roadsense_map_add_stop_hint">Αναζήτηση στάσης για προσθήκη</string>
+    <string name="roadsense_map_stop_removed">Η διακοπή αφαιρέθηκε</string>
+    <string name="roadsense_map_remove_stop">Αφαίρεση στάσης</string>
+    <string name="roadsense_map_move_stop_up">Μετακίνηση στάσης πάνω</string>
+    <string name="roadsense_map_move_stop_down">Μετακίνηση στάσης κάτω</string>
+    <!-- %1$d is the maximum number of stops allowed. -->
+    <string name="roadsense_map_max_stops">Μέχρι το %1$d επιτρέπονται οι στάσεις</string>
 </resources>
