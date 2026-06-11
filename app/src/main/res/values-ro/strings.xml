@@ -94,6 +94,9 @@
     <string name="logs_panel_title">Jurnale</string>
     <!-- activity_main_new / activity_main-land -->
     <string name="url_connecting">Se conectează…</string>
+    <!-- Shown when an external link can't open (no browser on the head unit):
+         the URL is copied to the clipboard instead. %1$s = the URL. -->
+    <string name="url_copied_no_browser">Nici un browser găsit. Link copiat: %1$s</string>
     <!-- dialog_tailscale_settings -->
     <string name="tailscale_generate_login_url">Generare URL autentificare</string>
     <string name="tailscale_scan_to_login">Scanare la autentificare</string>
@@ -135,6 +138,8 @@
     <string name="camera_oem_dashcam_auto_resolved">Auto — folosind id %1$d (panoul este id %2$d)</string>
     <string name="camera_oem_dashcam_auto_unavailable">Auto - ID-ul panoului este %1$d, nu poate infa camera</string>
     <string name="camera_oem_dashcam_save">Salvează</string>
+    <string name="camera_concurrent_probe_label">Testează suportul pentru camera duală la următoarea pornire</string>
+    <string name="camera_concurrent_probe_subtitle">Verificare unică care deschide simultan ambele camere pentru a confirma că acest vehicul poate rula simultan pano + dashcam. Rulează odată la următoarea repornire în timpul parcării. Lasă oprit, cu excepția cazului în care înregistrările par greșite — nu este obligatoriu și poate întrerupe pe scurt o înregistrare dacă una este activă atunci când rulează.</string>
     <!-- Dashcam-side camera labels — REVERSE of the pano labels above. The
          OEM dashcam id is the opposite of the pano id, so the helpful
          "this is what your trim should pick" hint flips between the two
@@ -936,6 +941,7 @@
          RoadSense — road-hazard detection feature
          ============================================================ -->
     <string name="rail_roadsense">RoadSense</string>
+    <string name="rail_hazard_map">Hartă</string>
     <string name="roadsense_title">RoadSense</string>
     <string name="roadsense_pill_scanning">Scanare</string>
     <string name="roadsense_pill_idle">RoadSense</string>
@@ -981,4 +987,101 @@
     <!-- Blind Spot overlay labels (native overlay window). -->
     <string name="blindspot_overlay_left">LEFT</string>
     <string name="blindspot_overlay_right">DREPTUL</string>
+    <!-- ============================================================== -->
+    <!-- RoadSense Map (native MapLibre map view + tap-to-verify sheet). -->
+    <!-- ============================================================== -->
+    <string name="roadsense_map_title">Hartă</string>
+    <string name="roadsense_map_route_clear">Curăță</string>
+    <string name="roadsense_map_route_unmapped">Nu sunt mapate încă</string>
+    <string name="roadsense_map_back">Înapoi</string>
+    <string name="roadsense_map_recenter">Înregistrează locația mea</string>
+    <!-- Tap-to-verify bottom sheet -->
+    <string name="roadsense_map_severity_label">Severitate</string>
+    <string name="roadsense_map_type_label">Tip</string>
+    <string name="roadsense_map_type_unknown">Necunoscut</string>
+    <string name="roadsense_map_confirm">Confirmare</string>
+    <string name="roadsense_map_delete">Ștergere</string>
+    <!-- Status chip labels: candidate / on-device / shared with fleet -->
+    <string name="roadsense_map_status_candidate">Candidat</string>
+    <string name="roadsense_map_status_local">Pe dispozitiv</string>
+    <string name="roadsense_map_status_cloud">Partajat</string>
+    <!-- Meta line: "Moderate · 82% confidence · 3 reports" -->
+    <string name="roadsense_map_meta_format">%1$s · %2$d%% încredere · %3$s</string>
+    <!-- "3 reports" / "1 report" -->
+    <plurals name="roadsense_map_reports">
+        <item quantity="one">Raport %1$d</item>
+        <item quantity="few">Rapoarte %1$d</item>
+        <item quantity="other">Rapoarte %1$d</item>
+    </plurals>
+    <!-- Snackbar / toast confirmations -->
+    <string name="roadsense_map_confirmed_toast">Risc confirmat</string>
+    <string name="roadsense_map_deleted_toast">Risc eliminat</string>
+    <string name="roadsense_map_action_failed">Nu s-a putut ajunge la RoadSense. Încercați din nou.</string>
+    <string name="roadsense_map_no_location">Se așteaptă remedierea GPS…</string>
+    <!-- Navigation: search + routing + turn-by-turn -->
+    <string name="roadsense_map_search_hint">Căutare destinație</string>
+    <string name="roadsense_map_search_action">Caută</string>
+    <string name="roadsense_map_searching">Se caută…</string>
+    <string name="roadsense_map_no_results">Nici un loc găsit</string>
+    <string name="roadsense_map_pick_destination">Alegeți destinația</string>
+    <string name="roadsense_map_routing">Se caută ruta…</string>
+    <string name="roadsense_map_route_failed">Nu s-a putut găsi ruta. Încearcă din nou.</string>
+    <string name="roadsense_map_need_key">Adăugați o cheie de rutare în setările RoadSense pentru a naviga.</string>
+    <string name="roadsense_map_rerouting">Oprire rută — recalculare…</string>
+    <string name="roadsense_map_arrived">Ai ajuns.</string>
+    <string name="roadsense_map_nav_started">Navigare la %1$s</string>
+    <string name="roadsense_map_nav_ended">Navigare terminată</string>
+    <string name="roadsense_map_end_nav">Termină navigarea</string>
+    <string name="roadsense_map_zoom_in">Zoom in</string>
+    <string name="roadsense_map_zoom_out">Zoom out</string>
+    <!-- Hazard visibility filter -->
+    <string name="roadsense_map_hazards_filter">Vizibilitate pericol</string>
+    <string name="roadsense_map_hazards_all">Arată toate pericolele</string>
+    <string name="roadsense_map_hazards_moderate">Moderată şi severă</string>
+    <string name="roadsense_map_hazards_severe">Numai severe</string>
+    <string name="roadsense_map_hazards_hidden">Ascunde pericolele</string>
+    <!-- POI along route (EV charging / fuel) -->
+    <string name="roadsense_map_poi_toggle">Taxare și combustibil</string>
+    <!-- 2D / 3D buildings toggle -->
+    <string name="roadsense_map_dimension_toggle">Clădiri 2D / 3D</string>
+    <string name="roadsense_map_3d_on">Clădiri 3D pe</string>
+    <string name="roadsense_map_3d_off">Clădiri 3D oprite</string>
+    <string name="roadsense_map_poi_loading">Se caută încărcarea și stațiile de combustibil…</string>
+    <string name="roadsense_map_poi_none">Nici o staţie găsită în apropiere</string>
+    <string name="roadsense_map_poi_need_route">Alegeți o destinație mai întâi</string>
+    <!-- POI tap action sheet -->
+    <string name="roadsense_map_stop_added">Oprește adăugarea</string>
+    <string name="roadsense_map_remove_stop_action">Elimină oprire</string>
+    <string name="roadsense_map_poi_navigate">Navigați aici</string>
+    <string name="roadsense_map_poi_kind_charging">Stație de încărcare</string>
+    <string name="roadsense_map_poi_kind_fuel">Stație de combustibil</string>
+    <string name="roadsense_map_poi_charging_generic">Stație de încărcare</string>
+    <string name="roadsense_map_poi_fuel_generic">Stație de combustibil</string>
+    <string name="roadsense_map_route_switched">Ruta comutată</string>
+    <!-- Hazards-along-route pills (%1$d = count) -->
+    <string name="roadsense_map_pill_severe">%1$d sever</string>
+    <string name="roadsense_map_pill_moderate">%1$d moderat</string>
+    <string name="roadsense_map_pill_minor">Minore %1$d</string>
+    <!-- Shown briefly if the basemap can\'t be reached. -->
+    <string name="roadsense_map_offline">Datele hărții nu sunt disponibile offline</string>
+    <!-- Navigation: autocomplete + route options -->
+    <string name="roadsense_map_clear_search">Ștergeți căutarea</string>
+    <!-- Route-options sheet -->
+    <string name="roadsense_map_routes_title">Alege un traseu</string>
+    <string name="roadsense_map_routes_to">Rute la %1$s</string>
+    <string name="roadsense_map_routes_cancel">Anulează</string>
+    <!-- Per-route row label, %1$d is the 1-based route number. -->
+    <string name="roadsense_map_route_option">Ruta %1$d</string>
+    <string name="roadsense_map_fastest">Rapidă</string>
+    <string name="roadsense_map_start">Pornire</string>
+    <!-- Stops / waypoints in the route-options sheet -->
+    <string name="roadsense_map_your_location">Locația ta</string>
+    <string name="roadsense_map_add_stop">Adaugă oprire</string>
+    <string name="roadsense_map_add_stop_hint">Caută o oprire pentru a adăuga</string>
+    <string name="roadsense_map_stop_removed">Oprire eliminată</string>
+    <string name="roadsense_map_remove_stop">Elimină oprire</string>
+    <string name="roadsense_map_move_stop_up">Mută oprire sus</string>
+    <string name="roadsense_map_move_stop_down">Mută oprire jos</string>
+    <!-- %1$d is the maximum number of stops allowed. -->
+    <string name="roadsense_map_max_stops">Permis până la %1$d opriri</string>
 </resources>
