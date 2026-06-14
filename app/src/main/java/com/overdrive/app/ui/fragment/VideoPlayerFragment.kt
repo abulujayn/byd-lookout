@@ -392,6 +392,29 @@ class VideoPlayerFragment : Fragment() {
     }
 
     /**
+     * Swap the quadrant-selector glyphs to match the clip's composition
+     * layout. STANDARD clips use the 2x2 mosaic-map icons; DASHCAM clips use
+     * the dashcam-map icons (full-width front band over three lower thirds) so
+     * each button visually maps to where its camera actually sits in the
+     * frame. The zoom REGIONS are already layout-aware (see
+     * ZoomableVideoView.regionFor); this keeps the icons honest about which
+     * camera each button selects. Called wherever videoView.setLayout() runs.
+     */
+    private fun applyQuadrantLayoutIcons(layout: ZoomableVideoView.Layout) {
+        val dashcam = layout == ZoomableVideoView.Layout.DASHCAM
+        btnQuadrantAll?.setImageResource(
+            if (dashcam) R.drawable.ic_dashcam_all else R.drawable.ic_quadrant_all)
+        btnQuadrantFront?.setImageResource(
+            if (dashcam) R.drawable.ic_dashcam_front else R.drawable.ic_quadrant_front)
+        btnQuadrantRight?.setImageResource(
+            if (dashcam) R.drawable.ic_dashcam_right else R.drawable.ic_quadrant_right)
+        btnQuadrantRear?.setImageResource(
+            if (dashcam) R.drawable.ic_dashcam_rear else R.drawable.ic_quadrant_rear)
+        btnQuadrantLeft?.setImageResource(
+            if (dashcam) R.drawable.ic_dashcam_left else R.drawable.ic_quadrant_left)
+    }
+
+    /**
      * Read the recording.audioEnabled flag from UnifiedConfigManager so the
      * mute default for first-ever playback can mirror whether the user has
      * audio recording on. Best-effort: any exception or missing section
@@ -654,6 +677,7 @@ class VideoPlayerFragment : Fragment() {
                         // a dashcam clip followed by a sidecar-less standard
                         // clip must drop back to the 2x2 zoom regions.
                         videoView.setLayout(ZoomableVideoView.Layout.STANDARD)
+                        applyQuadrantLayoutIcons(ZoomableVideoView.Layout.STANDARD)
                         eventTimeline.setEvents(emptyList(), 0L)
                         tvEventInfo.text = getString(R.string.video_player_no_events)
                     }
@@ -666,7 +690,10 @@ class VideoPlayerFragment : Fragment() {
                 // so read + apply it BEFORE the events null-check below.
                 val clipLayout = if ("dashcam" == json.optString("layout", "standard"))
                     ZoomableVideoView.Layout.DASHCAM else ZoomableVideoView.Layout.STANDARD
-                activity?.runOnUiThread { videoView.setLayout(clipLayout) }
+                activity?.runOnUiThread {
+                    videoView.setLayout(clipLayout)
+                    applyQuadrantLayoutIcons(clipLayout)
+                }
                 val durationMs = json.optLong("durationMs", 0)
                 val eventsArray = json.optJSONArray("events")
                 if (eventsArray == null) {

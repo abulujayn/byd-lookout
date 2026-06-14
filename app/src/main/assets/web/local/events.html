@@ -1485,6 +1485,14 @@
            on the inactive cells for a glance-readable map. */
         .quadrant-bar .qcell { fill: rgba(255, 255, 255, 0.45); }
         .quadrant-bar .qcell.lit { fill: #FFFFFF; }
+        /* Two icon variants per button: q2x2 (standard mosaic map) and qdash
+           (dashcam map — full-width front band over three lower thirds). Show
+           the dashcam variant only when the open clip is a dashcam clip
+           (videoPlayerWrap gets .dashcam), so the glyph matches the layout-aware
+           zoom regions and each button maps to the right camera. */
+        .quadrant-bar .qdash { display: none; }
+        .video-player.dashcam .quadrant-bar .q2x2 { display: none; }
+        .video-player.dashcam .quadrant-bar .qdash { display: inline; }
         
         .video-details {
             padding: 12px 16px;
@@ -2074,19 +2082,19 @@
                      button restores the full mosaic view. -->
                 <div class="quadrant-bar" id="quadrantBar" role="group" data-i18n-attr="aria-label:events.quadrant_group" aria-label="Camera selector">
                     <button type="button" data-quadrant="all" class="active" data-i18n-attr="title:events.quadrant_all;aria-label:events.quadrant_all" title="Show all cameras" aria-label="Show all cameras">
-                        <svg viewBox="0 0 24 24"><rect class="qcell lit" x="3" y="3" width="8" height="8"/><rect class="qcell lit" x="13" y="3" width="8" height="8"/><rect class="qcell lit" x="3" y="13" width="8" height="8"/><rect class="qcell lit" x="13" y="13" width="8" height="8"/></svg>
+                        <svg viewBox="0 0 24 24"><g class="q2x2"><rect class="qcell lit" x="3" y="3" width="8" height="8"/><rect class="qcell lit" x="13" y="3" width="8" height="8"/><rect class="qcell lit" x="3" y="13" width="8" height="8"/><rect class="qcell lit" x="13" y="13" width="8" height="8"/></g><g class="qdash"><rect class="qcell lit" x="3" y="3" width="18" height="9"/><rect class="qcell lit" x="3" y="14" width="5" height="7"/><rect class="qcell lit" x="9.5" y="14" width="5" height="7"/><rect class="qcell lit" x="16" y="14" width="5" height="7"/></g></svg>
                     </button>
                     <button type="button" data-quadrant="front" data-i18n-attr="title:events.quadrant_front;aria-label:events.quadrant_front" title="Show front camera" aria-label="Show front camera">
-                        <svg viewBox="0 0 24 24"><rect class="qcell lit" x="3" y="3" width="8" height="8"/><rect class="qcell" x="13" y="3" width="8" height="8"/><rect class="qcell" x="3" y="13" width="8" height="8"/><rect class="qcell" x="13" y="13" width="8" height="8"/></svg>
+                        <svg viewBox="0 0 24 24"><g class="q2x2"><rect class="qcell lit" x="3" y="3" width="8" height="8"/><rect class="qcell" x="13" y="3" width="8" height="8"/><rect class="qcell" x="3" y="13" width="8" height="8"/><rect class="qcell" x="13" y="13" width="8" height="8"/></g><g class="qdash"><rect class="qcell lit" x="3" y="3" width="18" height="9"/><rect class="qcell" x="3" y="14" width="5" height="7"/><rect class="qcell" x="9.5" y="14" width="5" height="7"/><rect class="qcell" x="16" y="14" width="5" height="7"/></g></svg>
                     </button>
                     <button type="button" data-quadrant="right" data-i18n-attr="title:events.quadrant_right;aria-label:events.quadrant_right" title="Show right camera" aria-label="Show right camera">
-                        <svg viewBox="0 0 24 24"><rect class="qcell" x="3" y="3" width="8" height="8"/><rect class="qcell lit" x="13" y="3" width="8" height="8"/><rect class="qcell" x="3" y="13" width="8" height="8"/><rect class="qcell" x="13" y="13" width="8" height="8"/></svg>
+                        <svg viewBox="0 0 24 24"><g class="q2x2"><rect class="qcell" x="3" y="3" width="8" height="8"/><rect class="qcell lit" x="13" y="3" width="8" height="8"/><rect class="qcell" x="3" y="13" width="8" height="8"/><rect class="qcell" x="13" y="13" width="8" height="8"/></g><g class="qdash"><rect class="qcell" x="3" y="3" width="18" height="9"/><rect class="qcell" x="3" y="14" width="5" height="7"/><rect class="qcell" x="9.5" y="14" width="5" height="7"/><rect class="qcell lit" x="16" y="14" width="5" height="7"/></g></svg>
                     </button>
                     <button type="button" data-quadrant="rear" data-i18n-attr="title:events.quadrant_rear;aria-label:events.quadrant_rear" title="Show rear camera" aria-label="Show rear camera">
-                        <svg viewBox="0 0 24 24"><rect class="qcell" x="3" y="3" width="8" height="8"/><rect class="qcell" x="13" y="3" width="8" height="8"/><rect class="qcell lit" x="3" y="13" width="8" height="8"/><rect class="qcell" x="13" y="13" width="8" height="8"/></svg>
+                        <svg viewBox="0 0 24 24"><g class="q2x2"><rect class="qcell" x="3" y="3" width="8" height="8"/><rect class="qcell" x="13" y="3" width="8" height="8"/><rect class="qcell lit" x="3" y="13" width="8" height="8"/><rect class="qcell" x="13" y="13" width="8" height="8"/></g><g class="qdash"><rect class="qcell" x="3" y="3" width="18" height="9"/><rect class="qcell" x="3" y="14" width="5" height="7"/><rect class="qcell lit" x="9.5" y="14" width="5" height="7"/><rect class="qcell" x="16" y="14" width="5" height="7"/></g></svg>
                     </button>
                     <button type="button" data-quadrant="left" data-i18n-attr="title:events.quadrant_left;aria-label:events.quadrant_left" title="Show left camera" aria-label="Show left camera">
-                        <svg viewBox="0 0 24 24"><rect class="qcell" x="3" y="3" width="8" height="8"/><rect class="qcell" x="13" y="3" width="8" height="8"/><rect class="qcell" x="3" y="13" width="8" height="8"/><rect class="qcell lit" x="13" y="13" width="8" height="8"/></svg>
+                        <svg viewBox="0 0 24 24"><g class="q2x2"><rect class="qcell" x="3" y="3" width="8" height="8"/><rect class="qcell" x="13" y="3" width="8" height="8"/><rect class="qcell" x="3" y="13" width="8" height="8"/><rect class="qcell lit" x="13" y="13" width="8" height="8"/></g><g class="qdash"><rect class="qcell" x="3" y="3" width="18" height="9"/><rect class="qcell lit" x="3" y="14" width="5" height="7"/><rect class="qcell" x="9.5" y="14" width="5" height="7"/><rect class="qcell" x="16" y="14" width="5" height="7"/></g></svg>
                     </button>
                 </div>
             </div>
