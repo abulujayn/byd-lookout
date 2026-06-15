@@ -96,7 +96,7 @@
     <string name="url_connecting">Bağlantı...</string>
     <!-- Shown when an external link can't open (no browser on the head unit):
          the URL is copied to the clipboard instead. %1$s = the URL. -->
-    <string name="url_copied_no_browser">Tarayıcı bulunamadı. Bağlantı kopyalandı: %1$s</string>
+    <string name="url_copied_no_browser">No browser found. Link copied: %1$s</string>
     <!-- dialog_tailscale_settings -->
     <string name="tailscale_generate_login_url">Giriş URL oluştur</string>
     <string name="tailscale_scan_to_login">Giriş için taray</string>
@@ -138,8 +138,8 @@
     <string name="camera_oem_dashcam_auto_resolved">Auto — using id %1$d (pano is id %2$d)</string>
     <string name="camera_oem_dashcam_auto_unavailable">Auto — pano id is %1$d, can\'t infer dashcam</string>
     <string name="camera_oem_dashcam_save">Save</string>
-    <string name="camera_concurrent_probe_label">Sonraki açılışta çift kamera desteğini test et</string>
-    <string name="camera_concurrent_probe_subtitle">Bu aracın pano + araç kamerasını eşzamanlı çalıştırabildiğini doğrulamak için her iki kamerayı aynı anda açan tek seferlik bir kontrol. Park halindeyken bir sonraki yeniden başlatmada bir kez çalışır. Kayıtlar hatalı görünmedikçe KAPALI bırakın — gerekli değildir ve çalışırken etkin bir kayıt varsa onu kısa süreliğine kesintiye uğratabilir.</string>
+    <string name="camera_concurrent_probe_label">Test dual-camera support on next boot</string>
+    <string name="camera_concurrent_probe_subtitle">One-time check that opens both cameras at once to confirm this vehicle can run pano + dashcam concurrently. Runs once on the next restart while parked. Leave OFF unless recordings look wrong — it is not required and may briefly interrupt a recording if one is active when it runs.</string>
     <!-- Dashcam-side camera labels — REVERSE of the pano labels above. The
          OEM dashcam id is the opposite of the pano id, so the helpful
          "this is what your trim should pick" hint flips between the two
@@ -377,45 +377,45 @@
     <string name="toast_updated_to">%1$s\'e güncellenmiştir</string>
     <string name="toast_update_install_failed">Güncelleme yükleme başarısız oldu: %1$s</string>
     <string name="toast_checking_for_updates">Güncellemeleri kontrol ediyorum...</string>
-    <string name="toast_app_up_to_date">Uygulama güncel (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">Güncelleme kontrol başarısız oldu: %1$s</string>
     <!-- Update dialog + version picker -->
-    <string name="update_dialog_available_title">Güncelleme mevcut</string>
-    <string name="update_dialog_subtitle">Daha yeni bir sürüm yüklenmeye hazır</string>
+    <string name="update_dialog_available_title">Update available</string>
+    <string name="update_dialog_subtitle">A newer build is ready to install</string>
     <string name="update_dialog_current">Current: v%1$s</string>
     <string name="update_dialog_new">New: v%1$s</string>
-    <string name="update_dialog_current_label">Yüklendi</string>
-    <string name="update_dialog_new_label">Yeni sürüm</string>
+    <string name="update_dialog_current_label">Installed</string>
+    <string name="update_dialog_new_label">New version</string>
     <string name="update_dialog_whats_new">What\'s new</string>
-    <string name="update_dialog_install_now">Şimdi yükle</string>
+    <string name="update_dialog_install_now">Install now</string>
     <string name="update_dialog_later">Later</string>
-    <string name="update_picker_title">Bir sürüm seçin</string>
-    <string name="update_picker_subtitle">Yayınlanmış herhangi bir sürümü yükleyin — yeni veya eski</string>
-    <string name="update_picker_empty">Henüz sürüm yayınlanmadı.</string>
-    <string name="update_picker_current_suffix">%1$s (yüklü)</string>
+    <string name="update_picker_title">Choose a version</string>
+    <string name="update_picker_subtitle">Install any published build — newer or older</string>
+    <string name="update_picker_empty">No versions published yet.</string>
+    <string name="update_picker_current_suffix">%1$s (installed)</string>
     <string name="update_picker_older_suffix">%1$s (older)</string>
     <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
-    <string name="update_progress_title">Overdrive güncelleniyor</string>
-    <string name="update_step_downloading">Güncelleme indiriliyor…</string>
-    <string name="update_step_verifying">İndirme doğrulanıyor…</string>
+    <string name="update_progress_title">Updating Overdrive</string>
+    <string name="update_step_downloading">Downloading update…</string>
+    <string name="update_step_verifying">Verifying download…</string>
     <string name="update_step_stopping">Stopping daemons…</string>
-    <string name="update_step_installing">Güncelleme yükleniyor…</string>
-    <string name="update_step_installed">Güncelleme yüklendi</string>
-    <string name="update_step_restarting">Uygulama yeniden başlatılıyor…</string>
-    <string name="update_step_queued">Güncelleme başlatılıyor…</string>
-    <string name="update_error_title">Güncelleme başarısız</string>
-    <string name="update_error_daemon_down">Kamera servisi çalışmıyor. Servisler ekranından başlatın, ardından tekrar güncellemeyi deneyin.</string>
-    <string name="update_error_start_failed">Güncelleme başlatılamadı: %1$s</string>
-    <string name="update_error_lost_headunit">Yükleme bitmeden ana üniteyle bağlantı kesildi. Bir tünelde misiniz? Yeni URL için Telegram\'ı kontrol edin veya yerel IP\'yi kullanın.</string>
+    <string name="update_step_installing">Installing update…</string>
+    <string name="update_step_installed">Update installed</string>
+    <string name="update_step_restarting">Restarting app…</string>
+    <string name="update_step_queued">Starting update…</string>
+    <string name="update_error_title">Update failed</string>
+    <string name="update_error_daemon_down">Camera daemon isn\'t running. Start it from the Daemons screen, then try updating again.</string>
+    <string name="update_error_start_failed">Couldn\'t start the update: %1$s</string>
+    <string name="update_error_lost_headunit">Lost contact with the head unit before the install finished. On a tunnel? Check Telegram for the new URL, or use the local IP.</string>
     <string name="update_hide">Hide</string>
     <!-- Update channel selector (Settings → About) -->
-    <string name="settings_update_channel_title">Güncelleme kanalı</string>
+    <string name="settings_update_channel_title">Update channel</string>
     <string name="settings_update_channel_alpha">Alpha</string>
     <string name="settings_update_channel_braveheart">Braveheart</string>
-    <string name="settings_update_channel_alpha_desc">Kararlı sürüm. Yayınlanan her sürüm saklanır — yüklemek için herhangi birini seçin (eski sürüme geçişe izin verilir). Günlük kullanım için önerilir.</string>
-    <string name="settings_update_channel_braveheart_desc">Yayınlandıkları anda sunulan en yeni sürümler. Yeni özelliklere ilk siz sahip olursunuz, ancak bunlar kararsız veya hatalı olabilir. Bir sorun oluşursa, Servisler ekranını açın, bir servisin günlüğüne dokunun, \"Yükle ve kod al\" seçeneğini seçin ve kodu topluluk kanallarımızda bizimle paylaşın.</string>
-    <string name="settings_update_channel_save_failed">Güncelleme kanalı kaydedilemedi</string>
-    <string name="settings_update_channel_braveheart_toast">Braveheart\'a geçildi. Sürümler kararsız olabilir — bir sorun oluşursa, servis günlüğünü gönderin ve Discord/GitHub/WhatsApp üzerinden bildirin.</string>
+    <string name="settings_update_channel_alpha_desc">The stable release. Every published version is kept — pick any to install (downgrades allowed). Recommended for everyday use.</string>
+    <string name="settings_update_channel_braveheart_desc">Bleeding-edge builds, delivered the moment they\'re published. You get new features first, but they may be unstable or buggy. If something breaks, open the Daemons screen, tap a daemon\'s log, choose \"Upload &amp; get a code\", and share the code with us on the community channels.</string>
+    <string name="settings_update_channel_save_failed">Could not save the update channel</string>
+    <string name="settings_update_channel_braveheart_toast">Switched to Braveheart. Builds may be unstable — if something breaks, send the daemon log and report it on Discord/GitHub/WhatsApp.</string>
     <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">Kayıtlar için gerekli depolama izni</string>
     <string name="toast_url_copied_short">URL kopyalandı!</string>
@@ -546,22 +546,22 @@
     <string name="log_header_exported">İhracat: %1$s</string>
     <string name="log_header_truncated">NOT: 10000 satır boyunca kısaltılmış kütüphane (toplamı: %1$d satırlar)</string>
     <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
-    <string name="logs_send_title">%1$s günlüğünü gönder</string>
-    <string name="logs_send_title_plain">Servis günlüğünü gönder</string>
+    <string name="logs_send_title">Send %1$s log</string>
+    <string name="logs_send_title_plain">Send daemon log</string>
     <string name="logs_send_subtitle">%1$s · choose how to send it to us</string>
-    <string name="logs_send_upload">Yükle ve kod al</string>
-    <string name="logs_send_upload_desc">Günlüğü bize gönderir ve size kısa bir kod verir. Destek için en kolay yol.</string>
-    <string name="logs_send_share">Dosyayı paylaş…</string>
-    <string name="logs_send_share_desc">Günlüğü paylaşım sayfası aracılığıyla kendiniz kaydedin veya gönderin.</string>
-    <string name="logs_uploading_title">Günlük yükleniyor…</string>
-    <string name="logs_uploading_subtitle">Gizli bilgiler gizleniyor ve güvenli bir şekilde gönderiliyor</string>
-    <string name="logs_uploaded_title">Günlük yüklendi</string>
-    <string name="logs_uploaded_instructions">Bu kodu, sorun oluştuğunda ne yaptığınıza dair bir notla birlikte bizimle paylaşın. Discord, GitHub Issues veya WhatsApp\'ta yayınlayın — bağlantılar Hakkında ekranında bulunmaktadır.</string>
+    <string name="logs_send_upload">Upload &amp; get a code</string>
+    <string name="logs_send_upload_desc">Sends the log to us and gives you a short code. Easiest for support.</string>
+    <string name="logs_send_share">Share file…</string>
+    <string name="logs_send_share_desc">Save or send the log yourself via the share sheet.</string>
+    <string name="logs_uploading_title">Uploading log…</string>
+    <string name="logs_uploading_subtitle">Redacting secrets and sending securely</string>
+    <string name="logs_uploaded_title">Log uploaded</string>
+    <string name="logs_uploaded_instructions">Share this code with us, along with a note on what you were doing when it broke. Post it on Discord, GitHub Issues or WhatsApp — links are on the About screen.</string>
     <string name="logs_uploaded_privacy">Secrets redacted · the log auto-expires</string>
     <string name="logs_copy_code">Copy code</string>
     <string name="logs_done">Done</string>
     <string name="placeholder_dash">—</string>
-    <string name="errors_network">Ağ hatası</string>
+    <string name="errors_network">Network error</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">Video çalılamıyor: %1$s</string>
@@ -572,7 +572,7 @@
     <string name="toast_batch_delete_partial">%1$d silindi, %2$d başarısız oldu</string>
     <string name="play_with_chooser">Oynayın .</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">V%1$s\'ye güncellenmiş  Otomatik başlatmayı yeniden onaylayın, BYD onu her kurulumda siler</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">Zaten verildi</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">İpuç ve sorun çözme</string>
@@ -1038,19 +1038,19 @@
     <!-- ============================================================== -->
     <string name="roadsense_map_title">Map</string>
     <string name="roadsense_map_route_clear">Clear</string>
-    <string name="roadsense_map_route_unmapped">Henüz haritalanmadı</string>
+    <string name="roadsense_map_route_unmapped">Not mapped yet</string>
     <string name="roadsense_map_back">Back</string>
     <string name="roadsense_map_recenter">Recenter on my location</string>
     <!-- Tap-to-verify bottom sheet -->
-    <string name="roadsense_map_severity_label">Şiddet</string>
-    <string name="roadsense_map_type_label">Tür</string>
+    <string name="roadsense_map_severity_label">Severity</string>
+    <string name="roadsense_map_type_label">Type</string>
     <string name="roadsense_map_type_unknown">Unknown</string>
     <string name="roadsense_map_confirm">Confirm</string>
     <string name="roadsense_map_delete">Delete</string>
     <!-- Status chip labels: candidate / on-device / shared with fleet -->
     <string name="roadsense_map_status_candidate">Candidate</string>
     <string name="roadsense_map_status_local">On device</string>
-    <string name="roadsense_map_status_cloud">Paylaşılan</string>
+    <string name="roadsense_map_status_cloud">Shared</string>
     <!-- Meta line: "Moderate · 82% confidence · 3 reports" -->
     <string name="roadsense_map_meta_format">%1$s · %2$d%% confidence · %3$s</string>
     <!-- "3 reports" / "1 report" -->
@@ -1059,110 +1059,110 @@
         <item quantity="other">%1$d reports</item>
     </plurals>
     <!-- Snackbar / toast confirmations -->
-    <string name="roadsense_map_confirmed_toast">Tehlike onaylandı</string>
-    <string name="roadsense_map_deleted_toast">Tehlike kaldırıldı</string>
-    <string name="roadsense_map_action_failed">RoadSense\'e ulaşılamadı. Tekrar deneyin.</string>
+    <string name="roadsense_map_confirmed_toast">Hazard confirmed</string>
+    <string name="roadsense_map_deleted_toast">Hazard removed</string>
+    <string name="roadsense_map_action_failed">Could not reach RoadSense. Try again.</string>
     <string name="roadsense_map_no_location">Waiting for GPS fix…</string>
     <!-- Navigation: search + routing + turn-by-turn -->
     <string name="roadsense_map_search_hint">Search destination</string>
     <string name="roadsense_map_search_action">Search</string>
-    <string name="roadsense_map_searching">Aranıyor…</string>
-    <string name="roadsense_map_no_results">Yer bulunamadı</string>
-    <string name="roadsense_map_pick_destination">Hedef seçin</string>
+    <string name="roadsense_map_searching">Searching…</string>
+    <string name="roadsense_map_no_results">No places found</string>
+    <string name="roadsense_map_pick_destination">Choose destination</string>
     <string name="roadsense_map_routing">Finding route…</string>
-    <string name="roadsense_map_route_failed">Rota bulunamadı. Tekrar deneyin.</string>
-    <string name="roadsense_map_need_key">Navigasyon için RoadSense ayarlarından bir rota anahtarı ekleyin.</string>
-    <string name="roadsense_map_rerouting">Rotadan sapıldı — yeniden hesaplanıyor…</string>
-    <string name="roadsense_map_arrived">Hedefe ulaştınız.</string>
+    <string name="roadsense_map_route_failed">Could not find a route. Try again.</string>
+    <string name="roadsense_map_need_key">Add a routing key in RoadSense settings to navigate.</string>
+    <string name="roadsense_map_rerouting">Off route — recalculating…</string>
+    <string name="roadsense_map_arrived">You have arrived.</string>
     <string name="roadsense_map_nav_started">Navigating to %1$s</string>
     <string name="roadsense_map_nav_ended">Navigation ended</string>
     <string name="roadsense_map_end_nav">End navigation</string>
-    <string name="roadsense_map_zoom_in">Yakınlaştır</string>
-    <string name="roadsense_map_zoom_out">Uzaklaştır</string>
+    <string name="roadsense_map_zoom_in">Zoom in</string>
+    <string name="roadsense_map_zoom_out">Zoom out</string>
     <!-- Hazard visibility filter -->
-    <string name="roadsense_map_hazards_filter">Tehlike görünürlüğü</string>
-    <string name="roadsense_map_hazards_all">Tüm tehlikeleri göster</string>
-    <string name="roadsense_map_hazards_moderate">Orta ve şiddetli</string>
-    <string name="roadsense_map_hazards_severe">Sadece şiddetli</string>
+    <string name="roadsense_map_hazards_filter">Hazard visibility</string>
+    <string name="roadsense_map_hazards_all">Show all hazards</string>
+    <string name="roadsense_map_hazards_moderate">Moderate and severe</string>
+    <string name="roadsense_map_hazards_severe">Severe only</string>
     <string name="roadsense_map_hazards_hidden">Hide hazards</string>
     <!-- POI along route (EV charging / fuel) -->
-    <string name="roadsense_map_poi_toggle">Şarj ve yakıt</string>
+    <string name="roadsense_map_poi_toggle">Charging and fuel</string>
     <!-- 2D / 3D buildings toggle -->
     <string name="roadsense_map_dimension_toggle">2D / 3D buildings</string>
-    <string name="roadsense_map_3d_on">3B binalar açık</string>
-    <string name="roadsense_map_3d_off">3B binalar kapalı</string>
-    <string name="roadsense_map_poi_loading">Şarj ve yakıt istasyonları aranıyor…</string>
-    <string name="roadsense_map_poi_none">Yakınlarda istasyon bulunamadı</string>
-    <string name="roadsense_map_poi_need_route">Önce bir hedef seçin</string>
+    <string name="roadsense_map_3d_on">3D buildings on</string>
+    <string name="roadsense_map_3d_off">3D buildings off</string>
+    <string name="roadsense_map_poi_loading">Finding charging and fuel stops…</string>
+    <string name="roadsense_map_poi_none">No stations found nearby</string>
+    <string name="roadsense_map_poi_need_route">Choose a destination first</string>
     <!-- POI tap action sheet -->
     <string name="roadsense_map_stop_added">Stop added</string>
-    <string name="roadsense_map_remove_stop_action">Durağı kaldır</string>
+    <string name="roadsense_map_remove_stop_action">Remove stop</string>
     <string name="roadsense_map_poi_navigate">Navigate here</string>
-    <string name="roadsense_map_poi_kind_charging">Şarj istasyonu</string>
-    <string name="roadsense_map_poi_kind_fuel">Yakıt istasyonu</string>
-    <string name="roadsense_map_poi_charging_generic">Şarj istasyonu</string>
-    <string name="roadsense_map_poi_fuel_generic">Yakıt istasyonu</string>
-    <string name="roadsense_map_route_switched">Rota değiştirildi</string>
+    <string name="roadsense_map_poi_kind_charging">Charging station</string>
+    <string name="roadsense_map_poi_kind_fuel">Fuel station</string>
+    <string name="roadsense_map_poi_charging_generic">Charging station</string>
+    <string name="roadsense_map_poi_fuel_generic">Fuel station</string>
+    <string name="roadsense_map_route_switched">Switched route</string>
     <!-- "then <next maneuver>" preview shown in the maneuver banner -->
     <string name="roadsense_map_then">then</string>
     <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
-    <string name="roadsense_map_exit_n">çıkış %1$d</string>
+    <string name="roadsense_map_exit_n">exit %1$d</string>
     <!-- Hazards-along-route pills (%1$d = count) -->
-    <string name="roadsense_map_pill_severe">%1$d şiddetli</string>
+    <string name="roadsense_map_pill_severe">%1$d severe</string>
     <string name="roadsense_map_pill_moderate">%1$d moderate</string>
     <string name="roadsense_map_pill_minor">%1$d minor</string>
     <!-- Shown briefly if the basemap can\'t be reached. -->
-    <string name="roadsense_map_offline">Harita verileri çevrimdışı kullanılamıyor</string>
+    <string name="roadsense_map_offline">Map data unavailable offline</string>
     <!-- Navigation: autocomplete + route options -->
-    <string name="roadsense_map_clear_search">Aramayı temizle</string>
+    <string name="roadsense_map_clear_search">Clear search</string>
     <!-- Route-options sheet -->
-    <string name="roadsense_map_routes_title">Bir rota seçin</string>
+    <string name="roadsense_map_routes_title">Choose a route</string>
     <string name="roadsense_map_routes_to">Routes to %1$s</string>
-    <string name="roadsense_map_routes_cancel">İptal</string>
+    <string name="roadsense_map_routes_cancel">Cancel</string>
     <!-- Per-route row label, %1$d is the 1-based route number. -->
     <string name="roadsense_map_route_option">Route %1$d</string>
-    <string name="roadsense_map_fastest">En hızlı</string>
-    <string name="roadsense_map_start">Başlat</string>
+    <string name="roadsense_map_fastest">Fastest</string>
+    <string name="roadsense_map_start">Start</string>
     <!-- Stops / waypoints in the route-options sheet -->
     <string name="roadsense_map_your_location">Your location</string>
     <string name="roadsense_map_add_stop">Add stop</string>
-    <string name="roadsense_map_add_stop_hint">Eklenecek bir durak arayın</string>
-    <string name="roadsense_map_stop_removed">Durak kaldırıldı</string>
-    <string name="roadsense_map_remove_stop">Durağı kaldır</string>
-    <string name="roadsense_map_move_stop_up">Durağı yukarı taşı</string>
-    <string name="roadsense_map_move_stop_down">Durağı aşağı taşı</string>
+    <string name="roadsense_map_add_stop_hint">Search a stop to add</string>
+    <string name="roadsense_map_stop_removed">Stop removed</string>
+    <string name="roadsense_map_remove_stop">Remove stop</string>
+    <string name="roadsense_map_move_stop_up">Move stop up</string>
+    <string name="roadsense_map_move_stop_down">Move stop down</string>
     <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">Up to %1$d stops allowed</string>
     <!-- Map day/night override (Auto → Light → Dark) -->
-    <string name="roadsense_map_theme_toggle">Harita teması</string>
-    <string name="roadsense_map_theme_auto">Harita teması: Otomatik</string>
-    <string name="roadsense_map_theme_light">Harita teması: Açık</string>
-    <string name="roadsense_map_theme_dark">Harita teması: Koyu</string>
+    <string name="roadsense_map_theme_toggle">Map theme</string>
+    <string name="roadsense_map_theme_auto">Map theme: Auto</string>
+    <string name="roadsense_map_theme_light">Map theme: Light</string>
+    <string name="roadsense_map_theme_dark">Map theme: Dark</string>
     <!-- Saved places (Home / Work / custom favourites) -->
     <string name="roadsense_map_saved_home">Home</string>
-    <string name="roadsense_map_saved_work">İş</string>
+    <string name="roadsense_map_saved_work">Work</string>
     <string name="roadsense_map_saved_set_home">Set Home</string>
-    <string name="roadsense_map_saved_set_work">İş olarak ayarla</string>
+    <string name="roadsense_map_saved_set_work">Set Work</string>
     <!-- Short action label for the "save as a custom favourite" button. -->
     <string name="roadsense_map_saved_favourite">Favourite</string>
     <string name="roadsense_map_save_place">Save place</string>
     <string name="roadsense_map_save_as_home">Save as Home</string>
-    <string name="roadsense_map_save_as_work">İş olarak kaydet</string>
+    <string name="roadsense_map_save_as_work">Save as Work</string>
     <string name="roadsense_map_save_as_custom">Save as favourite…</string>
     <string name="roadsense_map_saved_added">Saved</string>
-    <string name="roadsense_map_saved_removed">Kaydedilenlerden kaldırıldı</string>
-    <string name="roadsense_map_saved_remove">Kaldır</string>
-    <string name="roadsense_map_recent_remove">Son kullanılanlardan kaldır</string>
-    <string name="roadsense_map_recent_removed">Son kullanılanlardan kaldırıldı</string>
-    <string name="roadsense_map_custom_label_hint">Etiket (örn. Spor Salonu, Anne\'nin Evi)</string>
-    <string name="roadsense_map_custom_label_title">Bu yeri adlandır</string>
+    <string name="roadsense_map_saved_removed">Removed from saved</string>
+    <string name="roadsense_map_saved_remove">Remove</string>
+    <string name="roadsense_map_recent_remove">Remove from recents</string>
+    <string name="roadsense_map_recent_removed">Removed from recents</string>
+    <string name="roadsense_map_custom_label_hint">Label (e.g. Gym, Mum\'s)</string>
+    <string name="roadsense_map_custom_label_title">Name this place</string>
     <string name="roadsense_map_save">Save</string>
-    <string name="roadsense_map_cancel">İptal</string>
+    <string name="roadsense_map_cancel">Cancel</string>
     <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
-    <string name="roadsense_map_dropped_pin">Bırakılan pin</string>
+    <string name="roadsense_map_dropped_pin">Dropped pin</string>
     <string name="roadsense_map_navigate_here">Navigate here</string>
     <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
-    <string name="roadsense_map_search_to_save">%1$s olarak ayarlamak için bir yer arayın</string>
+    <string name="roadsense_map_search_to_save">Search a place to set as %1$s</string>
     <!-- Shown when re-entering the map with a previously-set trip restored. -->
-    <string name="roadsense_map_trip_restored">Yolculuk geri yüklendi</string>
+    <string name="roadsense_map_trip_restored">Trip restored</string>
 </resources>
