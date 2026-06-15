@@ -48,7 +48,7 @@
     "about_group": "À propos de",
     "brand_home": "OverDrive — ouvrir le tableau de bord",
     "telegram": "Telegram",
-    "road_sense": "RoadSense"
+    "road_sense": "Sens de route"
   },
   "road_sense": {
     "page_title": "Paramètres RoadSense",
@@ -98,7 +98,7 @@
     "bs_needs_overlay": "Autoriser \"Afficher sur les autres applications\" à afficher la vue \"aveugle\"",
     "saved": "Enregistré",
     "save_failed": "Échec de l'enregistrement",
-    "master_title": "RoadSense",
+    "master_title": "Sens de route",
     "master_enable": "Activer RoadSense",
     "master_enable_desc": "Détecte les dangers de la route (bosses, selles, brise-vitesse) du mouvement et du GPS, et vous avertit de ceux qui sont connus. Tous les autres paramètres de RoadSense ne prennent effet que lorsque cette option est activée.",
     "map_title": "Carte",
@@ -1909,7 +1909,7 @@
     "supporters_sub": "Ceux qui maintiennent les commits nocturnes caféinés.",
     "acknowledgements_title": "Remerciements",
     "acknowledgements_sub": "Les actifs de tierces parties utilisés dans OverDrive avec leurs licences.",
-    "ack_chimes": "Carillons d'avertissement RoadSense — sons de la bibliothèque Google Sound sous licence",
+    "ack_chimes": "Carreaux d'avertissement du sens des routes — sons de la bibliothèque Google Sound sous licence",
     "empty": "La liste se remplit au fur et à mesure que des gens participent.",
     "support": {
       "section": "Propulsé par des gens comme vous",
