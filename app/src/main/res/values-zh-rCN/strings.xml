@@ -392,7 +392,7 @@
     <string name="update_picker_current_suffix">%1$s (已安装)</string>
     <string name="update_picker_older_suffix">%1$s (旧)</string>
     <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
-    <string name="update_progress_title">正在更新 Overdrive</string>
+    <string name="update_progress_title">正在更新过多驱动器</string>
     <string name="update_step_downloading">正在下载更新…</string>
     <string name="update_step_verifying">正在验证下载…</string>
     <string name="update_step_stopping">停止守护进程…</string>
@@ -403,7 +403,7 @@
     <string name="update_error_title">更新失败</string>
     <string name="update_error_daemon_down">相机守护进程未运行。从守护进程屏幕启动，然后再次尝试更新。</string>
     <string name="update_error_start_failed">无法开始更新： %1$s</string>
-    <string name="update_error_lost_headunit">安装完成前丢失了与头部的联系。在隧道上吗？请查看 Telegram 获取新的 URL，或使用本地IP。</string>
+    <string name="update_error_lost_headunit">安装完成前丢失了与头部的联系。在隧道上吗？检查新的 URL，或使用本地IP。</string>
     <string name="update_hide">隐藏</string>
     <!-- Update channel selector (Settings → About) -->
     <string name="settings_update_channel_title">更新频道</string>
@@ -605,9 +605,9 @@
          notifications into one shade entry. The summary text is intentionally
          generic so it stays accurate whether all three services are running
          or only the keepalive survived an OOM respawn. -->
-    <string name="daemon_keepalive_notif_title">Overdrive 激活</string>
+    <string name="daemon_keepalive_notif_title">超载驱动器激活</string>
     <string name="daemon_keepalive_notif_text">监测车辆系统</string>
-    <string name="overdrive_status_summary_title">Overdrive</string>
+    <string name="overdrive_status_summary_title">超载驱动器</string>
     <string name="overdrive_status_summary_text">后台服务运行</string>
     <!-- ============================================================== -->
     <!-- M3 Revamp: navigation rail + settings sub-rail + theme picker  -->
@@ -655,7 +655,7 @@
     <string name="settings_about_support_section">由像你这样的人来推动</string>
     <string name="settings_about_support_share_title">告诉另一位车主</string>
     <string name="settings_about_support_share_value">每个共享的链接都能帮助另一个BYD的所有者发现Overdrive.</string>
-    <string name="settings_about_support_share_message">查看 Overdrive — 面向 BYD 的开源监控和仪表摄像头: https://overdrive-5lc.pages.dev/</string>
+    <string name="settings_about_support_share_message">查看BYD的开源监控和仪表摄像头: https://overdrive-5lc.pages.dev/</string>
     <string name="settings_about_support_share_chooser">分享 Overdrive</string>
     <string name="settings_about_open_link_failed">无法打开链接.</string>
     <string name="settings_about_open_link_copied">没有浏览器. URL复制: %1$s</string>
@@ -853,7 +853,7 @@
     <string name="settings_security_title">安全</string>
     <string name="settings_security_subtitle">锁定OverDrive应用，否则乘客和阀无法在没有您的 PIN 码的情况下打开它。</string>
     <string name="settings_security_stance_title">仅锁定界面</string>
-    <string name="settings_security_stance_body">监视、录制、威慑、警报和后台服务在锁定应用程序时继续运行。PIN码仅锁定 OverDrive 界面，别无其他。</string>
+    <string name="settings_security_stance_body">监视、录制、威慑、警报和后台服务在锁定应用程序时继续运行。PIN码关卡超载驱动器接口，别无其他。</string>
     <string name="settings_security_overline_lock">应用锁</string>
     <string name="settings_security_overline_recovery">如果您忘记了您的 PIN</string>
     <string name="settings_security_toggle_title">需要 PIN</string>
@@ -977,11 +977,11 @@
     <!-- ============================================================
          RoadSense — road-hazard detection feature
          ============================================================ -->
-    <string name="rail_roadsense">RoadSense</string>
+    <string name="rail_roadsense">道路Sense</string>
     <string name="rail_hazard_map">地图</string>
-    <string name="roadsense_title">RoadSense</string>
+    <string name="roadsense_title">道路Sense</string>
     <string name="roadsense_pill_scanning">正在扫描</string>
-    <string name="roadsense_pill_idle">RoadSense</string>
+    <string name="roadsense_pill_idle">道路Sense</string>
     <string name="roadsense_status_idle">空闲的</string>
     <!-- VEHICLE calibration (suspension-learning) — the green/orange/red dot. Worded
          about the car, not the route, since that's what maturity actually measures. -->
