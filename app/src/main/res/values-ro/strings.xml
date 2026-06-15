@@ -380,8 +380,46 @@
     <string name="toast_updated_to">Actualizat la %1$s</string>
     <string name="toast_update_install_failed">Instalarea actualizării a eșuat: %1$s</string>
     <string name="toast_checking_for_updates">Se caută actualizări…</string>
-    <string name="toast_app_up_to_date">Aplicația este actualizată (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">Verificarea actualizării a eșuat: %1$s</string>
+    <!-- Update dialog + version picker -->
+    <string name="update_dialog_available_title">Actualizare disponibilă</string>
+    <string name="update_dialog_subtitle">O versiune mai nouă este gata de instalare</string>
+    <string name="update_dialog_current">Curent: v%1$s</string>
+    <string name="update_dialog_new">Nou: v%1$s</string>
+    <string name="update_dialog_current_label">Instalat</string>
+    <string name="update_dialog_new_label">Versiune nouă</string>
+    <string name="update_dialog_whats_new">Ce este nou</string>
+    <string name="update_dialog_install_now">Instalează acum</string>
+    <string name="update_dialog_later">Mai târziu</string>
+    <string name="update_picker_title">Alege o versiune</string>
+    <string name="update_picker_subtitle">Instalează orice versiune publicată — mai nouă sau mai veche</string>
+    <string name="update_picker_empty">Nici o versiune publicată încă.</string>
+    <string name="update_picker_current_suffix">%1$s (instalat)</string>
+    <string name="update_picker_older_suffix">%1$s (mai vechi)</string>
+    <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
+    <string name="update_progress_title">Actualizare Overdrive</string>
+    <string name="update_step_downloading">Descărcare actualizare…</string>
+    <string name="update_step_verifying">Se verifică descărcarea…</string>
+    <string name="update_step_stopping">Oprirea daemonilor…</string>
+    <string name="update_step_installing">Instalare actualizare…</string>
+    <string name="update_step_installed">Actualizare instalată</string>
+    <string name="update_step_restarting">Repornire aplicație…</string>
+    <string name="update_step_queued">Se pornește actualizarea…</string>
+    <string name="update_error_title">Actualizarea a eșuat</string>
+    <string name="update_error_daemon_down">Tavanul camerei nu rulează. Porniți-l din ecranul Daemon, apoi încercați din nou să actualizați.</string>
+    <string name="update_error_start_failed">Nu s-a putut porni actualizarea: %1$s</string>
+    <string name="update_error_lost_headunit">Ați pierdut contactul cu unitatea capului înainte de a termina instalarea. Pe un tunel? Verificați Telegrama pentru noul URL sau folosiți adresa IP locală.</string>
+    <string name="update_hide">Ascunde</string>
+    <!-- Update channel selector (Settings → About) -->
+    <string name="settings_update_channel_title">Canal de actualizare</string>
+    <string name="settings_update_channel_alpha">Alfa</string>
+    <string name="settings_update_channel_braveheart">Braveinimă</string>
+    <string name="settings_update_channel_alpha_desc">Versiunea stabilă. Fiecare versiune publicată este păstrată - alege orice pentru a instala (sunt permise downgrades). Recomandat pentru uzul zilnic.</string>
+    <string name="settings_update_channel_braveheart_desc">Clădiri cu margini de sângerare, livrate imediat ce sunt publicate. Primești mai întâi caracteristici noi, dar ele pot fi instabile sau erori. Dacă ceva se rupe, deschideți ecranul Daemon, apăsați un jurnal de daemon, alege \"Upload &amp; obține un cod\" și partajează codul cu noi pe canalele comunității.</string>
+    <string name="settings_update_channel_save_failed">Canalul de actualizare nu a putut fi salvat</string>
+    <string name="settings_update_channel_braveheart_toast">Schimbat la Braveheart. Construirea poate fi instabilă - dacă ceva se strică, trimite jurnalul de viteze și raportează pe Discord/GitHub/WhatsApp.</string>
+    <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">Este necesară permisiunea de stocare pentru înregistrări</string>
     <string name="toast_url_copied_short">URL copiat!</string>
     <string name="toast_camera_set_to_auto">Camera foto setată automat</string>
@@ -510,6 +548,23 @@
     <string name="log_header_source">Sursa: %1$s</string>
     <string name="log_header_exported">Exportat: %1$s</string>
     <string name="log_header_truncated">NOTĂ: Jurnal trunchiat la ultimele 10000 de linii (total: %1$d linii)</string>
+    <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
+    <string name="logs_send_title">Trimite %1$s jurnal</string>
+    <string name="logs_send_title_plain">Trimite jurnalul de daemon</string>
+    <string name="logs_send_subtitle">%1$s · alege cum să ne trimiți</string>
+    <string name="logs_send_upload">Încarcă &amp; obține un cod</string>
+    <string name="logs_send_upload_desc">Trimite jurnalul către noi și îți oferă un cod scurt. Cel mai ușor pentru sprijin.</string>
+    <string name="logs_send_share">Distribuie fișierul…</string>
+    <string name="logs_send_share_desc">Salvează sau trimite jurnalul singur prin intermediul paginii de partajare.</string>
+    <string name="logs_uploading_title">Se încarcă jurnalul…</string>
+    <string name="logs_uploading_subtitle">Redactează secretele și trimite în siguranță</string>
+    <string name="logs_uploaded_title">Jurnal încărcat</string>
+    <string name="logs_uploaded_instructions">Împărtășiți acest cod cu noi, împreună cu o notă despre ceea ce făceați atunci când se strica. Posteaz-o pe Discord, Probleme GitHub sau WhatsApp - link-urile sunt pe ecranul Despre .</string>
+    <string name="logs_uploaded_privacy">Secrete redactate · jurnalul automat expiră</string>
+    <string name="logs_copy_code">Copiază codul</string>
+    <string name="logs_done">Terminat</string>
+    <string name="placeholder_dash">—</string>
+    <string name="errors_network">Eroare de rețea</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">Nu se poate reda videoul: %1$s</string>
@@ -520,7 +575,7 @@
     <string name="toast_batch_delete_partial">%1$d șters, %2$d a eșuat</string>
     <string name="play_with_chooser">Jucați cu</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">Actualizat pentru a v%1$s - reconfirma autopornirea sistemului, BYD îl șterge la fiecare instalare</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">Deja acordat</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">Sfaturi &amp; depanare</string>
@@ -1058,6 +1113,10 @@
     <string name="roadsense_map_poi_charging_generic">Stație de încărcare</string>
     <string name="roadsense_map_poi_fuel_generic">Stație de combustibil</string>
     <string name="roadsense_map_route_switched">Ruta comutată</string>
+    <!-- "then <next maneuver>" preview shown in the maneuver banner -->
+    <string name="roadsense_map_then">apoi</string>
+    <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
+    <string name="roadsense_map_exit_n">Ieșire %1$d</string>
     <!-- Hazards-along-route pills (%1$d = count) -->
     <string name="roadsense_map_pill_severe">%1$d sever</string>
     <string name="roadsense_map_pill_moderate">%1$d moderat</string>
@@ -1084,4 +1143,36 @@
     <string name="roadsense_map_move_stop_down">Mută oprire jos</string>
     <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">Permis până la %1$d opriri</string>
+    <!-- Map day/night override (Auto → Light → Dark) -->
+    <string name="roadsense_map_theme_toggle">Temă hartă</string>
+    <string name="roadsense_map_theme_auto">Tema hărții: Auto</string>
+    <string name="roadsense_map_theme_light">Tema hărții: Ușor</string>
+    <string name="roadsense_map_theme_dark">Tema hărții: Întunecat</string>
+    <!-- Saved places (Home / Work / custom favourites) -->
+    <string name="roadsense_map_saved_home">Acasă</string>
+    <string name="roadsense_map_saved_work">Muncă</string>
+    <string name="roadsense_map_saved_set_home">Setează Acasă</string>
+    <string name="roadsense_map_saved_set_work">Setare serviciu</string>
+    <!-- Short action label for the "save as a custom favourite" button. -->
+    <string name="roadsense_map_saved_favourite">Favorit</string>
+    <string name="roadsense_map_save_place">Salvează locul</string>
+    <string name="roadsense_map_save_as_home">Salvează ca Acasă</string>
+    <string name="roadsense_map_save_as_work">Salvează ca Lucru</string>
+    <string name="roadsense_map_save_as_custom">Salvează ca favorit…</string>
+    <string name="roadsense_map_saved_added">Salvat</string>
+    <string name="roadsense_map_saved_removed">Eliminat din salvate</string>
+    <string name="roadsense_map_saved_remove">Elimină</string>
+    <string name="roadsense_map_recent_remove">Elimină din recente</string>
+    <string name="roadsense_map_recent_removed">Eliminat din recente</string>
+    <string name="roadsense_map_custom_label_hint">Etichetă (de ex. Gym, mai)</string>
+    <string name="roadsense_map_custom_label_title">Numește această locație</string>
+    <string name="roadsense_map_save">Salvează</string>
+    <string name="roadsense_map_cancel">Anulează</string>
+    <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
+    <string name="roadsense_map_dropped_pin">Pin scăpat</string>
+    <string name="roadsense_map_navigate_here">Navigați aici</string>
+    <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
+    <string name="roadsense_map_search_to_save">Căutați un loc pentru a seta ca %1$s</string>
+    <!-- Shown when re-entering the map with a previously-set trip restored. -->
+    <string name="roadsense_map_trip_restored">Cursă restaurată</string>
 </resources>

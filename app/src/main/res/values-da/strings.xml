@@ -377,8 +377,46 @@
     <string name="toast_updated_to">Opdateret til %1$s</string>
     <string name="toast_update_install_failed">Installationen af opdateringen mislykkedes: %1$s</string>
     <string name="toast_checking_for_updates">Søger efter opdateringer…</string>
-    <string name="toast_app_up_to_date">App er opdateret (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">Opdateringstjek fejlede: %1$s</string>
+    <!-- Update dialog + version picker -->
+    <string name="update_dialog_available_title">Opdatering tilgængelig</string>
+    <string name="update_dialog_subtitle">En nyere build er klar til at installere</string>
+    <string name="update_dialog_current">Nuværende: v%1$s</string>
+    <string name="update_dialog_new">Ny: v%1$s</string>
+    <string name="update_dialog_current_label">Installeret</string>
+    <string name="update_dialog_new_label">Ny version</string>
+    <string name="update_dialog_whats_new">Hvad er nyt</string>
+    <string name="update_dialog_install_now">Installer nu</string>
+    <string name="update_dialog_later">Senere</string>
+    <string name="update_picker_title">Vælg en version</string>
+    <string name="update_picker_subtitle">Installere enhver publiceret build - nyere eller ældre</string>
+    <string name="update_picker_empty">Ingen versioner udgivet endnu.</string>
+    <string name="update_picker_current_suffix">%1$s (installeret)</string>
+    <string name="update_picker_older_suffix">%1$s (ældre)</string>
+    <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
+    <string name="update_progress_title">Opdaterer Overdrive</string>
+    <string name="update_step_downloading">Downloader opdatering…</string>
+    <string name="update_step_verifying">Verificerer download…</string>
+    <string name="update_step_stopping">Stopper dæmoner…</string>
+    <string name="update_step_installing">Installerer opdatering…</string>
+    <string name="update_step_installed">Opdatering installeret</string>
+    <string name="update_step_restarting">Genstarter app…</string>
+    <string name="update_step_queued">Starter opdatering…</string>
+    <string name="update_error_title">Opdatering mislykkedes</string>
+    <string name="update_error_daemon_down">Kameradæmonen kører ikke. Start den fra Dæmon-skærmen, og prøv derefter at opdatere igen.</string>
+    <string name="update_error_start_failed">Kunne ikke starte opdateringen: %1$s</string>
+    <string name="update_error_lost_headunit">Glemt kontakt med hovedenheden før installationen er færdig. På en tunnel? Tjek Telegram for den nye URL, eller brug den lokale IP.</string>
+    <string name="update_hide">Skjul</string>
+    <!-- Update channel selector (Settings → About) -->
+    <string name="settings_update_channel_title">Opdater kanal</string>
+    <string name="settings_update_channel_alpha">Alfa</string>
+    <string name="settings_update_channel_braveheart">Braveheart</string>
+    <string name="settings_update_channel_alpha_desc">Den stabile udgave. Hver publiceret version gemmes — vælg en hvilken som helst der skal installeres (downgrades tilladt). Anbefales til daglig brug.</string>
+    <string name="settings_update_channel_braveheart_desc">Bleeding-edge bygger, leveret det øjeblik de er offentliggjort. Du får nye funktioner først, men de kan være ustabile eller buggy. Hvis noget går i stykker, åbn Dæmon-skærmen, tryk på en dæmon-log vælg \"Upload &amp; få en kode\", og del koden med os på fællesskabskanalerne.</string>
+    <string name="settings_update_channel_save_failed">Kunne ikke gemme opdateringskanalen</string>
+    <string name="settings_update_channel_braveheart_toast">Skiftet til Braveheart. Bygninger kan være ustabile — hvis noget går i stykker, send dæmonloggen og rapporter det på Discord/GitHub/WhatsApp.</string>
+    <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">Lagringstilladelse kræves til optagelser</string>
     <string name="toast_url_copied_short">URL kopieret!</string>
     <string name="toast_camera_set_to_auto">Kameraet er indstillet til automatisk</string>
@@ -507,6 +545,23 @@
     <string name="log_header_source">Kilde: %1$s</string>
     <string name="log_header_exported">Eksporteret: %1$s</string>
     <string name="log_header_truncated">BEMÆRK: Log afkortet til de sidste 10000 linjer (i alt: %1$d linjer)</string>
+    <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
+    <string name="logs_send_title">Send %1$s log</string>
+    <string name="logs_send_title_plain">Send dæmon-log</string>
+    <string name="logs_send_subtitle">%1$s · Vælg, hvordan du sender den til os</string>
+    <string name="logs_send_upload">Upload &amp; få en kode</string>
+    <string name="logs_send_upload_desc">Sender loggen til os og giver dig en kort kode. Nemmeste for support.</string>
+    <string name="logs_send_share">Del fil…</string>
+    <string name="logs_send_share_desc">Gem eller send selv loggen via delingsarket.</string>
+    <string name="logs_uploading_title">Uploader log…</string>
+    <string name="logs_uploading_subtitle">Redacting hemmeligheder og sende sikkert</string>
+    <string name="logs_uploaded_title">Log uploadet</string>
+    <string name="logs_uploaded_instructions">Del denne kode med os, sammen med en note om, hvad du gjorde, da det brød sammen. Skriv det på Discord, GitHub Issues eller WhatsApp - links er på skærmen.</string>
+    <string name="logs_uploaded_privacy">Secrets redacted · loggen auto-expires</string>
+    <string name="logs_copy_code">Kopier kode</string>
+    <string name="logs_done">Udført</string>
+    <string name="placeholder_dash">—</string>
+    <string name="errors_network">Netværksfejl</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">Kan ikke afspille video: %1$s</string>
@@ -517,7 +572,7 @@
     <string name="toast_batch_delete_partial">%1$d slettet, %2$d mislykkedes</string>
     <string name="play_with_chooser">Spil med</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">Opdateret til v%1$s — bekræft autostart, BYD tørrer det på hver installation</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">Allerede Udstedt</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">Tips &amp; fejlfinding</string>
@@ -1048,6 +1103,10 @@
     <string name="roadsense_map_poi_charging_generic">Opladningsstation</string>
     <string name="roadsense_map_poi_fuel_generic">Brændstofstation</string>
     <string name="roadsense_map_route_switched">Skiftede rute</string>
+    <!-- "then <next maneuver>" preview shown in the maneuver banner -->
+    <string name="roadsense_map_then">derefter</string>
+    <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
+    <string name="roadsense_map_exit_n">Afslut %1$d</string>
     <!-- Hazards-along-route pills (%1$d = count) -->
     <string name="roadsense_map_pill_severe">%1$d alvorlig</string>
     <string name="roadsense_map_pill_moderate">%1$d moderat</string>
@@ -1074,4 +1133,36 @@
     <string name="roadsense_map_move_stop_down">Flyt stop ned</string>
     <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">Op til %1$d stopper tilladt</string>
+    <!-- Map day/night override (Auto → Light → Dark) -->
+    <string name="roadsense_map_theme_toggle">Kort tema</string>
+    <string name="roadsense_map_theme_auto">Kort tema: Auto</string>
+    <string name="roadsense_map_theme_light">Kort tema: Lys</string>
+    <string name="roadsense_map_theme_dark">Kort tema: Mørkt</string>
+    <!-- Saved places (Home / Work / custom favourites) -->
+    <string name="roadsense_map_saved_home">Hjem</string>
+    <string name="roadsense_map_saved_work">Arbejde</string>
+    <string name="roadsense_map_saved_set_home">Indstil Hjem</string>
+    <string name="roadsense_map_saved_set_work">Indstil Arbejde</string>
+    <!-- Short action label for the "save as a custom favourite" button. -->
+    <string name="roadsense_map_saved_favourite">Favorit</string>
+    <string name="roadsense_map_save_place">Gem sted</string>
+    <string name="roadsense_map_save_as_home">Gem som hjem</string>
+    <string name="roadsense_map_save_as_work">Gem som arbejde</string>
+    <string name="roadsense_map_save_as_custom">Gem som favorit…</string>
+    <string name="roadsense_map_saved_added">Gemt</string>
+    <string name="roadsense_map_saved_removed">Fjernet fra gemt</string>
+    <string name="roadsense_map_saved_remove">Fjern</string>
+    <string name="roadsense_map_recent_remove">Fjern fra seneste</string>
+    <string name="roadsense_map_recent_removed">Fjernet fra de seneste</string>
+    <string name="roadsense_map_custom_label_hint">Etiket (f.eks. Gym, Mums)</string>
+    <string name="roadsense_map_custom_label_title">Navngiv dette sted</string>
+    <string name="roadsense_map_save">Gem</string>
+    <string name="roadsense_map_cancel">Annuller</string>
+    <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
+    <string name="roadsense_map_dropped_pin">Droppet stift</string>
+    <string name="roadsense_map_navigate_here">Naviger her</string>
+    <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
+    <string name="roadsense_map_search_to_save">Søg efter et sted der skal angives som %1$s</string>
+    <!-- Shown when re-entering the map with a previously-set trip restored. -->
+    <string name="roadsense_map_trip_restored">Tur gendannet</string>
 </resources>

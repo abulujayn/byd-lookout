@@ -383,8 +383,46 @@
     <string name="toast_updated_to">Aktualizováno na %1$s</string>
     <string name="toast_update_install_failed">Instalace aktualizace se nezdařila: %1$s</string>
     <string name="toast_checking_for_updates">Kontrola aktualizací…</string>
-    <string name="toast_app_up_to_date">Aplikace je aktuální (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">Kontrola aktualizací se nezdařila: %1$s</string>
+    <!-- Update dialog + version picker -->
+    <string name="update_dialog_available_title">K dispozici je aktualizace</string>
+    <string name="update_dialog_subtitle">Novější sestavení je připraveno k instalaci</string>
+    <string name="update_dialog_current">Aktuální: v%1$s</string>
+    <string name="update_dialog_new">Nový: v%1$s</string>
+    <string name="update_dialog_current_label">Nainstalováno</string>
+    <string name="update_dialog_new_label">Nová verze</string>
+    <string name="update_dialog_whats_new">Co je nového</string>
+    <string name="update_dialog_install_now">Instalovat nyní</string>
+    <string name="update_dialog_later">Později</string>
+    <string name="update_picker_title">Zvolte verzi</string>
+    <string name="update_picker_subtitle">Nainstalovat libovolné publikované sestavení – novější nebo starší</string>
+    <string name="update_picker_empty">Zatím nebyly zveřejněny žádné verze.</string>
+    <string name="update_picker_current_suffix">%1$s (nainstalováno)</string>
+    <string name="update_picker_older_suffix">%1$s (starší)</string>
+    <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
+    <string name="update_progress_title">Aktualizace přepsání</string>
+    <string name="update_step_downloading">Stahování aktualizace…</string>
+    <string name="update_step_verifying">Ověřování stahování…</string>
+    <string name="update_step_stopping">Zastavování démonů…</string>
+    <string name="update_step_installing">Instalace aktualizace…</string>
+    <string name="update_step_installed">Aktualizace nainstalována</string>
+    <string name="update_step_restarting">Restartuji aplikaci…</string>
+    <string name="update_step_queued">Spouštění aktualizace…</string>
+    <string name="update_error_title">Aktualizace se nezdařila</string>
+    <string name="update_error_daemon_down">Démon fotoaparátu není spuštěn. Spusťte jej z Démonovy obrazovky, poté zkuste aktualizovat znovu.</string>
+    <string name="update_error_start_failed">Aktualizace se nepodařilo spustit: %1$s</string>
+    <string name="update_error_lost_headunit">Ztracen kontakt s hlavou před ukončením instalace. V tunelu? Zkontrolujte Telegram pro novou URL, nebo použijte místní IP adresu.</string>
+    <string name="update_hide">Skrýt</string>
+    <!-- Update channel selector (Settings → About) -->
+    <string name="settings_update_channel_title">Aktualizovat kanál</string>
+    <string name="settings_update_channel_alpha">Alfa</string>
+    <string name="settings_update_channel_braveheart">bubble raider</string>
+    <string name="settings_update_channel_alpha_desc">Stabilní vydání. Každá publikovaná verze je zachována — vyberte jakoukoliv instalaci (downgrades povolena). Doporučeno pro každodenní používání.</string>
+    <string name="settings_update_channel_braveheart_desc">Bleednové sestavy dodaly okamžik, kdy jsou publikovány. Nejdříve získáte nové funkce, ale mohou být nestabilní nebo chybové. Pokud se něco rozbije, otevřete Démonovu obrazovku, klepněte na Démonův protokol, vyberte \"Nahrát &amp; získat kód\" a sdílejte s námi kód na komunitních kanálech.</string>
+    <string name="settings_update_channel_save_failed">Nelze uložit aktualizační kanál</string>
+    <string name="settings_update_channel_braveheart_toast">Přepnuto do Braveheart. Sestavení může být nestabilní - pokud se něco rozbije, pošlete záznam daemonu a nahlaste ho na Discordu/GitHub/WhatsApp.</string>
+    <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">Pro nahrávky je vyžadováno oprávnění k úložišti</string>
     <string name="toast_url_copied_short">URL zkopírováno!</string>
     <string name="toast_camera_set_to_auto">Kamera je nastavena na Auto</string>
@@ -513,6 +551,23 @@
     <string name="log_header_source">Zdroj: %1$s</string>
     <string name="log_header_exported">Exportováno: %1$s</string>
     <string name="log_header_truncated">POZNÁMKA: Log zkrácen na posledních 10000 řádků (celkem: %1$d řádků)</string>
+    <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
+    <string name="logs_send_title">Odeslat protokol %1$s</string>
+    <string name="logs_send_title_plain">Odeslat deník</string>
+    <string name="logs_send_subtitle">%1$s · zvolte, jak nám to poslat</string>
+    <string name="logs_send_upload">Nahrát &amp; získat kód</string>
+    <string name="logs_send_upload_desc">Odešle nám log a zadá vám krátký kód. Nejjednodušší pro podporu.</string>
+    <string name="logs_send_share">Sdílet soubor…</string>
+    <string name="logs_send_share_desc">Uložit nebo odeslat log sami prostřednictvím sdíleného listu.</string>
+    <string name="logs_uploading_title">Nahrávání logu…</string>
+    <string name="logs_uploading_subtitle">Odstraňování tajných informací a bezpečné odesílání</string>
+    <string name="logs_uploaded_title">Log nahrán</string>
+    <string name="logs_uploaded_instructions">Sdílejte tento kód s námi, spolu s poznámkou o tom, co jste dělali, když se rozbije. Zveřejni to na Discordu, GitHub Problémy nebo WhatsApp – odkazy jsou na obrazovce O sobě.</string>
+    <string name="logs_uploaded_privacy">Secrets opraveno · log automaticky vyprší</string>
+    <string name="logs_copy_code">Kopírovat kód</string>
+    <string name="logs_done">Hotovo</string>
+    <string name="placeholder_dash">—</string>
+    <string name="errors_network">Chyba sítě</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">Nelze přehrát video: %1$s</string>
@@ -523,7 +578,7 @@
     <string name="toast_batch_delete_partial">%1$d odstraněno, %2$d se nezdařilo</string>
     <string name="play_with_chooser">Hrát s</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">Aktualizováno na v%1$s — znovu potvrďte autostart, BYD jej vymaže při každé instalaci</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">Již uděleno</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">Tipy &amp; řešení problémů</string>
@@ -1068,6 +1123,10 @@
     <string name="roadsense_map_poi_charging_generic">Nabíjecí stanice</string>
     <string name="roadsense_map_poi_fuel_generic">Palivová stanice</string>
     <string name="roadsense_map_route_switched">Přepnutá trasa</string>
+    <!-- "then <next maneuver>" preview shown in the maneuver banner -->
+    <string name="roadsense_map_then">pak</string>
+    <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
+    <string name="roadsense_map_exit_n">opustit %1$d</string>
     <!-- Hazards-along-route pills (%1$d = count) -->
     <string name="roadsense_map_pill_severe">%1$d těžký</string>
     <string name="roadsense_map_pill_moderate">%1$d mírné</string>
@@ -1094,4 +1153,36 @@
     <string name="roadsense_map_move_stop_down">Přesunout zastavení dolů</string>
     <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">Až %1$d povoleny zastávky</string>
+    <!-- Map day/night override (Auto → Light → Dark) -->
+    <string name="roadsense_map_theme_toggle">Téma mapy</string>
+    <string name="roadsense_map_theme_auto">Motiv mapy: Auto</string>
+    <string name="roadsense_map_theme_light">Mapový motiv: slabý</string>
+    <string name="roadsense_map_theme_dark">Motiv mapy: Tmavý</string>
+    <!-- Saved places (Home / Work / custom favourites) -->
+    <string name="roadsense_map_saved_home">Domů</string>
+    <string name="roadsense_map_saved_work">Práce</string>
+    <string name="roadsense_map_saved_set_home">Nastavit domov</string>
+    <string name="roadsense_map_saved_set_work">Nastavit práci</string>
+    <!-- Short action label for the "save as a custom favourite" button. -->
+    <string name="roadsense_map_saved_favourite">Oblíbená</string>
+    <string name="roadsense_map_save_place">Uložit místo</string>
+    <string name="roadsense_map_save_as_home">Uložit jako Domů</string>
+    <string name="roadsense_map_save_as_work">Uložit jako práci</string>
+    <string name="roadsense_map_save_as_custom">Uložit jako oblíbené…</string>
+    <string name="roadsense_map_saved_added">Uloženo</string>
+    <string name="roadsense_map_saved_removed">Odstraněno z uloženého</string>
+    <string name="roadsense_map_saved_remove">Odebrat</string>
+    <string name="roadsense_map_recent_remove">Odstranit z nedávných aplikací</string>
+    <string name="roadsense_map_recent_removed">Odebráno z nedávných aplikací</string>
+    <string name="roadsense_map_custom_label_hint">Štítek (např. Gym, Mum\'s)</string>
+    <string name="roadsense_map_custom_label_title">Název tohoto místa</string>
+    <string name="roadsense_map_save">Uložit</string>
+    <string name="roadsense_map_cancel">Zrušit</string>
+    <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
+    <string name="roadsense_map_dropped_pin">Odstraněný pin</string>
+    <string name="roadsense_map_navigate_here">Navigovat zde</string>
+    <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
+    <string name="roadsense_map_search_to_save">Hledat místo, které chcete nastavit jako %1$s</string>
+    <!-- Shown when re-entering the map with a previously-set trip restored. -->
+    <string name="roadsense_map_trip_restored">Jízda obnovena</string>
 </resources>

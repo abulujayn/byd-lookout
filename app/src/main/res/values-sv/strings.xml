@@ -377,8 +377,46 @@
     <string name="toast_updated_to">Uppdaterad till %1$s</string>
     <string name="toast_update_install_failed">Installationen av uppdateringen misslyckades: %1$s</string>
     <string name="toast_checking_for_updates">Söker efter uppdateringar…</string>
-    <string name="toast_app_up_to_date">Appen är uppdaterad (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">Uppdateringskontrollen misslyckades: %1$s</string>
+    <!-- Update dialog + version picker -->
+    <string name="update_dialog_available_title">Uppdatering tillgänglig</string>
+    <string name="update_dialog_subtitle">En nyare version är klar att installera</string>
+    <string name="update_dialog_current">Nuvarande: v%1$s</string>
+    <string name="update_dialog_new">Ny: v%1$s</string>
+    <string name="update_dialog_current_label">Installerad</string>
+    <string name="update_dialog_new_label">Ny version</string>
+    <string name="update_dialog_whats_new">Vad är nytt</string>
+    <string name="update_dialog_install_now">Installera nu</string>
+    <string name="update_dialog_later">Senare</string>
+    <string name="update_picker_title">Välj en version</string>
+    <string name="update_picker_subtitle">Installera alla publicerade versioner — nyare eller äldre</string>
+    <string name="update_picker_empty">Inga versioner publicerade ännu.</string>
+    <string name="update_picker_current_suffix">%1$s (installerad)</string>
+    <string name="update_picker_older_suffix">%1$s (äldre)</string>
+    <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
+    <string name="update_progress_title">Uppdatera överväxel</string>
+    <string name="update_step_downloading">Laddar ner uppdatering…</string>
+    <string name="update_step_verifying">Verifierar nedladdning…</string>
+    <string name="update_step_stopping">Stoppar demoner…</string>
+    <string name="update_step_installing">Installerar uppdatering…</string>
+    <string name="update_step_installed">Uppdatering installerad</string>
+    <string name="update_step_restarting">Startar om appen…</string>
+    <string name="update_step_queued">Startar uppdatering…</string>
+    <string name="update_error_title">Uppdateringen misslyckades</string>
+    <string name="update_error_daemon_down">Kameramatemon körs inte. Starta den från Daemons-skärmen och försök sedan uppdatera igen.</string>
+    <string name="update_error_start_failed">Kunde inte starta uppdateringen: %1$s</string>
+    <string name="update_error_lost_headunit">Förlorad kontakt med huvudenheten innan installationen är klar. På en tunnel? Kontrollera Telegram för den nya webbadressen, eller använd den lokala IP-adressen.</string>
+    <string name="update_hide">Dölj</string>
+    <!-- Update channel selector (Settings → About) -->
+    <string name="settings_update_channel_title">Uppdatera kanal</string>
+    <string name="settings_update_channel_alpha">Alfa</string>
+    <string name="settings_update_channel_braveheart">Braveheart</string>
+    <string name="settings_update_channel_alpha_desc">Den stabila utgåvan. Varje publicerad version hålls — välj någon att installera (nedgraderingar tillåtna). Rekommenderas för dagligt bruk.</string>
+    <string name="settings_update_channel_braveheart_desc">Bleeding-edge bygger, levererade det ögonblick de är publicerade. Du får nya funktioner först, men de kan vara instabila eller buggy. Om något går sönder, öppna Daemons skärmen, tryck på en daemons logg, välj \"Ladda upp &amp; få en kod\" och dela koden med oss på gemenskapskanalerna.</string>
+    <string name="settings_update_channel_save_failed">Kunde inte spara uppdateringskanalen</string>
+    <string name="settings_update_channel_braveheart_toast">Bytt till Braveheart. Bygger kan vara instabila — om något går sönder, skicka daemonloggen och rapportera det på Discord/GitHub/WhatsApp.</string>
+    <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">Lagringstillstånd krävs för inspelningar</string>
     <string name="toast_url_copied_short">URL kopierad!</string>
     <string name="toast_camera_set_to_auto">Kameran inställd på automatisk</string>
@@ -507,6 +545,23 @@
     <string name="log_header_source">Källa: %1$s</string>
     <string name="log_header_exported">Exporterad: %1$s</string>
     <string name="log_header_truncated">OBS: Loggen förkortas till senaste 10000 rader (totalt: %1$d rader)</string>
+    <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
+    <string name="logs_send_title">Skicka %1$s logg</string>
+    <string name="logs_send_title_plain">Skicka daemonlogg</string>
+    <string name="logs_send_subtitle">%1$s · välj hur du skickar det till oss</string>
+    <string name="logs_send_upload">Ladda upp &amp; få en kod</string>
+    <string name="logs_send_upload_desc">Skickar loggen till oss och ger dig en kort kod. Lättast att stödja.</string>
+    <string name="logs_send_share">Dela fil…</string>
+    <string name="logs_send_share_desc">Spara eller skicka loggen själv via delningsbladet.</string>
+    <string name="logs_uploading_title">Laddar upp logg…</string>
+    <string name="logs_uploading_subtitle">Redacting hemligheter och skicka säkert</string>
+    <string name="logs_uploaded_title">Logga uppladdad</string>
+    <string name="logs_uploaded_instructions">Dela denna kod med oss, tillsammans med en anteckning om vad du gjorde när det gick sönder. Posta det på Discord, GitHub problem eller WhatsApp — länkar finns på skärmen Om skärmen.</string>
+    <string name="logs_uploaded_privacy">Hemligheter redacted · loggen auto-expires</string>
+    <string name="logs_copy_code">Kopiera kod</string>
+    <string name="logs_done">Klar</string>
+    <string name="placeholder_dash">—</string>
+    <string name="errors_network">Nätverksfel</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">Kan inte spela video: %1$s</string>
@@ -517,7 +572,7 @@
     <string name="toast_batch_delete_partial">%1$d raderad, %2$d misslyckades</string>
     <string name="play_with_chooser">Spela med</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">Uppdaterad till v%1$s — bekräfta autostart, BYD torkar den på varje installation</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">Redan beviljad</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">Tips &amp; felsökning</string>
@@ -1048,6 +1103,10 @@
     <string name="roadsense_map_poi_charging_generic">Laddningsstation</string>
     <string name="roadsense_map_poi_fuel_generic">Bränsle station</string>
     <string name="roadsense_map_route_switched">Växlad rutt</string>
+    <!-- "then <next maneuver>" preview shown in the maneuver banner -->
+    <string name="roadsense_map_then">sedan</string>
+    <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
+    <string name="roadsense_map_exit_n">avsluta %1$d</string>
     <!-- Hazards-along-route pills (%1$d = count) -->
     <string name="roadsense_map_pill_severe">%1$d svår</string>
     <string name="roadsense_map_pill_moderate">%1$d måttlig</string>
@@ -1074,4 +1133,36 @@
     <string name="roadsense_map_move_stop_down">Flytta stopp nedåt</string>
     <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">Upp till %1$d stopp tillåts</string>
+    <!-- Map day/night override (Auto → Light → Dark) -->
+    <string name="roadsense_map_theme_toggle">Karta tema</string>
+    <string name="roadsense_map_theme_auto">Karttema: Auto</string>
+    <string name="roadsense_map_theme_light">Karttema: Ljus</string>
+    <string name="roadsense_map_theme_dark">Karta tema: Mörk</string>
+    <!-- Saved places (Home / Work / custom favourites) -->
+    <string name="roadsense_map_saved_home">Hem</string>
+    <string name="roadsense_map_saved_work">Arbete</string>
+    <string name="roadsense_map_saved_set_home">Ställ in hem</string>
+    <string name="roadsense_map_saved_set_work">Ställ in arbete</string>
+    <!-- Short action label for the "save as a custom favourite" button. -->
+    <string name="roadsense_map_saved_favourite">Favorit</string>
+    <string name="roadsense_map_save_place">Spara plats</string>
+    <string name="roadsense_map_save_as_home">Spara som hem</string>
+    <string name="roadsense_map_save_as_work">Spara som arbete</string>
+    <string name="roadsense_map_save_as_custom">Spara som favorit…</string>
+    <string name="roadsense_map_saved_added">Sparad</string>
+    <string name="roadsense_map_saved_removed">Borttagen från sparad</string>
+    <string name="roadsense_map_saved_remove">Radera</string>
+    <string name="roadsense_map_recent_remove">Ta bort från senaste</string>
+    <string name="roadsense_map_recent_removed">Borttagen från senaste</string>
+    <string name="roadsense_map_custom_label_hint">Etikett (t.ex. gym, mamma)</string>
+    <string name="roadsense_map_custom_label_title">Namnge denna plats</string>
+    <string name="roadsense_map_save">Spara</string>
+    <string name="roadsense_map_cancel">Avbryt</string>
+    <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
+    <string name="roadsense_map_dropped_pin">Släppt nål</string>
+    <string name="roadsense_map_navigate_here">Navigera här</string>
+    <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
+    <string name="roadsense_map_search_to_save">Sök en plats att ange som %1$s</string>
+    <!-- Shown when re-entering the map with a previously-set trip restored. -->
+    <string name="roadsense_map_trip_restored">Resan återställd</string>
 </resources>

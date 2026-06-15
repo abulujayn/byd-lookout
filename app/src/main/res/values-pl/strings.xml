@@ -383,8 +383,46 @@
     <string name="toast_updated_to">Zaktualizowano do %1$s</string>
     <string name="toast_update_install_failed">Instalacja aktualizacji nie powiodła się: %1$s</string>
     <string name="toast_checking_for_updates">Sprawdzanie aktualizacji…</string>
-    <string name="toast_app_up_to_date">Aplikacja jest aktualna (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">Sprawdzanie aktualizacji nie powiodło się: %1$s</string>
+    <!-- Update dialog + version picker -->
+    <string name="update_dialog_available_title">Dostępna aktualizacja</string>
+    <string name="update_dialog_subtitle">Nowsza kompilacja jest gotowa do instalacji</string>
+    <string name="update_dialog_current">Aktualnie: v%1$s</string>
+    <string name="update_dialog_new">Nowość: v%1$s</string>
+    <string name="update_dialog_current_label">Zainstalowane</string>
+    <string name="update_dialog_new_label">Nowa wersja</string>
+    <string name="update_dialog_whats_new">Co nowego</string>
+    <string name="update_dialog_install_now">Zainstaluj</string>
+    <string name="update_dialog_later">Później</string>
+    <string name="update_picker_title">Wybierz wersję</string>
+    <string name="update_picker_subtitle">Zainstaluj każdą opublikowaną wersję — nowszą lub starszą</string>
+    <string name="update_picker_empty">Brak opublikowanych wersji.</string>
+    <string name="update_picker_current_suffix">%1$s (zainstalowany)</string>
+    <string name="update_picker_older_suffix">%1$s (starszy)</string>
+    <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
+    <string name="update_progress_title">Aktualizowanie Naddysku</string>
+    <string name="update_step_downloading">Pobieranie aktualizacji…</string>
+    <string name="update_step_verifying">Weryfikowanie pobierania…</string>
+    <string name="update_step_stopping">Zatrzymywanie demonów…</string>
+    <string name="update_step_installing">Instalowanie aktualizacji…</string>
+    <string name="update_step_installed">Aktualizacja zainstalowana</string>
+    <string name="update_step_restarting">Ponowne uruchamianie aplikacji…</string>
+    <string name="update_step_queued">Uruchamianie aktualizacji…</string>
+    <string name="update_error_title">Aktualizacja nieudana</string>
+    <string name="update_error_daemon_down">Demon kamery nie jest uruchomiony. Uruchom go na ekranie Daemons, a następnie spróbuj zaktualizować ponownie.</string>
+    <string name="update_error_start_failed">Nie można uruchomić aktualizacji: %1$s</string>
+    <string name="update_error_lost_headunit">Utracono kontakt z głowicą przed zakończeniem instalacji. W tunelu? Sprawdź Telegram pod kątem nowego adresu URL lub użyj lokalnego adresu IP.</string>
+    <string name="update_hide">Ukryj</string>
+    <!-- Update channel selector (Settings → About) -->
+    <string name="settings_update_channel_title">Aktualizuj kanał</string>
+    <string name="settings_update_channel_alpha">Alfa</string>
+    <string name="settings_update_channel_braveheart">Braveheart</string>
+    <string name="settings_update_channel_alpha_desc">Stabilna wersja. Każda publikowana wersja jest zachowana — wybierz dowolną do zainstalowania (dozwolone obniżanie wartości). Zalecane do codziennego użytku.</string>
+    <string name="settings_update_channel_braveheart_desc">Najpierw pojawiają się nowe funkcje, ale mogą być niestabilne lub błędne. Jeśli coś się złama, otwórz ekran Daemons, stuknij dziennik demona, wybierz \"Upload &amp; get a code\" i podziel się z nami kodem na kanałach społecznościowych.</string>
+    <string name="settings_update_channel_save_failed">Nie można zapisać kanału aktualizacji</string>
+    <string name="settings_update_channel_braveheart_toast">Przełączono na Braveheart. Budynki mogą być niestabilne — jeśli coś się złama, wyślij dziennik demona i zgłoś go na Discordzie/GitHub/WhatsApp.</string>
+    <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">Wymagane uprawnienie do przechowywania nagrań</string>
     <string name="toast_url_copied_short">Adres URL skopiowany!</string>
     <string name="toast_camera_set_to_auto">Aparat ustawiony na automatyczny</string>
@@ -513,6 +551,23 @@
     <string name="log_header_source">Źródło: %1$s</string>
     <string name="log_header_exported">Eksportowane: %1$s</string>
     <string name="log_header_truncated">UWAGA: Dziennik obcięty do ostatnich 10000 linii (łącznie: %1$d linii)</string>
+    <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
+    <string name="logs_send_title">Wyślij dziennik %1$s</string>
+    <string name="logs_send_title_plain">Wyślij log demona</string>
+    <string name="logs_send_subtitle">%1$s · wybierz jak wysłać go do nas</string>
+    <string name="logs_send_upload">Prześlij &amp; uzyskaj kod</string>
+    <string name="logs_send_upload_desc">Wysyła nam dziennik i daje Ci krótki kod. Najłatwiejszy do wsparcia.</string>
+    <string name="logs_send_share">Udostępnij plik…</string>
+    <string name="logs_send_share_desc">Zapisz lub wyślij logi za pośrednictwem arkusza udziałów.</string>
+    <string name="logs_uploading_title">Przesyłanie dziennika…</string>
+    <string name="logs_uploading_subtitle">Sprawdzanie tajemnic i bezpieczne wysyłanie</string>
+    <string name="logs_uploaded_title">Wgrano dziennik</string>
+    <string name="logs_uploaded_instructions">Podziel się z nami tym kodem wraz z notatką o tym, co robisz, gdy się zepsuje. Publikuj go na Discordzie, GitHub Issues lub WhatsApp — linki znajdują się na ekranie Informacji.</string>
+    <string name="logs_uploaded_privacy">Sekcje poprawione · automatycznie wygasa dziennik</string>
+    <string name="logs_copy_code">Kopiuj kod</string>
+    <string name="logs_done">Gotowe</string>
+    <string name="placeholder_dash">—</string>
+    <string name="errors_network">Błąd sieci</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">Nie można odtworzyć filmu: %1$s</string>
@@ -523,7 +578,7 @@
     <string name="toast_batch_delete_partial">%1$d usunięto, %2$d nie powiodło się</string>
     <string name="play_with_chooser">Graj z</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">Zaktualizowano do v%1$s — ponownie potwierdź autostart, BYD wyciera go przy każdej instalacji</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">Już przyznane</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">Porady &amp; rozwiązywanie problemów</string>
@@ -1068,6 +1123,10 @@
     <string name="roadsense_map_poi_charging_generic">Stacja ładowania</string>
     <string name="roadsense_map_poi_fuel_generic">Stacja paliwowa</string>
     <string name="roadsense_map_route_switched">Przełączona trasa</string>
+    <!-- "then <next maneuver>" preview shown in the maneuver banner -->
+    <string name="roadsense_map_then">potem</string>
+    <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
+    <string name="roadsense_map_exit_n">Wyjdź %1$d</string>
     <!-- Hazards-along-route pills (%1$d = count) -->
     <string name="roadsense_map_pill_severe">%1$d ciężki</string>
     <string name="roadsense_map_pill_moderate">%1$d umiarkowany</string>
@@ -1094,4 +1153,36 @@
     <string name="roadsense_map_move_stop_down">Przesuń stop w dół</string>
     <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">Do %1$d dozwolonych przystanków</string>
+    <!-- Map day/night override (Auto → Light → Dark) -->
+    <string name="roadsense_map_theme_toggle">Motyw mapy</string>
+    <string name="roadsense_map_theme_auto">Motyw mapy: Auto</string>
+    <string name="roadsense_map_theme_light">Motyw mapy: Jasny</string>
+    <string name="roadsense_map_theme_dark">Motyw mapy: Ciemny</string>
+    <!-- Saved places (Home / Work / custom favourites) -->
+    <string name="roadsense_map_saved_home">Strona główna</string>
+    <string name="roadsense_map_saved_work">Praca</string>
+    <string name="roadsense_map_saved_set_home">Ustaw stronę główną</string>
+    <string name="roadsense_map_saved_set_work">Ustaw pracę</string>
+    <!-- Short action label for the "save as a custom favourite" button. -->
+    <string name="roadsense_map_saved_favourite">Ulubione</string>
+    <string name="roadsense_map_save_place">Zapisz miejsce</string>
+    <string name="roadsense_map_save_as_home">Zapisz jako Strona główna</string>
+    <string name="roadsense_map_save_as_work">Zapisz jako pracę</string>
+    <string name="roadsense_map_save_as_custom">Zapisz jako ulubione…</string>
+    <string name="roadsense_map_saved_added">Zapisano</string>
+    <string name="roadsense_map_saved_removed">Usunięto z zapisanych</string>
+    <string name="roadsense_map_saved_remove">Usuń</string>
+    <string name="roadsense_map_recent_remove">Usuń z ostatnich aplikacji</string>
+    <string name="roadsense_map_recent_removed">Usunięto z ostatnich aplikacji</string>
+    <string name="roadsense_map_custom_label_hint">Etykieta (np. Gym, mama)</string>
+    <string name="roadsense_map_custom_label_title">Nazwij to miejsce</string>
+    <string name="roadsense_map_save">Zapisz</string>
+    <string name="roadsense_map_cancel">Anuluj</string>
+    <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
+    <string name="roadsense_map_dropped_pin">Upuszczony pin</string>
+    <string name="roadsense_map_navigate_here">Nawiguj tutaj</string>
+    <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
+    <string name="roadsense_map_search_to_save">Szukaj miejsca, które chcesz ustawić jako %1$s</string>
+    <!-- Shown when re-entering the map with a previously-set trip restored. -->
+    <string name="roadsense_map_trip_restored">Przejazd przywrócony</string>
 </resources>

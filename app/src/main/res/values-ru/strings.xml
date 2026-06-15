@@ -383,8 +383,46 @@
     <string name="toast_updated_to">Обновлено на %1$s</string>
     <string name="toast_update_install_failed">Не удалось установить обновление: %1$s</string>
     <string name="toast_checking_for_updates">Проверяю обновления...</string>
-    <string name="toast_app_up_to_date">Приложение обновлено (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">Не удалось проверить обновление: %1$s</string>
+    <!-- Update dialog + version picker -->
+    <string name="update_dialog_available_title">Доступно обновление</string>
+    <string name="update_dialog_subtitle">Новая сборка готова к установке</string>
+    <string name="update_dialog_current">Текущий: v%1$s</string>
+    <string name="update_dialog_new">Новый: v%1$s</string>
+    <string name="update_dialog_current_label">Установлено</string>
+    <string name="update_dialog_new_label">Новая версия</string>
+    <string name="update_dialog_whats_new">Что нового</string>
+    <string name="update_dialog_install_now">Установить сейчас</string>
+    <string name="update_dialog_later">Позже</string>
+    <string name="update_picker_title">Выберите версию</string>
+    <string name="update_picker_subtitle">Установить все опубликованные сборки — новее или старше</string>
+    <string name="update_picker_empty">Версии ещё не опубликованы.</string>
+    <string name="update_picker_current_suffix">%1$s (установлен)</string>
+    <string name="update_picker_older_suffix">%1$s (старше)</string>
+    <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
+    <string name="update_progress_title">Обновление перегрузки</string>
+    <string name="update_step_downloading">Загрузка обновления…</string>
+    <string name="update_step_verifying">Проверка загрузки…</string>
+    <string name="update_step_stopping">Остановка демонов…</string>
+    <string name="update_step_installing">Установка обновления…</string>
+    <string name="update_step_installed">Обновление установлено</string>
+    <string name="update_step_restarting">Перезапуск приложения…</string>
+    <string name="update_step_queued">Запуск обновления…</string>
+    <string name="update_error_title">Не удалось обновить</string>
+    <string name="update_error_daemon_down">Демон камеры не запущен. Запустите его с экрана демонов, затем попробуйте обновить снова.</string>
+    <string name="update_error_start_failed">Не удалось запустить обновление: %1$s</string>
+    <string name="update_error_lost_headunit">Потерян контакт с головным блоком перед установкой. На туннеле? Проверьте Telegram на новый URL или используйте локальный IP.</string>
+    <string name="update_hide">Скрыть</string>
+    <!-- Update channel selector (Settings → About) -->
+    <string name="settings_update_channel_title">Обновить канал</string>
+    <string name="settings_update_channel_alpha">Альфа</string>
+    <string name="settings_update_channel_braveheart">Храбрый сердец</string>
+    <string name="settings_update_channel_alpha_desc">Стабильный релиз. Каждая опубликованная версия хранится — выбирайте любую из них для установки (возможны перезагрузки). Рекомендуется для повседневного использования.</string>
+    <string name="settings_update_channel_braveheart_desc">Блестящие сборки, поставленные сразу после их публикации. Вы получите новые возможности, но они могут быть нестабильными или ошибочными. Если что-то сломается, откройте экран демонов, коснитесь журнала демона, выберите «Загрузить &amp; получить код» и поделитесь кодом с нами на каналах сообщества.</string>
+    <string name="settings_update_channel_save_failed">Не удалось сохранить канал обновления</string>
+    <string name="settings_update_channel_braveheart_toast">Переключено на Braveheart. Сборки могут быть нестабильными — если что-то ломается, отправьте журнал демона и сообщите об этом в Discord/GitHub/WhatsApp.</string>
+    <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">Разрешение на хранение требуется для записей</string>
     <string name="toast_url_copied_short">URL скопирован!</string>
     <string name="toast_camera_set_to_auto">Камера настроена на Авто</string>
@@ -513,6 +551,23 @@
     <string name="log_header_source">Источник: %1$s</string>
     <string name="log_header_exported">Экспорт: %1$s</string>
     <string name="log_header_truncated">Примечание: Журнал, сокращенный до 10000 строк (всего: %1$d строк)</string>
+    <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
+    <string name="logs_send_title">Отправить журнал %1$s</string>
+    <string name="logs_send_title_plain">Отправить журнал демона</string>
+    <string name="logs_send_subtitle">%1$s · Выберите, как отправить нам</string>
+    <string name="logs_send_upload">Загрузить &amp; получить код</string>
+    <string name="logs_send_upload_desc">Отправляет логи нам и предоставляет вам короткий код. Легкая для поддержки.</string>
+    <string name="logs_send_share">Поделиться файлом…</string>
+    <string name="logs_send_share_desc">Сохраните или отправьте журнал самостоятельно через лист общего доступа.</string>
+    <string name="logs_uploading_title">Загрузка журнала…</string>
+    <string name="logs_uploading_subtitle">Исправление секретов и безопасная отправка</string>
+    <string name="logs_uploaded_title">Журнал загружен</string>
+    <string name="logs_uploaded_instructions">Поделитесь этим кодом с нами вместе с примечанием о том, что вы делали, когда он сломал. Разместите его в Discord, GitHub Issues или WhatsApp — ссылки на экране \"О программе\".</string>
+    <string name="logs_uploaded_privacy">Тайны отредактированы · журнал автоистекает</string>
+    <string name="logs_copy_code">Копировать код</string>
+    <string name="logs_done">Готово</string>
+    <string name="placeholder_dash">—</string>
+    <string name="errors_network">Ошибка сети</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">Не могу воспроизвести видео: %1$s</string>
@@ -523,7 +578,7 @@
     <string name="toast_batch_delete_partial">%1$d удалено, %2$d не удалось</string>
     <string name="play_with_chooser">Играть с</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">Обновлено на v%1$s  подтвердить автозапуск, BYD стирает его на каждой установке</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">Уже предоставлено</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">Советы и решение проблем</string>
@@ -559,9 +614,9 @@
          notifications into one shade entry. The summary text is intentionally
          generic so it stays accurate whether all three services are running
          or only the keepalive survived an OOM respawn. -->
-    <string name="daemon_keepalive_notif_title">Overdrive Active</string>
+    <string name="daemon_keepalive_notif_title">Перегрузка активна</string>
     <string name="daemon_keepalive_notif_text">Мониторинг систем транспортных средств</string>
-    <string name="overdrive_status_summary_title">Overdrive</string>
+    <string name="overdrive_status_summary_title">Перегрузка</string>
     <string name="overdrive_status_summary_text">Фоновые службы запущены</string>
     <!-- ============================================================== -->
     <!-- M3 Revamp: navigation rail + settings sub-rail + theme picker  -->
@@ -849,7 +904,7 @@
          the app lock is enabled and the session isn\'t fresh. -->
     <string name="pin_lock_title">Введите PIN-код</string>
     <string name="pin_lock_title_unlocked">Разблокирован</string>
-    <string name="pin_lock_subtitle_default">Unlock OverDrive to continue.</string>
+    <string name="pin_lock_subtitle_default">Разблокируйте передиск, чтобы продолжить.</string>
     <string name="pin_lock_subtitle_wrong">Неверный PIN-код. Попробуйте еще раз.</string>
     <string name="pin_lock_subtitle_locked_out">Слишком много попыток. Попробуйте позже.</string>
     <!-- %1$s is a formatted countdown like "30s" or "2:45". -->
@@ -949,11 +1004,11 @@
     <!-- ============================================================
          RoadSense — road-hazard detection feature
          ============================================================ -->
-    <string name="rail_roadsense">RoadSense</string>
+    <string name="rail_roadsense">РоудСенс</string>
     <string name="rail_hazard_map">Карта</string>
-    <string name="roadsense_title">RoadSense</string>
+    <string name="roadsense_title">РоудСенс</string>
     <string name="roadsense_pill_scanning">Сканирование</string>
-    <string name="roadsense_pill_idle">RoadSense</string>
+    <string name="roadsense_pill_idle">РоудСенс</string>
     <string name="roadsense_status_idle">Простой</string>
     <!-- VEHICLE calibration (suspension-learning) — the green/orange/red dot. Worded
          about the car, not the route, since that's what maturity actually measures. -->
@@ -1068,6 +1123,10 @@
     <string name="roadsense_map_poi_charging_generic">Зарядка станции</string>
     <string name="roadsense_map_poi_fuel_generic">Заправочная станция</string>
     <string name="roadsense_map_route_switched">Сменный маршрут</string>
+    <!-- "then <next maneuver>" preview shown in the maneuver banner -->
+    <string name="roadsense_map_then">затем</string>
+    <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
+    <string name="roadsense_map_exit_n">выйти из %1$d</string>
     <!-- Hazards-along-route pills (%1$d = count) -->
     <string name="roadsense_map_pill_severe">Тяжелое %1$d</string>
     <string name="roadsense_map_pill_moderate">%1$d модерируемый</string>
@@ -1094,4 +1153,36 @@
     <string name="roadsense_map_move_stop_down">Остановить вниз</string>
     <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">Допускается до %1$d остановки</string>
+    <!-- Map day/night override (Auto → Light → Dark) -->
+    <string name="roadsense_map_theme_toggle">Тема карты</string>
+    <string name="roadsense_map_theme_auto">Тема карты: авто</string>
+    <string name="roadsense_map_theme_light">Тема карты: Светлая</string>
+    <string name="roadsense_map_theme_dark">Тема карты: темная</string>
+    <!-- Saved places (Home / Work / custom favourites) -->
+    <string name="roadsense_map_saved_home">Домашний</string>
+    <string name="roadsense_map_saved_work">Работа</string>
+    <string name="roadsense_map_saved_set_home">Установить дом</string>
+    <string name="roadsense_map_saved_set_work">Задать работу</string>
+    <!-- Short action label for the "save as a custom favourite" button. -->
+    <string name="roadsense_map_saved_favourite">Избранное</string>
+    <string name="roadsense_map_save_place">Сохранить место</string>
+    <string name="roadsense_map_save_as_home">Сохранить как главную</string>
+    <string name="roadsense_map_save_as_work">Сохранить как Работу</string>
+    <string name="roadsense_map_save_as_custom">Сохранить как избранное…</string>
+    <string name="roadsense_map_saved_added">Сохранено</string>
+    <string name="roadsense_map_saved_removed">Удалено из сохраненных</string>
+    <string name="roadsense_map_saved_remove">Удалить</string>
+    <string name="roadsense_map_recent_remove">Удалить из недавних</string>
+    <string name="roadsense_map_recent_removed">Удалено из недавних</string>
+    <string name="roadsense_map_custom_label_hint">Метка (например, Gym, Mum\'s)</string>
+    <string name="roadsense_map_custom_label_title">Назовите это место</string>
+    <string name="roadsense_map_save">Сохранить</string>
+    <string name="roadsense_map_cancel">Отмена</string>
+    <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
+    <string name="roadsense_map_dropped_pin">Выброшен маркер</string>
+    <string name="roadsense_map_navigate_here">Перейдите здесь</string>
+    <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
+    <string name="roadsense_map_search_to_save">Искать место для установки как %1$s</string>
+    <!-- Shown when re-entering the map with a previously-set trip restored. -->
+    <string name="roadsense_map_trip_restored">Поездка восстановлена</string>
 </resources>

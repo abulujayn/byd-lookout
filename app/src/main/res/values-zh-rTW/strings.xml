@@ -94,6 +94,9 @@
     <string name="logs_panel_title">記錄時間</string>
     <!-- activity_main_new / activity_main-land -->
     <string name="url_connecting">聯繫我們.</string>
+    <!-- Shown when an external link can't open (no browser on the head unit):
+         the URL is copied to the clipboard instead. %1$s = the URL. -->
+    <string name="url_copied_no_browser">No browser found. Link copied: %1$s</string>
     <!-- dialog_tailscale_settings -->
     <string name="tailscale_generate_login_url">生成登入 URL</string>
     <string name="tailscale_scan_to_login">掃描到登入</string>
@@ -135,6 +138,8 @@
     <string name="camera_oem_dashcam_auto_resolved">Auto — using id %1$d (pano is id %2$d)</string>
     <string name="camera_oem_dashcam_auto_unavailable">Auto — pano id is %1$d, can\'t infer dashcam</string>
     <string name="camera_oem_dashcam_save">Save</string>
+    <string name="camera_concurrent_probe_label">Test dual-camera support on next boot</string>
+    <string name="camera_concurrent_probe_subtitle">One-time check that opens both cameras at once to confirm this vehicle can run pano + dashcam concurrently. Runs once on the next restart while parked. Leave OFF unless recordings look wrong — it is not required and may briefly interrupt a recording if one is active when it runs.</string>
     <!-- Dashcam-side camera labels — REVERSE of the pano labels above. The
          OEM dashcam id is the opposite of the pano id, so the helpful
          "this is what your trim should pick" hint flips between the two
@@ -369,8 +374,46 @@
     <string name="toast_updated_to">更新至 %1$s</string>
     <string name="toast_update_install_failed">更新安裝失敗: %1$s</string>
     <string name="toast_checking_for_updates">檢查是否有更新.</string>
-    <string name="toast_app_up_to_date">應用程式已更新 (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">更新檢查失敗: %1$s</string>
+    <!-- Update dialog + version picker -->
+    <string name="update_dialog_available_title">Update available</string>
+    <string name="update_dialog_subtitle">A newer build is ready to install</string>
+    <string name="update_dialog_current">Current: v%1$s</string>
+    <string name="update_dialog_new">New: v%1$s</string>
+    <string name="update_dialog_current_label">Installed</string>
+    <string name="update_dialog_new_label">New version</string>
+    <string name="update_dialog_whats_new">What\'s new</string>
+    <string name="update_dialog_install_now">Install now</string>
+    <string name="update_dialog_later">Later</string>
+    <string name="update_picker_title">Choose a version</string>
+    <string name="update_picker_subtitle">Install any published build — newer or older</string>
+    <string name="update_picker_empty">No versions published yet.</string>
+    <string name="update_picker_current_suffix">%1$s (installed)</string>
+    <string name="update_picker_older_suffix">%1$s (older)</string>
+    <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
+    <string name="update_progress_title">Updating Overdrive</string>
+    <string name="update_step_downloading">Downloading update…</string>
+    <string name="update_step_verifying">Verifying download…</string>
+    <string name="update_step_stopping">Stopping daemons…</string>
+    <string name="update_step_installing">Installing update…</string>
+    <string name="update_step_installed">Update installed</string>
+    <string name="update_step_restarting">Restarting app…</string>
+    <string name="update_step_queued">Starting update…</string>
+    <string name="update_error_title">Update failed</string>
+    <string name="update_error_daemon_down">Camera daemon isn\'t running. Start it from the Daemons screen, then try updating again.</string>
+    <string name="update_error_start_failed">Couldn\'t start the update: %1$s</string>
+    <string name="update_error_lost_headunit">Lost contact with the head unit before the install finished. On a tunnel? Check Telegram for the new URL, or use the local IP.</string>
+    <string name="update_hide">Hide</string>
+    <!-- Update channel selector (Settings → About) -->
+    <string name="settings_update_channel_title">Update channel</string>
+    <string name="settings_update_channel_alpha">Alpha</string>
+    <string name="settings_update_channel_braveheart">Braveheart</string>
+    <string name="settings_update_channel_alpha_desc">The stable release. Every published version is kept — pick any to install (downgrades allowed). Recommended for everyday use.</string>
+    <string name="settings_update_channel_braveheart_desc">Bleeding-edge builds, delivered the moment they\'re published. You get new features first, but they may be unstable or buggy. If something breaks, open the Daemons screen, tap a daemon\'s log, choose \"Upload &amp; get a code\", and share the code with us on the community channels.</string>
+    <string name="settings_update_channel_save_failed">Could not save the update channel</string>
+    <string name="settings_update_channel_braveheart_toast">Switched to Braveheart. Builds may be unstable — if something breaks, send the daemon log and report it on Discord/GitHub/WhatsApp.</string>
+    <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">需要存儲許可,</string>
     <string name="toast_url_copied_short">這就是 URL複製!</string>
     <string name="toast_camera_set_to_auto">攝影機設定為自動</string>
@@ -499,6 +542,23 @@
     <string name="log_header_source">源:%1$s</string>
     <string name="log_header_exported">輸出:%1$s</string>
     <string name="log_header_truncated">註: 截圖截圖為10000行 (總數:%1$d行)</string>
+    <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
+    <string name="logs_send_title">Send %1$s log</string>
+    <string name="logs_send_title_plain">Send daemon log</string>
+    <string name="logs_send_subtitle">%1$s · choose how to send it to us</string>
+    <string name="logs_send_upload">Upload &amp; get a code</string>
+    <string name="logs_send_upload_desc">Sends the log to us and gives you a short code. Easiest for support.</string>
+    <string name="logs_send_share">Share file…</string>
+    <string name="logs_send_share_desc">Save or send the log yourself via the share sheet.</string>
+    <string name="logs_uploading_title">Uploading log…</string>
+    <string name="logs_uploading_subtitle">Redacting secrets and sending securely</string>
+    <string name="logs_uploaded_title">Log uploaded</string>
+    <string name="logs_uploaded_instructions">Share this code with us, along with a note on what you were doing when it broke. Post it on Discord, GitHub Issues or WhatsApp — links are on the About screen.</string>
+    <string name="logs_uploaded_privacy">Secrets redacted · the log auto-expires</string>
+    <string name="logs_copy_code">Copy code</string>
+    <string name="logs_done">Done</string>
+    <string name="placeholder_dash">—</string>
+    <string name="errors_network">Network error</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">不能播放影片: %1$s</string>
@@ -509,7 +569,7 @@
     <string name="toast_batch_delete_partial">%1$d 已被删除, %2$d 失败</string>
     <string name="play_with_chooser">玩一下</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">更新至v%1$s 重新確認自动啟動,BYD在每次安裝都擦除它</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">已授予</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">解決問題的建議</string>
@@ -918,6 +978,7 @@
          RoadSense — road-hazard detection feature
          ============================================================ -->
     <string name="rail_roadsense">RoadSense</string>
+    <string name="rail_hazard_map">Map</string>
     <string name="roadsense_title">RoadSense</string>
     <string name="roadsense_pill_scanning">Scanning</string>
     <string name="roadsense_pill_idle">RoadSense</string>
@@ -958,32 +1019,41 @@
     <string name="roadsense_confirm_reject">Not a hazard</string>
     <string name="roadsense_confirm_accept">Confirm</string>
     <!-- content descriptions -->
-    <string name="roadsense_cd_cal_level">Route calibration level</string>
+    <string name="roadsense_cd_cal_level">Vehicle calibration level</string>
     <string name="roadsense_cd_direction">Direction to next hazard</string>
-    <string name="blindspot_overlay_left">左</string>
-    <string name="camera_concurrent_probe_label">下次開機時測試雙相機支援</string>
-    <string name="camera_concurrent_probe_subtitle">一次性檢查，會同時開啟兩個相機，以確認本車可同時執行環景＋行車記錄。停車時在下次重新啟動時執行一次。除非錄影看起來有誤，否則請保持關閉 — 此功能並非必要，且若執行時正在錄影，可能會短暫中斷錄影。</string>
-    <string name="blindspot_overlay_right">右</string>
-    <string name="url_copied_no_browser">No browser found. Link copied: %1$s</string>
-    <string name="rail_hazard_map">Map</string>
+    <!-- Blind Spot overlay labels (native overlay window). -->
+    <string name="blindspot_overlay_left">LEFT</string>
+    <string name="blindspot_overlay_right">RIGHT</string>
+    <!-- ============================================================== -->
+    <!-- RoadSense Map (native MapLibre map view + tap-to-verify sheet). -->
+    <!-- ============================================================== -->
     <string name="roadsense_map_title">Map</string>
     <string name="roadsense_map_route_clear">Clear</string>
     <string name="roadsense_map_route_unmapped">Not mapped yet</string>
     <string name="roadsense_map_back">Back</string>
     <string name="roadsense_map_recenter">Recenter on my location</string>
+    <!-- Tap-to-verify bottom sheet -->
     <string name="roadsense_map_severity_label">Severity</string>
     <string name="roadsense_map_type_label">Type</string>
     <string name="roadsense_map_type_unknown">Unknown</string>
     <string name="roadsense_map_confirm">Confirm</string>
     <string name="roadsense_map_delete">Delete</string>
+    <!-- Status chip labels: candidate / on-device / shared with fleet -->
     <string name="roadsense_map_status_candidate">Candidate</string>
     <string name="roadsense_map_status_local">On device</string>
     <string name="roadsense_map_status_cloud">Shared</string>
+    <!-- Meta line: "Moderate · 82% confidence · 3 reports" -->
     <string name="roadsense_map_meta_format">%1$s · %2$d%% confidence · %3$s</string>
+    <!-- "3 reports" / "1 report" -->
+    <plurals name="roadsense_map_reports">
+        <item quantity="other">%1$d reports</item>
+    </plurals>
+    <!-- Snackbar / toast confirmations -->
     <string name="roadsense_map_confirmed_toast">Hazard confirmed</string>
     <string name="roadsense_map_deleted_toast">Hazard removed</string>
     <string name="roadsense_map_action_failed">Could not reach RoadSense. Try again.</string>
     <string name="roadsense_map_no_location">Waiting for GPS fix…</string>
+    <!-- Navigation: search + routing + turn-by-turn -->
     <string name="roadsense_map_search_hint">Search destination</string>
     <string name="roadsense_map_search_action">Search</string>
     <string name="roadsense_map_searching">Searching…</string>
@@ -999,18 +1069,22 @@
     <string name="roadsense_map_end_nav">End navigation</string>
     <string name="roadsense_map_zoom_in">Zoom in</string>
     <string name="roadsense_map_zoom_out">Zoom out</string>
+    <!-- Hazard visibility filter -->
     <string name="roadsense_map_hazards_filter">Hazard visibility</string>
     <string name="roadsense_map_hazards_all">Show all hazards</string>
     <string name="roadsense_map_hazards_moderate">Moderate and severe</string>
     <string name="roadsense_map_hazards_severe">Severe only</string>
     <string name="roadsense_map_hazards_hidden">Hide hazards</string>
+    <!-- POI along route (EV charging / fuel) -->
     <string name="roadsense_map_poi_toggle">Charging and fuel</string>
+    <!-- 2D / 3D buildings toggle -->
     <string name="roadsense_map_dimension_toggle">2D / 3D buildings</string>
     <string name="roadsense_map_3d_on">3D buildings on</string>
     <string name="roadsense_map_3d_off">3D buildings off</string>
     <string name="roadsense_map_poi_loading">Finding charging and fuel stops…</string>
     <string name="roadsense_map_poi_none">No stations found nearby</string>
     <string name="roadsense_map_poi_need_route">Choose a destination first</string>
+    <!-- POI tap action sheet -->
     <string name="roadsense_map_stop_added">Stop added</string>
     <string name="roadsense_map_remove_stop_action">Remove stop</string>
     <string name="roadsense_map_poi_navigate">Navigate here</string>
@@ -1019,17 +1093,27 @@
     <string name="roadsense_map_poi_charging_generic">Charging station</string>
     <string name="roadsense_map_poi_fuel_generic">Fuel station</string>
     <string name="roadsense_map_route_switched">Switched route</string>
+    <!-- "then <next maneuver>" preview shown in the maneuver banner -->
+    <string name="roadsense_map_then">then</string>
+    <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
+    <string name="roadsense_map_exit_n">exit %1$d</string>
+    <!-- Hazards-along-route pills (%1$d = count) -->
     <string name="roadsense_map_pill_severe">%1$d severe</string>
     <string name="roadsense_map_pill_moderate">%1$d moderate</string>
     <string name="roadsense_map_pill_minor">%1$d minor</string>
+    <!-- Shown briefly if the basemap can\'t be reached. -->
     <string name="roadsense_map_offline">Map data unavailable offline</string>
+    <!-- Navigation: autocomplete + route options -->
     <string name="roadsense_map_clear_search">Clear search</string>
+    <!-- Route-options sheet -->
     <string name="roadsense_map_routes_title">Choose a route</string>
     <string name="roadsense_map_routes_to">Routes to %1$s</string>
     <string name="roadsense_map_routes_cancel">Cancel</string>
+    <!-- Per-route row label, %1$d is the 1-based route number. -->
     <string name="roadsense_map_route_option">Route %1$d</string>
     <string name="roadsense_map_fastest">Fastest</string>
     <string name="roadsense_map_start">Start</string>
+    <!-- Stops / waypoints in the route-options sheet -->
     <string name="roadsense_map_your_location">Your location</string>
     <string name="roadsense_map_add_stop">Add stop</string>
     <string name="roadsense_map_add_stop_hint">Search a stop to add</string>
@@ -1037,83 +1121,38 @@
     <string name="roadsense_map_remove_stop">Remove stop</string>
     <string name="roadsense_map_move_stop_up">Move stop up</string>
     <string name="roadsense_map_move_stop_down">Move stop down</string>
+    <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">Up to %1$d stops allowed</string>
-    <string name="update_dialog_available_title">有可用的更新</string>
-    <string name="update_dialog_subtitle">有新版本可供安裝</string>
-    <string name="update_dialog_current">目前版本：v%1$s</string>
-    <string name="update_dialog_new">新版本：v%1$s</string>
-    <string name="update_dialog_current_label">已安裝</string>
-    <string name="update_dialog_new_label">新版本</string>
-    <string name="update_dialog_whats_new">最新消息</string>
-    <string name="update_dialog_install_now">立即安裝</string>
-    <string name="update_dialog_later">稍後</string>
-    <string name="update_picker_title">選擇版本</string>
-    <string name="update_picker_subtitle">安裝任何已發佈的版本 — 無論新舊</string>
-    <string name="update_picker_empty">尚未發佈任何版本。</string>
-    <string name="update_picker_current_suffix">%1$s (已安裝)</string>
-    <string name="update_picker_older_suffix">%1$s (舊版本)</string>
-    <string name="update_progress_title">正在更新 Overdrive</string>
-    <string name="update_step_downloading">正在下載更新…</string>
-    <string name="update_step_verifying">正在驗證下載…</string>
-    <string name="update_step_stopping">正在停止守護程式…</string>
-    <string name="update_step_installing">正在安裝更新…</string>
-    <string name="update_step_installed">更新已安裝</string>
-    <string name="update_step_restarting">正在重新啟動應用程式…</string>
-    <string name="update_step_queued">正在啟動更新…</string>
-    <string name="update_error_title">更新失敗</string>
-    <string name="update_error_daemon_down">相機守護程式未執行。請從「守護程式」畫面啟動，然後再試一次更新。</string>
-    <string name="update_error_start_failed">無法啟動更新：%1$s</string>
-    <string name="update_error_lost_headunit">安裝完成前與車機失去連線。是否在隧道中？請查看 Telegram 以取得新網址，或使用本機 IP。</string>
-    <string name="update_hide">隱藏</string>
-    <string name="settings_update_channel_title">更新頻道</string>
-    <string name="settings_update_channel_alpha">Alpha</string>
-    <string name="settings_update_channel_braveheart">Braveheart</string>
-    <string name="settings_update_channel_alpha_desc">穩定版本。所有已發佈的版本都會保留 — 可選擇任何版本安裝（允許降級）。建議日常使用。</string>
-    <string name="settings_update_channel_braveheart_desc">最前瞻的版本，發佈後立即提供。您將搶先體驗新功能，但它們可能不穩定或存在錯誤。如果發生問題，請開啟「守護程式」畫面，點擊守護程式的日誌，選擇「上傳並取得代碼」，然後在社群頻道上與我們分享代碼。</string>
-    <string name="settings_update_channel_save_failed">無法儲存更新頻道</string>
-    <string name="settings_update_channel_braveheart_toast">已切換至 Braveheart。版本可能不穩定 — 如果發生問題，請傳送守護程式日誌並在 Discord/GitHub/WhatsApp 上回報。</string>
-    <string name="logs_send_title">傳送 %1$s 日誌</string>
-    <string name="logs_send_title_plain">傳送守護程式日誌</string>
-    <string name="logs_send_subtitle">%1$s · 選擇如何傳送給我們</string>
-    <string name="logs_send_upload">上傳並取得代碼</string>
-    <string name="logs_send_upload_desc">將日誌傳送給我們並提供您一個簡短代碼。最方便取得支援。</string>
-    <string name="logs_send_share">分享檔案…</string>
-    <string name="logs_send_share_desc">透過分享表單自行儲存或傳送日誌。</string>
-    <string name="logs_uploading_title">正在上傳日誌…</string>
-    <string name="logs_uploading_subtitle">正在隱藏機密資訊並安全傳送</string>
-    <string name="logs_uploaded_title">日誌已上傳</string>
-    <string name="logs_uploaded_instructions">請與我們分享此代碼，並附註發生問題時您正在進行的操作。將其發佈到 Discord、GitHub Issues 或 WhatsApp — 連結位於「關於」畫面。</string>
-    <string name="logs_uploaded_privacy">機密資訊已隱藏 · 日誌將自動過期</string>
-    <string name="logs_copy_code">複製代碼</string>
-    <string name="logs_done">完成</string>
-    <string name="placeholder_dash">—</string>
-    <string name="errors_network">網路錯誤</string>
-    <string name="roadsense_map_then">然後</string>
-    <string name="roadsense_map_exit_n">結束 %1$d</string>
-    <string name="roadsense_map_theme_toggle">地圖主題</string>
-    <string name="roadsense_map_theme_auto">地圖主題：自動</string>
-    <string name="roadsense_map_theme_light">地圖主題：淺色</string>
-    <string name="roadsense_map_theme_dark">地圖主題：深色</string>
-    <string name="roadsense_map_saved_home">住家</string>
-    <string name="roadsense_map_saved_work">公司</string>
-    <string name="roadsense_map_saved_set_home">設定住家</string>
-    <string name="roadsense_map_saved_set_work">設定公司</string>
-    <string name="roadsense_map_saved_favourite">最愛</string>
-    <string name="roadsense_map_save_place">儲存地點</string>
-    <string name="roadsense_map_save_as_home">儲存為住家</string>
-    <string name="roadsense_map_save_as_work">儲存為公司</string>
-    <string name="roadsense_map_save_as_custom">儲存為最愛…</string>
-    <string name="roadsense_map_saved_added">已儲存</string>
-    <string name="roadsense_map_saved_removed">已從已儲存中移除</string>
-    <string name="roadsense_map_saved_remove">移除</string>
-    <string name="roadsense_map_recent_remove">從最近項目中移除</string>
-    <string name="roadsense_map_recent_removed">已從最近項目中移除</string>
-    <string name="roadsense_map_custom_label_hint">標籤 (例如：健身房、媽媽家)</string>
-    <string name="roadsense_map_custom_label_title">命名此地點</string>
-    <string name="roadsense_map_save">儲存</string>
-    <string name="roadsense_map_cancel">取消</string>
-    <string name="roadsense_map_dropped_pin">已放置圖釘</string>
-    <string name="roadsense_map_navigate_here">導航至此</string>
-    <string name="roadsense_map_search_to_save">搜尋地點以設定為 %1$s</string>
-    <string name="roadsense_map_trip_restored">行程已恢復</string>
+    <!-- Map day/night override (Auto → Light → Dark) -->
+    <string name="roadsense_map_theme_toggle">Map theme</string>
+    <string name="roadsense_map_theme_auto">Map theme: Auto</string>
+    <string name="roadsense_map_theme_light">Map theme: Light</string>
+    <string name="roadsense_map_theme_dark">Map theme: Dark</string>
+    <!-- Saved places (Home / Work / custom favourites) -->
+    <string name="roadsense_map_saved_home">Home</string>
+    <string name="roadsense_map_saved_work">Work</string>
+    <string name="roadsense_map_saved_set_home">Set Home</string>
+    <string name="roadsense_map_saved_set_work">Set Work</string>
+    <!-- Short action label for the "save as a custom favourite" button. -->
+    <string name="roadsense_map_saved_favourite">Favourite</string>
+    <string name="roadsense_map_save_place">Save place</string>
+    <string name="roadsense_map_save_as_home">Save as Home</string>
+    <string name="roadsense_map_save_as_work">Save as Work</string>
+    <string name="roadsense_map_save_as_custom">Save as favourite…</string>
+    <string name="roadsense_map_saved_added">Saved</string>
+    <string name="roadsense_map_saved_removed">Removed from saved</string>
+    <string name="roadsense_map_saved_remove">Remove</string>
+    <string name="roadsense_map_recent_remove">Remove from recents</string>
+    <string name="roadsense_map_recent_removed">Removed from recents</string>
+    <string name="roadsense_map_custom_label_hint">Label (e.g. Gym, Mum\'s)</string>
+    <string name="roadsense_map_custom_label_title">Name this place</string>
+    <string name="roadsense_map_save">Save</string>
+    <string name="roadsense_map_cancel">Cancel</string>
+    <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
+    <string name="roadsense_map_dropped_pin">Dropped pin</string>
+    <string name="roadsense_map_navigate_here">Navigate here</string>
+    <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
+    <string name="roadsense_map_search_to_save">Search a place to set as %1$s</string>
+    <!-- Shown when re-entering the map with a previously-set trip restored. -->
+    <string name="roadsense_map_trip_restored">Trip restored</string>
 </resources>

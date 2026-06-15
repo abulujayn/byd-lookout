@@ -380,8 +380,46 @@
     <string name="toast_updated_to">Updated to %1$s</string>
     <string name="toast_update_install_failed">Update install failed: %1$s</string>
     <string name="toast_checking_for_updates">Checking for updates…</string>
-    <string name="toast_app_up_to_date">App is up to date (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">Update check failed: %1$s</string>
+    <!-- Update dialog + version picker -->
+    <string name="update_dialog_available_title">Update available</string>
+    <string name="update_dialog_subtitle">A newer build is ready to install</string>
+    <string name="update_dialog_current">Current: v%1$s</string>
+    <string name="update_dialog_new">New: v%1$s</string>
+    <string name="update_dialog_current_label">Installed</string>
+    <string name="update_dialog_new_label">New version</string>
+    <string name="update_dialog_whats_new">What\'s new</string>
+    <string name="update_dialog_install_now">Install now</string>
+    <string name="update_dialog_later">Later</string>
+    <string name="update_picker_title">Choose a version</string>
+    <string name="update_picker_subtitle">Install any published build — newer or older</string>
+    <string name="update_picker_empty">No versions published yet.</string>
+    <string name="update_picker_current_suffix">%1$s (installed)</string>
+    <string name="update_picker_older_suffix">%1$s (older)</string>
+    <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
+    <string name="update_progress_title">Updating Overdrive</string>
+    <string name="update_step_downloading">Downloading update…</string>
+    <string name="update_step_verifying">Verifying download…</string>
+    <string name="update_step_stopping">Stopping daemons…</string>
+    <string name="update_step_installing">Installing update…</string>
+    <string name="update_step_installed">Update installed</string>
+    <string name="update_step_restarting">Restarting app…</string>
+    <string name="update_step_queued">Starting update…</string>
+    <string name="update_error_title">Update failed</string>
+    <string name="update_error_daemon_down">Camera daemon isn\'t running. Start it from the Daemons screen, then try updating again.</string>
+    <string name="update_error_start_failed">Couldn\'t start the update: %1$s</string>
+    <string name="update_error_lost_headunit">Lost contact with the head unit before the install finished. On a tunnel? Check Telegram for the new URL, or use the local IP.</string>
+    <string name="update_hide">Hide</string>
+    <!-- Update channel selector (Settings → About) -->
+    <string name="settings_update_channel_title">Update channel</string>
+    <string name="settings_update_channel_alpha">Alpha</string>
+    <string name="settings_update_channel_braveheart">Braveheart</string>
+    <string name="settings_update_channel_alpha_desc">The stable release. Every published version is kept — pick any to install (downgrades allowed). Recommended for everyday use.</string>
+    <string name="settings_update_channel_braveheart_desc">Bleeding-edge builds, delivered the moment they\'re published. You get new features first, but they may be unstable or buggy. If something breaks, open the Daemons screen, tap a daemon\'s log, choose \"Upload &amp; get a code\", and share the code with us on the community channels.</string>
+    <string name="settings_update_channel_save_failed">Could not save the update channel</string>
+    <string name="settings_update_channel_braveheart_toast">Switched to Braveheart. Builds may be unstable — if something breaks, send the daemon log and report it on Discord/GitHub/WhatsApp.</string>
+    <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">Storage permission required for recordings</string>
     <string name="toast_url_copied_short">URL copied!</string>
     <string name="toast_camera_set_to_auto">Camera set to Auto</string>
@@ -510,6 +548,23 @@
     <string name="log_header_source">Source: %1$s</string>
     <string name="log_header_exported">Exported: %1$s</string>
     <string name="log_header_truncated">NOTE: Log truncated to last 10000 lines (total: %1$d lines)</string>
+    <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
+    <string name="logs_send_title">Send %1$s log</string>
+    <string name="logs_send_title_plain">Send daemon log</string>
+    <string name="logs_send_subtitle">%1$s · choose how to send it to us</string>
+    <string name="logs_send_upload">Upload &amp; get a code</string>
+    <string name="logs_send_upload_desc">Sends the log to us and gives you a short code. Easiest for support.</string>
+    <string name="logs_send_share">Share file…</string>
+    <string name="logs_send_share_desc">Save or send the log yourself via the share sheet.</string>
+    <string name="logs_uploading_title">Uploading log…</string>
+    <string name="logs_uploading_subtitle">Redacting secrets and sending securely</string>
+    <string name="logs_uploaded_title">Log uploaded</string>
+    <string name="logs_uploaded_instructions">Share this code with us, along with a note on what you were doing when it broke. Post it on Discord, GitHub Issues or WhatsApp — links are on the About screen.</string>
+    <string name="logs_uploaded_privacy">Secrets redacted · the log auto-expires</string>
+    <string name="logs_copy_code">Copy code</string>
+    <string name="logs_done">Done</string>
+    <string name="placeholder_dash">—</string>
+    <string name="errors_network">Network error</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">Cannot play video: %1$s</string>
@@ -520,7 +575,7 @@
     <string name="toast_batch_delete_partial">%1$d deleted, %2$d failed</string>
     <string name="play_with_chooser">Play with</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">Updated to v%1$s — re-confirm autostart, BYD wipes it on every install</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">Already Granted</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">Tips &amp; troubleshooting</string>
@@ -1058,6 +1113,10 @@
     <string name="roadsense_map_poi_charging_generic">Charging station</string>
     <string name="roadsense_map_poi_fuel_generic">Fuel station</string>
     <string name="roadsense_map_route_switched">Switched route</string>
+    <!-- "then <next maneuver>" preview shown in the maneuver banner -->
+    <string name="roadsense_map_then">then</string>
+    <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
+    <string name="roadsense_map_exit_n">exit %1$d</string>
     <!-- Hazards-along-route pills (%1$d = count) -->
     <string name="roadsense_map_pill_severe">%1$d severe</string>
     <string name="roadsense_map_pill_moderate">%1$d moderate</string>
@@ -1084,4 +1143,36 @@
     <string name="roadsense_map_move_stop_down">Move stop down</string>
     <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">Up to %1$d stops allowed</string>
+    <!-- Map day/night override (Auto → Light → Dark) -->
+    <string name="roadsense_map_theme_toggle">Map theme</string>
+    <string name="roadsense_map_theme_auto">Map theme: Auto</string>
+    <string name="roadsense_map_theme_light">Map theme: Light</string>
+    <string name="roadsense_map_theme_dark">Map theme: Dark</string>
+    <!-- Saved places (Home / Work / custom favourites) -->
+    <string name="roadsense_map_saved_home">Home</string>
+    <string name="roadsense_map_saved_work">Work</string>
+    <string name="roadsense_map_saved_set_home">Set Home</string>
+    <string name="roadsense_map_saved_set_work">Set Work</string>
+    <!-- Short action label for the "save as a custom favourite" button. -->
+    <string name="roadsense_map_saved_favourite">Favourite</string>
+    <string name="roadsense_map_save_place">Save place</string>
+    <string name="roadsense_map_save_as_home">Save as Home</string>
+    <string name="roadsense_map_save_as_work">Save as Work</string>
+    <string name="roadsense_map_save_as_custom">Save as favourite…</string>
+    <string name="roadsense_map_saved_added">Saved</string>
+    <string name="roadsense_map_saved_removed">Removed from saved</string>
+    <string name="roadsense_map_saved_remove">Remove</string>
+    <string name="roadsense_map_recent_remove">Remove from recents</string>
+    <string name="roadsense_map_recent_removed">Removed from recents</string>
+    <string name="roadsense_map_custom_label_hint">Label (e.g. Gym, Mum\'s)</string>
+    <string name="roadsense_map_custom_label_title">Name this place</string>
+    <string name="roadsense_map_save">Save</string>
+    <string name="roadsense_map_cancel">Cancel</string>
+    <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
+    <string name="roadsense_map_dropped_pin">Dropped pin</string>
+    <string name="roadsense_map_navigate_here">Navigate here</string>
+    <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
+    <string name="roadsense_map_search_to_save">Search a place to set as %1$s</string>
+    <!-- Shown when re-entering the map with a previously-set trip restored. -->
+    <string name="roadsense_map_trip_restored">Trip restored</string>
 </resources>

@@ -374,8 +374,46 @@
     <string name="toast_updated_to">更新至%1$s</string>
     <string name="toast_update_install_failed">更新安装失败:%1$s</string>
     <string name="toast_checking_for_updates">检查是否有更新...</string>
-    <string name="toast_app_up_to_date">应用程序更新 (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">更新检查失败:%1$s</string>
+    <!-- Update dialog + version picker -->
+    <string name="update_dialog_available_title">可用更新</string>
+    <string name="update_dialog_subtitle">更新后的构建准备安装</string>
+    <string name="update_dialog_current">当前: v%1$s</string>
+    <string name="update_dialog_new">新建：v%1$s</string>
+    <string name="update_dialog_current_label">已安装</string>
+    <string name="update_dialog_new_label">新版本</string>
+    <string name="update_dialog_whats_new">新功能</string>
+    <string name="update_dialog_install_now">立即安装</string>
+    <string name="update_dialog_later">稍后再说</string>
+    <string name="update_picker_title">选择一个版本</string>
+    <string name="update_picker_subtitle">安装任何已发布的版本 — — 更新或更高版本</string>
+    <string name="update_picker_empty">尚未发布任何版本。</string>
+    <string name="update_picker_current_suffix">%1$s (已安装)</string>
+    <string name="update_picker_older_suffix">%1$s (旧)</string>
+    <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
+    <string name="update_progress_title">正在更新过多驱动器</string>
+    <string name="update_step_downloading">正在下载更新…</string>
+    <string name="update_step_verifying">正在验证下载…</string>
+    <string name="update_step_stopping">停止守护进程…</string>
+    <string name="update_step_installing">安装更新…</string>
+    <string name="update_step_installed">更新已安装</string>
+    <string name="update_step_restarting">Restarting app…</string>
+    <string name="update_step_queued">开始更新…</string>
+    <string name="update_error_title">更新失败</string>
+    <string name="update_error_daemon_down">相机守护进程未运行。从守护进程屏幕启动，然后再次尝试更新。</string>
+    <string name="update_error_start_failed">无法开始更新： %1$s</string>
+    <string name="update_error_lost_headunit">安装完成前丢失了与头部的联系。在隧道上吗？检查新的 URL，或使用本地IP。</string>
+    <string name="update_hide">隐藏</string>
+    <!-- Update channel selector (Settings → About) -->
+    <string name="settings_update_channel_title">更新频道</string>
+    <string name="settings_update_channel_alpha">阿尔法</string>
+    <string name="settings_update_channel_braveheart">脑心</string>
+    <string name="settings_update_channel_alpha_desc">稳定的版本。每个已发布的版本都被保留-选择任何安装(允许降级)。推荐日常使用。</string>
+    <string name="settings_update_channel_braveheart_desc">Bleeding-edge 构建，发布后你会获得新的功能，但它们可能不稳定或有问题。 如果有些东西中断，打开守护程序屏幕，点击守护程序的日志， 选择 \"Upload &amp; 获取代码\"，然后在社区频道上与我们分享代码。</string>
+    <string name="settings_update_channel_save_failed">无法保存更新频道</string>
+    <string name="settings_update_channel_braveheart_toast">切换到 Braveheart 。生成可能是不稳定的，如果出现损坏，则发送守护进程日志并在Discord/GitHub/WhatsApp上报告。</string>
+    <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">录音所需的存储许可</string>
     <string name="toast_url_copied_short">已复制了URL!</string>
     <string name="toast_camera_set_to_auto">摄像头设置为自动</string>
@@ -504,6 +542,23 @@
     <string name="log_header_source">来源:%1$s</string>
     <string name="log_header_exported">出口:%1$s</string>
     <string name="log_header_truncated">注:截至10000行的日志 (总数:%1$d行)</string>
+    <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
+    <string name="logs_send_title">发送 %1$s 日志</string>
+    <string name="logs_send_title_plain">发送守护进程日志</string>
+    <string name="logs_send_subtitle">%1$s · 选择如何向我们发送它</string>
+    <string name="logs_send_upload">上传 &amp; 获取代码</string>
+    <string name="logs_send_upload_desc">给我们发送日志并给您一个简短的代码。最容易获得支持。</string>
+    <string name="logs_send_share">共享文件…</string>
+    <string name="logs_send_share_desc">通过共享表保存或发送您的日志。</string>
+    <string name="logs_uploading_title">Uploading log…</string>
+    <string name="logs_uploading_subtitle">编辑密钥并安全发送</string>
+    <string name="logs_uploaded_title">日志已上传</string>
+    <string name="logs_uploaded_instructions">与我们分享这个代码以及你在展示它时做什么的说明。 在 Discord、 GitHub Issues 或 WhatsApp 上发布——链接在关于屏幕上。</string>
+    <string name="logs_uploaded_privacy">已编辑的密文 · 日志自动过期</string>
+    <string name="logs_copy_code">复制代码</string>
+    <string name="logs_done">完成</string>
+    <string name="placeholder_dash">—</string>
+    <string name="errors_network">网络错误</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">无法播放视频:%1$s</string>
@@ -514,7 +569,7 @@
     <string name="toast_batch_delete_partial">已删除%1$d,失败的%2$d</string>
     <string name="play_with_chooser">玩一下</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">更新到v%1$s 重新确认自动启动,BYD在每次安装时都会擦除它</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">已授予</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">提示 &amp; 解决问题</string>
@@ -550,9 +605,9 @@
          notifications into one shade entry. The summary text is intentionally
          generic so it stays accurate whether all three services are running
          or only the keepalive survived an OOM respawn. -->
-    <string name="daemon_keepalive_notif_title">Overdrive Active</string>
+    <string name="daemon_keepalive_notif_title">超载驱动器激活</string>
     <string name="daemon_keepalive_notif_text">监测车辆系统</string>
-    <string name="overdrive_status_summary_title">Overdrive</string>
+    <string name="overdrive_status_summary_title">超载驱动器</string>
     <string name="overdrive_status_summary_text">后台服务运行</string>
     <!-- ============================================================== -->
     <!-- M3 Revamp: navigation rail + settings sub-rail + theme picker  -->
@@ -798,7 +853,7 @@
     <string name="settings_security_title">安全</string>
     <string name="settings_security_subtitle">锁定OverDrive应用，否则乘客和阀无法在没有您的 PIN 码的情况下打开它。</string>
     <string name="settings_security_stance_title">仅锁定界面</string>
-    <string name="settings_security_stance_body">Surveillance, recording, deterrent, alerts, and background services keep running while the app is locked. The PIN gates the OverDrive interface, nothing else.</string>
+    <string name="settings_security_stance_body">监视、录制、威慑、警报和后台服务在锁定应用程序时继续运行。PIN码关卡超载驱动器接口，别无其他。</string>
     <string name="settings_security_overline_lock">应用锁</string>
     <string name="settings_security_overline_recovery">如果您忘记了您的 PIN</string>
     <string name="settings_security_toggle_title">需要 PIN</string>
@@ -922,11 +977,11 @@
     <!-- ============================================================
          RoadSense — road-hazard detection feature
          ============================================================ -->
-    <string name="rail_roadsense">RoadSense</string>
+    <string name="rail_roadsense">道路Sense</string>
     <string name="rail_hazard_map">地图</string>
-    <string name="roadsense_title">RoadSense</string>
+    <string name="roadsense_title">道路Sense</string>
     <string name="roadsense_pill_scanning">正在扫描</string>
-    <string name="roadsense_pill_idle">RoadSense</string>
+    <string name="roadsense_pill_idle">道路Sense</string>
     <string name="roadsense_status_idle">空闲的</string>
     <!-- VEHICLE calibration (suspension-learning) — the green/orange/red dot. Worded
          about the car, not the route, since that's what maturity actually measures. -->
@@ -1038,6 +1093,10 @@
     <string name="roadsense_map_poi_charging_generic">充电站</string>
     <string name="roadsense_map_poi_fuel_generic">燃料站</string>
     <string name="roadsense_map_route_switched">切换路由</string>
+    <!-- "then <next maneuver>" preview shown in the maneuver banner -->
+    <string name="roadsense_map_then">然后，</string>
+    <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
+    <string name="roadsense_map_exit_n">退出 %1$d</string>
     <!-- Hazards-along-route pills (%1$d = count) -->
     <string name="roadsense_map_pill_severe">%1$d 严重的</string>
     <string name="roadsense_map_pill_moderate">%1$d 审核</string>
@@ -1064,4 +1123,36 @@
     <string name="roadsense_map_move_stop_down">下移停止</string>
     <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">最多允许 %1$d 停止</string>
+    <!-- Map day/night override (Auto → Light → Dark) -->
+    <string name="roadsense_map_theme_toggle">地图主题</string>
+    <string name="roadsense_map_theme_auto">地图主题：自动</string>
+    <string name="roadsense_map_theme_light">地图主题：光</string>
+    <string name="roadsense_map_theme_dark">地图主题：深色</string>
+    <!-- Saved places (Home / Work / custom favourites) -->
+    <string name="roadsense_map_saved_home">首页</string>
+    <string name="roadsense_map_saved_work">工作</string>
+    <string name="roadsense_map_saved_set_home">设置首页</string>
+    <string name="roadsense_map_saved_set_work">设置工作</string>
+    <!-- Short action label for the "save as a custom favourite" button. -->
+    <string name="roadsense_map_saved_favourite">收藏夹</string>
+    <string name="roadsense_map_save_place">保存地点</string>
+    <string name="roadsense_map_save_as_home">另存为首页</string>
+    <string name="roadsense_map_save_as_work">保存为工作</string>
+    <string name="roadsense_map_save_as_custom">Save as favourite…</string>
+    <string name="roadsense_map_saved_added">已保存</string>
+    <string name="roadsense_map_saved_removed">已从保存中删除</string>
+    <string name="roadsense_map_saved_remove">删除</string>
+    <string name="roadsense_map_recent_remove">从最近任务中删除</string>
+    <string name="roadsense_map_recent_removed">已从最近任务中删除</string>
+    <string name="roadsense_map_custom_label_hint">标签 (e.g. Gym, Mum\'s)</string>
+    <string name="roadsense_map_custom_label_title">这个地方的名称</string>
+    <string name="roadsense_map_save">保存</string>
+    <string name="roadsense_map_cancel">取消</string>
+    <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
+    <string name="roadsense_map_dropped_pin">丢弃置顶端</string>
+    <string name="roadsense_map_navigate_here">导航到这里</string>
+    <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
+    <string name="roadsense_map_search_to_save">搜索要设置为 %1$s 的地点</string>
+    <!-- Shown when re-entering the map with a previously-set trip restored. -->
+    <string name="roadsense_map_trip_restored">旅行已恢复</string>
 </resources>

@@ -377,8 +377,46 @@
     <string name="toast_updated_to">Mis à jour à %1$s</string>
     <string name="toast_update_install_failed">Installation de mise à jour échouée: %1$s</string>
     <string name="toast_checking_for_updates">Je vérifie les mises à jour...</string>
-    <string name="toast_app_up_to_date">L\'application est mise à jour (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">Faillite de vérification de mise à jour: %1$s</string>
+    <!-- Update dialog + version picker -->
+    <string name="update_dialog_available_title">Mise à jour disponible</string>
+    <string name="update_dialog_subtitle">Une nouvelle version est prête à être installée</string>
+    <string name="update_dialog_current">Actuellement: v%1$s</string>
+    <string name="update_dialog_new">Nouveau: v%1$s</string>
+    <string name="update_dialog_current_label">Installé</string>
+    <string name="update_dialog_new_label">Nouvelle version</string>
+    <string name="update_dialog_whats_new">Quoi de neuf</string>
+    <string name="update_dialog_install_now">Installer maintenant</string>
+    <string name="update_dialog_later">Plus tard</string>
+    <string name="update_picker_title">Choisir une version</string>
+    <string name="update_picker_subtitle">Installer n\'importe quelle version publiée — plus récente ou plus ancienne</string>
+    <string name="update_picker_empty">Aucune version n\'a encore été publiée.</string>
+    <string name="update_picker_current_suffix">%1$s (installé)</string>
+    <string name="update_picker_older_suffix">%1$s (ancien)</string>
+    <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
+    <string name="update_progress_title">Mise à jour de la Surcharge</string>
+    <string name="update_step_downloading">Téléchargement de la mise à jour…</string>
+    <string name="update_step_verifying">Verifying download…</string>
+    <string name="update_step_stopping">Arrêt des démons…</string>
+    <string name="update_step_installing">Installation de la mise à jour…</string>
+    <string name="update_step_installed">Mise à jour installée</string>
+    <string name="update_step_restarting">Redémarrage de l\'application…</string>
+    <string name="update_step_queued">Démarrage de la mise à jour…</string>
+    <string name="update_error_title">La mise à jour a échoué</string>
+    <string name="update_error_daemon_down">Le démon de l\'appareil photo n\'est pas en cours d\'exécution. Démarrez-le à partir de l\'écran des démons, puis essayez de mettre à jour à nouveau.</string>
+    <string name="update_error_start_failed">Impossible de démarrer la mise à jour : %1$s</string>
+    <string name="update_error_lost_headunit">Contact perdu avec la tête de l\'unité avant la fin de l\'installation. Sur un tunnel? Vérifiez Telegram pour la nouvelle URL, ou utilisez l\'adresse IP locale.</string>
+    <string name="update_hide">Cacher</string>
+    <!-- Update channel selector (Settings → About) -->
+    <string name="settings_update_channel_title">Canal de mise à jour</string>
+    <string name="settings_update_channel_alpha">Alphabétisation</string>
+    <string name="settings_update_channel_braveheart">Cœur courageux</string>
+    <string name="settings_update_channel_alpha_desc">La version stable. Chaque version publiée est conservée — choisissez n\'importe quelle version à installer (downgrades autorisés). Recommandée pour une utilisation quotidienne.</string>
+    <string name="settings_update_channel_braveheart_desc">Des versions de fond en comble ont été fournies dès qu\'elles sont publiées. Vous obtenez de nouvelles fonctionnalités en premier, mais elles peuvent être instables ou boguées. Si quelque chose se brise, ouvrez l\'écran des démons, tapez sur le journal d\'un démon, choisissez \"Télécharger &amp; obtenir un code\", et partagez le code avec nous sur les canaux de la communauté.</string>
+    <string name="settings_update_channel_save_failed">Impossible d\'enregistrer le canal de mise à jour</string>
+    <string name="settings_update_channel_braveheart_toast">Basculé vers Braveheart. Les constructions peuvent être instables — si quelque chose ne fonctionne pas, envoyez le journal du démon et signalez le sur Discord/GitHub/WhatsApp.</string>
+    <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">Autorisation de stockage requise pour les enregistrements</string>
     <string name="toast_url_copied_short">URL copié !</string>
     <string name="toast_camera_set_to_auto">La caméra est réglée sur Auto</string>
@@ -507,6 +545,23 @@
     <string name="log_header_source">Source: %1$s</string>
     <string name="log_header_exported">Exporté: %1$s</string>
     <string name="log_header_truncated">NOTE: Logi réduit à 10000 lignes (total: lignes %1$d)</string>
+    <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
+    <string name="logs_send_title">Envoyer le journal %1$s</string>
+    <string name="logs_send_title_plain">Envoyer le journal du démon</string>
+    <string name="logs_send_subtitle">%1$s · choose how to send it to us</string>
+    <string name="logs_send_upload">Télécharger &amp; obtenir un code</string>
+    <string name="logs_send_upload_desc">Envoie le log et vous donne un code court. Plus facile pour l\'assistance.</string>
+    <string name="logs_send_share">Partager le fichier…</string>
+    <string name="logs_send_share_desc">Enregistrez ou envoyez vous-même le log via la feuille de partage.</string>
+    <string name="logs_uploading_title">Envoi du journal…</string>
+    <string name="logs_uploading_subtitle">Rédaction des secrets et envoi sécurisé</string>
+    <string name="logs_uploaded_title">Journal téléchargé</string>
+    <string name="logs_uploaded_instructions">Partagez ce code avec nous, avec une note sur ce que vous faisiez quand il a cassé. Publiez-le sur Discord, GitHub Issues ou WhatsApp — les liens sont sur l\'écran À Propos.</string>
+    <string name="logs_uploaded_privacy">Les secrets ont été supprimés · le journal expire automatiquement</string>
+    <string name="logs_copy_code">Copier le code</string>
+    <string name="logs_done">Fait</string>
+    <string name="placeholder_dash">—</string>
+    <string name="errors_network">Erreur réseau</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">Je ne peux pas lire la vidéo: %1$s</string>
@@ -517,7 +572,7 @@
     <string name="toast_batch_delete_partial">%1$d supprimé, %2$d échoué</string>
     <string name="play_with_chooser">Joue avec</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">Mis à jour à v%1$s  reconfirmer le démarrage automatique, BYD l\'efface à chaque installation</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">Déjà accordé</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">Conseils et dépannage</string>
@@ -553,9 +608,9 @@
          notifications into one shade entry. The summary text is intentionally
          generic so it stays accurate whether all three services are running
          or only the keepalive survived an OOM respawn. -->
-    <string name="daemon_keepalive_notif_title">Overdrive Active</string>
+    <string name="daemon_keepalive_notif_title">Surcharge active</string>
     <string name="daemon_keepalive_notif_text">Surveillance des systèmes de véhicules</string>
-    <string name="overdrive_status_summary_title">Overdrive</string>
+    <string name="overdrive_status_summary_title">Surcharge</string>
     <string name="overdrive_status_summary_text">Services en arrière-plan en cours d\'exécution</string>
     <!-- ============================================================== -->
     <!-- M3 Revamp: navigation rail + settings sub-rail + theme picker  -->
@@ -931,11 +986,11 @@
     <!-- ============================================================
          RoadSense — road-hazard detection feature
          ============================================================ -->
-    <string name="rail_roadsense">RoadSense</string>
+    <string name="rail_roadsense">Sens de route</string>
     <string name="rail_hazard_map">Carte</string>
-    <string name="roadsense_title">RoadSense</string>
+    <string name="roadsense_title">Sens de route</string>
     <string name="roadsense_pill_scanning">Analyse en cours</string>
-    <string name="roadsense_pill_idle">RoadSense</string>
+    <string name="roadsense_pill_idle">Sens de route</string>
     <string name="roadsense_status_idle">Inactif</string>
     <!-- VEHICLE calibration (suspension-learning) — the green/orange/red dot. Worded
          about the car, not the route, since that's what maturity actually measures. -->
@@ -1048,6 +1103,10 @@
     <string name="roadsense_map_poi_charging_generic">Station de rechargement</string>
     <string name="roadsense_map_poi_fuel_generic">Station de Carburant</string>
     <string name="roadsense_map_route_switched">Itinéraire changé</string>
+    <!-- "then <next maneuver>" preview shown in the maneuver banner -->
+    <string name="roadsense_map_then">puis</string>
+    <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
+    <string name="roadsense_map_exit_n">quitter %1$d</string>
     <!-- Hazards-along-route pills (%1$d = count) -->
     <string name="roadsense_map_pill_severe">%1$d sévère</string>
     <string name="roadsense_map_pill_moderate">%1$d modéré</string>
@@ -1074,4 +1133,36 @@
     <string name="roadsense_map_move_stop_down">Descendre l\'arrêt</string>
     <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">Up to %1$d stops allowed</string>
+    <!-- Map day/night override (Auto → Light → Dark) -->
+    <string name="roadsense_map_theme_toggle">Thème de carte</string>
+    <string name="roadsense_map_theme_auto">Thème de la carte : Auto</string>
+    <string name="roadsense_map_theme_light">Thème de la carte : Lumière</string>
+    <string name="roadsense_map_theme_dark">Thème de la carte : Sombre</string>
+    <!-- Saved places (Home / Work / custom favourites) -->
+    <string name="roadsense_map_saved_home">Domicile</string>
+    <string name="roadsense_map_saved_work">Travail</string>
+    <string name="roadsense_map_saved_set_home">Définir l\'Accueil</string>
+    <string name="roadsense_map_saved_set_work">Définir le travail</string>
+    <!-- Short action label for the "save as a custom favourite" button. -->
+    <string name="roadsense_map_saved_favourite">Favori</string>
+    <string name="roadsense_map_save_place">Enregistrer le lieu</string>
+    <string name="roadsense_map_save_as_home">Enregistrer en tant qu\'Accueil</string>
+    <string name="roadsense_map_save_as_work">Enregistrer en tant que Travail</string>
+    <string name="roadsense_map_save_as_custom">Enregistrer comme…</string>
+    <string name="roadsense_map_saved_added">Enregistré</string>
+    <string name="roadsense_map_saved_removed">Supprimé de la sauvegarde</string>
+    <string name="roadsense_map_saved_remove">Retirer</string>
+    <string name="roadsense_map_recent_remove">Retirer des applications récentes</string>
+    <string name="roadsense_map_recent_removed">Supprimé des applications récentes</string>
+    <string name="roadsense_map_custom_label_hint">Étiquette (ex: Gym, Maman)</string>
+    <string name="roadsense_map_custom_label_title">Nommer ce lieu</string>
+    <string name="roadsense_map_save">Enregistrer</string>
+    <string name="roadsense_map_cancel">Abandonner</string>
+    <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
+    <string name="roadsense_map_dropped_pin">Épingle lâchée</string>
+    <string name="roadsense_map_navigate_here">Naviguer ici</string>
+    <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
+    <string name="roadsense_map_search_to_save">Rechercher un lieu à définir comme %1$s</string>
+    <!-- Shown when re-entering the map with a previously-set trip restored. -->
+    <string name="roadsense_map_trip_restored">La course a été restaurée</string>
 </resources>

@@ -377,8 +377,46 @@
     <string name="toast_updated_to">Atualizado para %1$s</string>
     <string name="toast_update_install_failed">A instalação da atualização falhou: %1$s</string>
     <string name="toast_checking_for_updates">Verificando atualizações…</string>
-    <string name="toast_app_up_to_date">O aplicativo está atualizado (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">Verificação de atualização falhou: %1$s</string>
+    <!-- Update dialog + version picker -->
+    <string name="update_dialog_available_title">Atualização disponível</string>
+    <string name="update_dialog_subtitle">Um novo build está pronto para instalação</string>
+    <string name="update_dialog_current">Atual: v%1$s</string>
+    <string name="update_dialog_new">Novo: v%1$s</string>
+    <string name="update_dialog_current_label">Instalado</string>
+    <string name="update_dialog_new_label">Nova versão</string>
+    <string name="update_dialog_whats_new">Novidades</string>
+    <string name="update_dialog_install_now">Instalar agora</string>
+    <string name="update_dialog_later">Mais tarde</string>
+    <string name="update_picker_title">Escolha uma versão</string>
+    <string name="update_picker_subtitle">Instalar qualquer compilação publicada — mais nova ou mais antiga</string>
+    <string name="update_picker_empty">Nenhuma versão publicada ainda.</string>
+    <string name="update_picker_current_suffix">%1$s (instalado)</string>
+    <string name="update_picker_older_suffix">%1$s (antigo)</string>
+    <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
+    <string name="update_progress_title">Atualizando Sobrecarga</string>
+    <string name="update_step_downloading">Baixando atualização…</string>
+    <string name="update_step_verifying">Verificando o download…</string>
+    <string name="update_step_stopping">Parando daemons…</string>
+    <string name="update_step_installing">Instalando atualização…</string>
+    <string name="update_step_installed">Atualização instalada</string>
+    <string name="update_step_restarting">Reiniciando aplicativo…</string>
+    <string name="update_step_queued">Iniciando a atualização…</string>
+    <string name="update_error_title">Falha na atualização</string>
+    <string name="update_error_daemon_down">O daemon da câmera não está rodando. Inicie-o pela tela do Daemons e tente atualizar novamente.</string>
+    <string name="update_error_start_failed">Não foi possível iniciar a atualização: %1$s</string>
+    <string name="update_error_lost_headunit">Perdeu o contato com a unidade principal antes da instalação terminar. Em um túnel? Verifique no Telegram a nova URL, ou use um IP local.</string>
+    <string name="update_hide">Esconder</string>
+    <!-- Update channel selector (Settings → About) -->
+    <string name="settings_update_channel_title">Atualizar canal</string>
+    <string name="settings_update_channel_alpha">Transparência</string>
+    <string name="settings_update_channel_braveheart">Coração</string>
+    <string name="settings_update_channel_alpha_desc">A versão estável. Cada versão publicada é mantida — selecione qualquer para instalar (downgrades permitidos). Recomendado para uso diário.</string>
+    <string name="settings_update_channel_braveheart_desc">Compilações de ponta amarela, entregue assim que são publicadas. Você recebe novas funcionalidades primeiro, mas elas podem ser instáveis ou com problemas. Se algo quebrar, abra a tela do Daemon, toque nos logs de um daemon, escolha \"Envie &amp; obtenha um código\" e compartilhe o código conosco nos canais da comunidade.</string>
+    <string name="settings_update_channel_save_failed">Não foi possível salvar o canal de atualização</string>
+    <string name="settings_update_channel_braveheart_toast">Mudou para Braveheart. As compilações podem ser instáveis — se algo quebrar, envie os registros do daemon e denuncie-o no Discord/GitHub/WhatsApp.</string>
+    <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">Permissão de armazenamento necessária para gravações</string>
     <string name="toast_url_copied_short">URL copiada!</string>
     <string name="toast_camera_set_to_auto">Câmera definida como Automática</string>
@@ -507,6 +545,23 @@
     <string name="log_header_source">Fonte: %1$s</string>
     <string name="log_header_exported">Exportado: %1$s</string>
     <string name="log_header_truncated">NOTA: Registro truncado para as últimas 10000 linhas (total: %1$d linhas)</string>
+    <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
+    <string name="logs_send_title">Enviar registro %1$s</string>
+    <string name="logs_send_title_plain">Enviar registro do daemon</string>
+    <string name="logs_send_subtitle">%1$s · escolha como enviá-lo para nós</string>
+    <string name="logs_send_upload">Enviar &amp; obter um código</string>
+    <string name="logs_send_upload_desc">Envia o log para nós e lhe dá um código curto. O mais fácil para suporte.</string>
+    <string name="logs_send_share">Compartilhar arquivo…</string>
+    <string name="logs_send_share_desc">Salve ou envie o log você mesmo através da planilha de compartilhamento.</string>
+    <string name="logs_uploading_title">Enviando log…</string>
+    <string name="logs_uploading_subtitle">Redação de segredos e envio seguro</string>
+    <string name="logs_uploaded_title">Log enviado</string>
+    <string name="logs_uploaded_instructions">Compartilhe este código conosco, junto com uma nota sobre o que você estava fazendo quando quebrou. Postá-lo no Discord, nos problemas do GitHub ou no WhatsApp — os links estão na tela Sobre.</string>
+    <string name="logs_uploaded_privacy">Segredos editados · O registro expira automaticamente</string>
+    <string name="logs_copy_code">Copiar código</string>
+    <string name="logs_done">Concluído</string>
+    <string name="placeholder_dash">—</string>
+    <string name="errors_network">Erro de rede</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">Impossível reproduzir o vídeo: %1$s</string>
@@ -517,7 +572,7 @@
     <string name="toast_batch_delete_partial">%1$d excluído, %2$d falhou</string>
     <string name="play_with_chooser">Jogar com</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">Atualizado para v%1$s - re-confirmar a auto inicialização, BYD limpa-a em cada instalação</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">Já concedido</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">Dicas &amp; solução de problemas</string>
@@ -1048,6 +1103,10 @@
     <string name="roadsense_map_poi_charging_generic">Estação de carregamento</string>
     <string name="roadsense_map_poi_fuel_generic">Estação de combustível</string>
     <string name="roadsense_map_route_switched">Rota trocada</string>
+    <!-- "then <next maneuver>" preview shown in the maneuver banner -->
+    <string name="roadsense_map_then">então</string>
+    <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
+    <string name="roadsense_map_exit_n">saindo do %1$d</string>
     <!-- Hazards-along-route pills (%1$d = count) -->
     <string name="roadsense_map_pill_severe">%1$d severo</string>
     <string name="roadsense_map_pill_moderate">%1$d moderado</string>
@@ -1074,4 +1133,36 @@
     <string name="roadsense_map_move_stop_down">Mover parar para baixo</string>
     <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">Até %1$d paradas permitidas</string>
+    <!-- Map day/night override (Auto → Light → Dark) -->
+    <string name="roadsense_map_theme_toggle">Tema do mapa</string>
+    <string name="roadsense_map_theme_auto">Tema do mapa: Automático</string>
+    <string name="roadsense_map_theme_light">Tema do mapa: Claro</string>
+    <string name="roadsense_map_theme_dark">Tema do mapa: Escuro</string>
+    <!-- Saved places (Home / Work / custom favourites) -->
+    <string name="roadsense_map_saved_home">Residencial</string>
+    <string name="roadsense_map_saved_work">Trabalho</string>
+    <string name="roadsense_map_saved_set_home">Definir Tela Inicial</string>
+    <string name="roadsense_map_saved_set_work">Definir trabalho</string>
+    <!-- Short action label for the "save as a custom favourite" button. -->
+    <string name="roadsense_map_saved_favourite">Favorito</string>
+    <string name="roadsense_map_save_place">Salvar local</string>
+    <string name="roadsense_map_save_as_home">Salvar como casa</string>
+    <string name="roadsense_map_save_as_work">Salvar como Trabalho</string>
+    <string name="roadsense_map_save_as_custom">Salvar como favorito…</string>
+    <string name="roadsense_map_saved_added">Salvo</string>
+    <string name="roadsense_map_saved_removed">Removido do salvamento</string>
+    <string name="roadsense_map_saved_remove">Excluir</string>
+    <string name="roadsense_map_recent_remove">Remover dos recentes</string>
+    <string name="roadsense_map_recent_removed">Removido dos recentes</string>
+    <string name="roadsense_map_custom_label_hint">Rótulo (ex: Ginásio, Múmia)</string>
+    <string name="roadsense_map_custom_label_title">Nomeie este lugar</string>
+    <string name="roadsense_map_save">Guardar</string>
+    <string name="roadsense_map_cancel">cancelar</string>
+    <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
+    <string name="roadsense_map_dropped_pin">Pin dropado</string>
+    <string name="roadsense_map_navigate_here">Navegue aqui</string>
+    <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
+    <string name="roadsense_map_search_to_save">Procurar um local para definir como %1$s</string>
+    <!-- Shown when re-entering the map with a previously-set trip restored. -->
+    <string name="roadsense_map_trip_restored">Percurso restaurado</string>
 </resources>

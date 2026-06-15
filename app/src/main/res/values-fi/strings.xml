@@ -377,8 +377,46 @@
     <string name="toast_updated_to">Päivitetty versioon %1$s</string>
     <string name="toast_update_install_failed">Asennus epäonnistui: %1$s</string>
     <string name="toast_checking_for_updates">Tarkistetaan päivityksiä…</string>
-    <string name="toast_app_up_to_date">Sovellus on ajan tasalla (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">Päivityksen tarkistus epäonnistui: %1$s</string>
+    <!-- Update dialog + version picker -->
+    <string name="update_dialog_available_title">Päivitys saatavilla</string>
+    <string name="update_dialog_subtitle">Uudempi versio on valmis asennettavaksi</string>
+    <string name="update_dialog_current">Nykyinen: v%1$s</string>
+    <string name="update_dialog_new">Uusi: v%1$s</string>
+    <string name="update_dialog_current_label">Asennettu</string>
+    <string name="update_dialog_new_label">Uusi versio</string>
+    <string name="update_dialog_whats_new">Mitä uutta</string>
+    <string name="update_dialog_install_now">Asenna nyt</string>
+    <string name="update_dialog_later">Myöhemmin</string>
+    <string name="update_picker_title">Valitse versio</string>
+    <string name="update_picker_subtitle">Asenna mikä tahansa julkaistu versio — uudemmat tai vanhemmat</string>
+    <string name="update_picker_empty">Yhtään versiota ei vielä julkaistu.</string>
+    <string name="update_picker_current_suffix">%1$s (asennettu)</string>
+    <string name="update_picker_older_suffix">%1$s (vanhempi)</string>
+    <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
+    <string name="update_progress_title">Päivitetään Yliajaa</string>
+    <string name="update_step_downloading">Ladataan päivitystä…</string>
+    <string name="update_step_verifying">Tarkistetaan latausta…</string>
+    <string name="update_step_stopping">Pysäytetään demonit…</string>
+    <string name="update_step_installing">Asennetaan päivitystä…</string>
+    <string name="update_step_installed">Päivitys asennettu</string>
+    <string name="update_step_restarting">Restarting app…</string>
+    <string name="update_step_queued">Aloitetaan päivitystä…</string>
+    <string name="update_error_title">Päivitys epäonnistui</string>
+    <string name="update_error_daemon_down">Kamera ei ole käynnissä. Käynnistä se Daemons-näytöltä ja yritä sitten päivittää uudelleen.</string>
+    <string name="update_error_start_failed">Päivitystä ei voitu käynnistää: %1$s</string>
+    <string name="update_error_lost_headunit">Kadonnut yhteystieto pääyksikön kanssa ennen asennuksen päättymistä. Tunneliin? Tarkista Telegram uudelle URL-osoitteelle tai käytä paikallista IP-osoitetta.</string>
+    <string name="update_hide">Piilota</string>
+    <!-- Update channel selector (Settings → About) -->
+    <string name="settings_update_channel_title">Päivitä kanava</string>
+    <string name="settings_update_channel_alpha">Alfa</string>
+    <string name="settings_update_channel_braveheart">Braveheart</string>
+    <string name="settings_update_channel_alpha_desc">Vakaa julkaisu. Jokainen julkaistu versio pidetään — valitse asennettava (alaspäin sallittu). Suositellaan jokapäiväiseen käyttöön.</string>
+    <string name="settings_update_channel_braveheart_desc">Bleeding-edge builds, toimitetaan kun ne on julkaistu. Saat uusia ominaisuuksia ensin, mutta ne voivat olla epävakaita tai vikoja. Jos jokin puhkeaa, avaa Daemons-näyttö, napauta taustan lokia, valitse \"Upload &amp; get a code\", ja jaa koodi kanssamme yhteisön kanavilla.</string>
+    <string name="settings_update_channel_save_failed">Päivityskanavaa ei voitu tallentaa</string>
+    <string name="settings_update_channel_braveheart_toast">Siirry Braveheartiin. Rakennukset voivat olla epävakaita — jos jokin puhkeaa, lähetä daemon loki ja ilmoita siitä Discord/GitHub/WhatsAppissa.</string>
+    <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">Tallennustilan käyttöoikeus vaaditaan nauhoituksissa</string>
     <string name="toast_url_copied_short">URL kopioitu!</string>
     <string name="toast_camera_set_to_auto">Kamera asetettu automaattiseksi</string>
@@ -507,6 +545,23 @@
     <string name="log_header_source">Lähde: %1$s</string>
     <string name="log_header_exported">Viedään: %1$s</string>
     <string name="log_header_truncated">HUOMAUTUS: Loki on katkaistu viimeisiin 10000 riviin (yhteensä: %1$d riviä)</string>
+    <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
+    <string name="logs_send_title">Lähetä %1$s loki</string>
+    <string name="logs_send_title_plain">Lähetä taustaloki</string>
+    <string name="logs_send_subtitle">%1$s · valitse miten lähettää sen meille</string>
+    <string name="logs_send_upload">Lataa &amp; saada koodi</string>
+    <string name="logs_send_upload_desc">Lähettää lokin meille ja antaa sinulle lyhyen koodin. Helpoin tukea.</string>
+    <string name="logs_send_share">Jaa tiedosto…</string>
+    <string name="logs_send_share_desc">Tallenna tai lähetä loki itse jakamislomakkeen kautta.</string>
+    <string name="logs_uploading_title">Uploading log…</string>
+    <string name="logs_uploading_subtitle">Salaisuuksien uudelleenlaatiminen ja turvallisesti lähettäminen</string>
+    <string name="logs_uploaded_title">Loki ladattu</string>
+    <string name="logs_uploaded_instructions">Jaa tämä koodi meidän kanssamme, sekä muistio siitä, mitä olit tekemässä, kun se rikkoi. Lähetä se Discordiin, GitHub-ongelmiin tai WhatsApp — linkit ovat Tietoja -näytöllä.</string>
+    <string name="logs_uploaded_privacy">Secrets redacted · log auto-expires</string>
+    <string name="logs_copy_code">Kopioi koodi</string>
+    <string name="logs_done">Valmis</string>
+    <string name="placeholder_dash">—</string>
+    <string name="errors_network">Verkkovirhe</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">Videota ei voi toistaa: %1$s</string>
@@ -517,7 +572,7 @@
     <string name="toast_batch_delete_partial">%1$d deleted, %2$d failed</string>
     <string name="play_with_chooser">Pelaa kanssa</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">Päivitetty v%1$s — vahvista autokäynnistys uudelleen, BYD pyyhi sen jokaiseen asennukseen</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">Jo Myönnetty</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">Vinkkejä &amp; vianmääritys</string>
@@ -1048,6 +1103,10 @@
     <string name="roadsense_map_poi_charging_generic">Latausasema</string>
     <string name="roadsense_map_poi_fuel_generic">Polttoaineen asema</string>
     <string name="roadsense_map_route_switched">Vaihda reittiä</string>
+    <!-- "then <next maneuver>" preview shown in the maneuver banner -->
+    <string name="roadsense_map_then">sitten</string>
+    <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
+    <string name="roadsense_map_exit_n">Poistu %1$d</string>
     <!-- Hazards-along-route pills (%1$d = count) -->
     <string name="roadsense_map_pill_severe">%1$d vaikea</string>
     <string name="roadsense_map_pill_moderate">%1$d kohtalainen</string>
@@ -1074,4 +1133,36 @@
     <string name="roadsense_map_move_stop_down">Siirrä pysähdys alas</string>
     <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">Enintään %1$d pysähdystä sallittu</string>
+    <!-- Map day/night override (Auto → Light → Dark) -->
+    <string name="roadsense_map_theme_toggle">Kartta teema</string>
+    <string name="roadsense_map_theme_auto">Kartta teema: Automaattinen</string>
+    <string name="roadsense_map_theme_light">Kartta teema: Vaalea</string>
+    <string name="roadsense_map_theme_dark">Kartta teema: Tumma</string>
+    <!-- Saved places (Home / Work / custom favourites) -->
+    <string name="roadsense_map_saved_home">Koti</string>
+    <string name="roadsense_map_saved_work">Työ</string>
+    <string name="roadsense_map_saved_set_home">Aseta Koti</string>
+    <string name="roadsense_map_saved_set_work">Aseta Työt</string>
+    <!-- Short action label for the "save as a custom favourite" button. -->
+    <string name="roadsense_map_saved_favourite">Suosikki</string>
+    <string name="roadsense_map_save_place">Tallenna paikka</string>
+    <string name="roadsense_map_save_as_home">Tallenna kotisivuksi</string>
+    <string name="roadsense_map_save_as_work">Tallenna työksi</string>
+    <string name="roadsense_map_save_as_custom">Tallenna suosikkina…</string>
+    <string name="roadsense_map_saved_added">Tallennettu</string>
+    <string name="roadsense_map_saved_removed">Poistettu tallennetusta</string>
+    <string name="roadsense_map_saved_remove">Poista</string>
+    <string name="roadsense_map_recent_remove">Poista viimeaikaisista</string>
+    <string name="roadsense_map_recent_removed">Poistettu viimeaikaisista</string>
+    <string name="roadsense_map_custom_label_hint">Merkki (esim. Gym, Mums)</string>
+    <string name="roadsense_map_custom_label_title">Nimeä tämä paikka</string>
+    <string name="roadsense_map_save">Tallenna</string>
+    <string name="roadsense_map_cancel">Peruuta</string>
+    <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
+    <string name="roadsense_map_dropped_pin">Pudotettu tappi</string>
+    <string name="roadsense_map_navigate_here">Siirry tähän</string>
+    <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
+    <string name="roadsense_map_search_to_save">Etsi paikka joka asetetaan %1$s</string>
+    <!-- Shown when re-entering the map with a previously-set trip restored. -->
+    <string name="roadsense_map_trip_restored">Matka palautettu</string>
 </resources>

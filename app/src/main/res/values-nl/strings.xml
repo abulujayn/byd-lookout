@@ -377,8 +377,46 @@
     <string name="toast_updated_to">Updated naar %1$s</string>
     <string name="toast_update_install_failed">Installatie mislukt: %1$s</string>
     <string name="toast_checking_for_updates">Ik kijk naar updates.</string>
-    <string name="toast_app_up_to_date">App is up-to-date (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">Update-controle mislukt: %1$s</string>
+    <!-- Update dialog + version picker -->
+    <string name="update_dialog_available_title">Update beschikbaar</string>
+    <string name="update_dialog_subtitle">Een nieuwere versie is klaar om te installeren</string>
+    <string name="update_dialog_current">Huidige: v%1$s</string>
+    <string name="update_dialog_new">Nieuw: v%1$s</string>
+    <string name="update_dialog_current_label">Geinstalleerd</string>
+    <string name="update_dialog_new_label">Nieuwe versie</string>
+    <string name="update_dialog_whats_new">Wat is er nieuw</string>
+    <string name="update_dialog_install_now">Installeer nu</string>
+    <string name="update_dialog_later">Later</string>
+    <string name="update_picker_title">Kies een versie</string>
+    <string name="update_picker_subtitle">Installeer elke gepubliceerde build - nieuwer of ouder</string>
+    <string name="update_picker_empty">Nog geen versies gepubliceerd.</string>
+    <string name="update_picker_current_suffix">%1$s (geïnstalleerd)</string>
+    <string name="update_picker_older_suffix">%1$s (oud)</string>
+    <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
+    <string name="update_progress_title">Overdrive bijwerken</string>
+    <string name="update_step_downloading">Downloading update…</string>
+    <string name="update_step_verifying">Verifying download…</string>
+    <string name="update_step_stopping">Stopping daemons…</string>
+    <string name="update_step_installing">Installing update…</string>
+    <string name="update_step_installed">Update geïnstalleerd</string>
+    <string name="update_step_restarting">Restarting app…</string>
+    <string name="update_step_queued">Starting update…</string>
+    <string name="update_error_title">Bijwerken mislukt</string>
+    <string name="update_error_daemon_down">Camera daemon is niet actief. Start het vanaf het Daemons scherm, probeer dan opnieuw te updaten.</string>
+    <string name="update_error_start_failed">Kan de update niet starten: %1$s</string>
+    <string name="update_error_lost_headunit">Contact met het hoofd unit verloren voordat de installatie klaar is. In een tunnel? Controleer Telegram voor de nieuwe URL, of gebruik het lokale IP.</string>
+    <string name="update_hide">Verbergen</string>
+    <!-- Update channel selector (Settings → About) -->
+    <string name="settings_update_channel_title">Kanaal bijwerken</string>
+    <string name="settings_update_channel_alpha">Transparantie</string>
+    <string name="settings_update_channel_braveheart">Braveheart</string>
+    <string name="settings_update_channel_alpha_desc">De stabiele release. Elke gepubliceerde versie wordt gehouden - kies elke te installeren (downgraden toegestaan). Aanbevolen voor dagelijks gebruik.</string>
+    <string name="settings_update_channel_braveheart_desc">Bleeding-edge builds, geleverd op het moment dat ze gepubliceerd worden. Je krijgt eerst nieuwe functies, maar ze kunnen instabiel of fout zijn. Als iets breekt, open het Daemons-scherm, tik dan op een daemonlog, kies voor \"Upload &amp; get een code\", en deel de code met ons via de community kanalen.</string>
+    <string name="settings_update_channel_save_failed">Kon updatekanaal niet opslaan</string>
+    <string name="settings_update_channel_braveheart_toast">Omgeschakeld naar Braveheart. Builds kunnen instabiel zijn - als iets breekt, stuur het daemon logboek naar Discord/GitHub/WhatsApp.</string>
+    <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">Voor opnames vereiste opslagtoestemmingen</string>
     <string name="toast_url_copied_short">URL gekopieerd!</string>
     <string name="toast_camera_set_to_auto">Camera ingesteld op Auto</string>
@@ -507,6 +545,23 @@
     <string name="log_header_source">Bron: %1$s</string>
     <string name="log_header_exported">Export: %1$s</string>
     <string name="log_header_truncated">NOTA: Boekenwerk verkorst tot 10000 lijnen (totaal: %1$d lijnen)</string>
+    <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
+    <string name="logs_send_title">Verstuur %1$s log</string>
+    <string name="logs_send_title_plain">Diemon logboek versturen</string>
+    <string name="logs_send_subtitle">%1$s · kies hoe je het naar ons kunt sturen</string>
+    <string name="logs_send_upload">Upload &amp; en haal een code op</string>
+    <string name="logs_send_upload_desc">Stuurt het logboek naar ons en geeft u een korte code. Makkelijkste voor ondersteuning.</string>
+    <string name="logs_send_share">Share file…</string>
+    <string name="logs_send_share_desc">Sla het logboek zelf op of verstuur het via het share sheet.</string>
+    <string name="logs_uploading_title">Uploading log…</string>
+    <string name="logs_uploading_subtitle">secreten opslaan en veilig verzenden</string>
+    <string name="logs_uploaded_title">Log geüpload</string>
+    <string name="logs_uploaded_instructions">Deel deze code met ons, samen met een notitie over wat je deed toen deze in elkaar ging. Plaats het op Discord, GitHub Issues of WhatsApp — links staan op het Overzicht-scherm.</string>
+    <string name="logs_uploaded_privacy">Geheim Redact · de log automatisch verloopt</string>
+    <string name="logs_copy_code">Code kopiëren</string>
+    <string name="logs_done">Voltooid</string>
+    <string name="placeholder_dash">—</string>
+    <string name="errors_network">Netwerk fout</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">Kan geen video afspelen: %1$s</string>
@@ -517,7 +572,7 @@
     <string name="toast_batch_delete_partial">%1$d verwijderd, %2$d mislukt</string>
     <string name="play_with_chooser">Speel met</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">Updated to v%1$s  herbevestigen autostart, BYD verwijdert het bij elke installatie</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">Al toegekend</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">Tips &amp; probleemoplossing</string>
@@ -1006,7 +1061,7 @@
     <!-- Snackbar / toast confirmations -->
     <string name="roadsense_map_confirmed_toast">Risico bevestigd</string>
     <string name="roadsense_map_deleted_toast">Risico verwijderd</string>
-    <string name="roadsense_map_action_failed">Could not reach RoadSense. Try again.</string>
+    <string name="roadsense_map_action_failed">RoadSens kon niet worden bereikt. Probeer het opnieuw.</string>
     <string name="roadsense_map_no_location">Waiting for GPS fix…</string>
     <!-- Navigation: search + routing + turn-by-turn -->
     <string name="roadsense_map_search_hint">Zoek bestemming</string>
@@ -1048,6 +1103,10 @@
     <string name="roadsense_map_poi_charging_generic">Opladen station</string>
     <string name="roadsense_map_poi_fuel_generic">Brandstof station</string>
     <string name="roadsense_map_route_switched">Gewisselde route</string>
+    <!-- "then <next maneuver>" preview shown in the maneuver banner -->
+    <string name="roadsense_map_then">dan</string>
+    <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
+    <string name="roadsense_map_exit_n">verlaten %1$d</string>
     <!-- Hazards-along-route pills (%1$d = count) -->
     <string name="roadsense_map_pill_severe">%1$d ernstig</string>
     <string name="roadsense_map_pill_moderate">%1$d gematigd</string>
@@ -1074,4 +1133,36 @@
     <string name="roadsense_map_move_stop_down">Verplaats stop naar beneden</string>
     <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">Tot %1$d stops toegestaan</string>
+    <!-- Map day/night override (Auto → Light → Dark) -->
+    <string name="roadsense_map_theme_toggle">Map thema</string>
+    <string name="roadsense_map_theme_auto">Kaart thema: automatisch</string>
+    <string name="roadsense_map_theme_light">Kaart thema: licht</string>
+    <string name="roadsense_map_theme_dark">Kaart thema: donker</string>
+    <!-- Saved places (Home / Work / custom favourites) -->
+    <string name="roadsense_map_saved_home">Startpagina</string>
+    <string name="roadsense_map_saved_work">Werk</string>
+    <string name="roadsense_map_saved_set_home">Thuis instellen</string>
+    <string name="roadsense_map_saved_set_work">Stel werk in</string>
+    <!-- Short action label for the "save as a custom favourite" button. -->
+    <string name="roadsense_map_saved_favourite">Favoriete</string>
+    <string name="roadsense_map_save_place">Plaats opslaan</string>
+    <string name="roadsense_map_save_as_home">Opslaan als Home</string>
+    <string name="roadsense_map_save_as_work">Opslaan als werk</string>
+    <string name="roadsense_map_save_as_custom">Opslaan als favoriet…</string>
+    <string name="roadsense_map_saved_added">Opgeslagen</string>
+    <string name="roadsense_map_saved_removed">Verwijderd uit opgeslagen</string>
+    <string name="roadsense_map_saved_remove">Verwijderen</string>
+    <string name="roadsense_map_recent_remove">Verwijder uit recente apps</string>
+    <string name="roadsense_map_recent_removed">Verwijderd uit recenten</string>
+    <string name="roadsense_map_custom_label_hint">Label (bijv. Gym, Mum\'s)</string>
+    <string name="roadsense_map_custom_label_title">Noem deze plaats</string>
+    <string name="roadsense_map_save">Opslaan</string>
+    <string name="roadsense_map_cancel">annuleren</string>
+    <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
+    <string name="roadsense_map_dropped_pin">Achtergelaten pin</string>
+    <string name="roadsense_map_navigate_here">Hier navigeren</string>
+    <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
+    <string name="roadsense_map_search_to_save">Zoek een plaats om in te stellen als %1$s</string>
+    <!-- Shown when re-entering the map with a previously-set trip restored. -->
+    <string name="roadsense_map_trip_restored">Rit hersteld</string>
 </resources>

@@ -377,8 +377,46 @@
     <string name="toast_updated_to">Aktualisiert auf %1$s</string>
     <string name="toast_update_install_failed">Installation fehlgeschlagen: %1$s</string>
     <string name="toast_checking_for_updates">Überprüfen Sie nach Updates...</string>
-    <string name="toast_app_up_to_date">Die App ist aktuell (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">Aktualisierungsprüfung fehlgeschlagen: %1$s</string>
+    <!-- Update dialog + version picker -->
+    <string name="update_dialog_available_title">Update verfügbar</string>
+    <string name="update_dialog_subtitle">Eine neuere Version ist bereit zur Installation</string>
+    <string name="update_dialog_current">Aktuell: v%1$s</string>
+    <string name="update_dialog_new">Neu: v%1$s</string>
+    <string name="update_dialog_current_label">Installiert</string>
+    <string name="update_dialog_new_label">Neue Version</string>
+    <string name="update_dialog_whats_new">Was ist neu</string>
+    <string name="update_dialog_install_now">Jetzt installieren</string>
+    <string name="update_dialog_later">Später</string>
+    <string name="update_picker_title">Version auswählen</string>
+    <string name="update_picker_subtitle">Alle veröffentlichten Builds installieren — neuer oder älterer</string>
+    <string name="update_picker_empty">Noch keine Versionen veröffentlicht.</string>
+    <string name="update_picker_current_suffix">%1$s (installiert)</string>
+    <string name="update_picker_older_suffix">%1$s (älter)</string>
+    <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
+    <string name="update_progress_title">Overdrive aktualisieren</string>
+    <string name="update_step_downloading">Update wird heruntergeladen…</string>
+    <string name="update_step_verifying">Download wird überprüft…</string>
+    <string name="update_step_stopping">Stoppe Daemons…</string>
+    <string name="update_step_installing">Update wird installiert…</string>
+    <string name="update_step_installed">Update installiert</string>
+    <string name="update_step_restarting">App neustarten…</string>
+    <string name="update_step_queued">Starte Update…</string>
+    <string name="update_error_title">Update fehlgeschlagen</string>
+    <string name="update_error_daemon_down">Kamera-Daemon wird nicht ausgeführt. Starten Sie ihn vom Daemon-Bildschirm, dann versuchen Sie es erneut.</string>
+    <string name="update_error_start_failed">Konnte das Update nicht starten: %1$s</string>
+    <string name="update_error_lost_headunit">Kontakt mit der Kopfeinheit verloren, bevor die Installation abgeschlossen ist. Auf einem Tunnel? Überprüfen Sie Telegram für die neue URL, oder verwenden Sie die lokale IP.</string>
+    <string name="update_hide">Verstecken</string>
+    <!-- Update channel selector (Settings → About) -->
+    <string name="settings_update_channel_title">Kanal aktualisieren</string>
+    <string name="settings_update_channel_alpha">Alpha</string>
+    <string name="settings_update_channel_braveheart">Braveheart</string>
+    <string name="settings_update_channel_alpha_desc">Das stabile Release. Jede veröffentlichte Version wird beibehalten – wähle eine zu installierende Version (Downgrades erlaubt). Empfohlen für den täglichen Gebrauch.</string>
+    <string name="settings_update_channel_braveheart_desc">Bleedende Builds lieferten den Moment, in dem sie veröffentlicht wurden. Du erhältst zuerst neue Features, aber sie können instabil oder fehlerhaft sein. Wenn etwas kaputt geht, öffnen Sie den Daemons-Bildschirm, tippen Sie auf das Daemons-Protokoll, wähle \"Upload &amp; bekomme einen Code\" und teile den Code mit uns auf den Community-Kanälen.</string>
+    <string name="settings_update_channel_save_failed">Update-Kanal konnte nicht gespeichert werden</string>
+    <string name="settings_update_channel_braveheart_toast">Zu Braveheart gewechselt. Builds können instabil sein — wenn etwas kaputt geht, sende das Daemon-Log und melde es auf Discord/GitHub/WhatsApp.</string>
+    <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">Speicherberechtigung für Aufnahmen erforderlich</string>
     <string name="toast_url_copied_short">URL kopiert!</string>
     <string name="toast_camera_set_to_auto">Kamera auf Auto eingestellt</string>
@@ -507,6 +545,23 @@
     <string name="log_header_source">Quelle: %1$s</string>
     <string name="log_header_exported">Exportiert: %1$s</string>
     <string name="log_header_truncated">Anmerkung: Verknüpftes Protokoll auf 10000 Zeilen (Gesamt: %1$d Zeilen)</string>
+    <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
+    <string name="logs_send_title">%1$s Log senden</string>
+    <string name="logs_send_title_plain">Daemon Log senden</string>
+    <string name="logs_send_subtitle">%1$s · Wählen Sie, wie Sie es an uns senden möchten</string>
+    <string name="logs_send_upload">Upload &amp; bekomme einen Code</string>
+    <string name="logs_send_upload_desc">Sendet das Log an uns und gibt dir einen kurzen Code. Am einfachsten für Unterstützung.</string>
+    <string name="logs_send_share">Datei… teilen</string>
+    <string name="logs_send_share_desc">Speichern oder senden Sie das Log selbst über das Freigabeblatt.</string>
+    <string name="logs_uploading_title">Lade Log… hoch</string>
+    <string name="logs_uploading_subtitle">Geheimnisse umkehren und sicher senden</string>
+    <string name="logs_uploaded_title">Log hochgeladen</string>
+    <string name="logs_uploaded_instructions">Teilen Sie diesen Code mit uns, zusammen mit einer Notiz darüber, was Sie taten, als es kaputt ging. Schreibe es auf Discord, GitHub Issues oder WhatsApp — Links sind auf dem Info-Bildschirm.</string>
+    <string name="logs_uploaded_privacy">Geheimnisse korrigiert · das Log läuft automatisch ab</string>
+    <string name="logs_copy_code">Code kopieren</string>
+    <string name="logs_done">Fertig</string>
+    <string name="placeholder_dash">—</string>
+    <string name="errors_network">Netzwerkfehler</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">Video nicht gespielt: %1$s</string>
@@ -517,7 +572,7 @@
     <string name="toast_batch_delete_partial">%1$d gelöscht, %2$d fehlgeschlagen</string>
     <string name="play_with_chooser">Spielen Sie mit</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">Aktualisiert auf v%1$s  erneut Autostart bestätigen, BYD löscht es bei jeder Installation</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">Bereits gewährt</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">Tipps und Fehlerbehebung</string>
@@ -555,7 +610,7 @@
          or only the keepalive survived an OOM respawn. -->
     <string name="daemon_keepalive_notif_title">Overdrive aktiv</string>
     <string name="daemon_keepalive_notif_text">Überwachung von Fahrzeugsystemen</string>
-    <string name="overdrive_status_summary_title">Overdrive</string>
+    <string name="overdrive_status_summary_title">Übertreibung</string>
     <string name="overdrive_status_summary_text">Hintergrunddienste laufen</string>
     <!-- ============================================================== -->
     <!-- M3 Revamp: navigation rail + settings sub-rail + theme picker  -->
@@ -931,11 +986,11 @@
     <!-- ============================================================
          RoadSense — road-hazard detection feature
          ============================================================ -->
-    <string name="rail_roadsense">RoadSense</string>
+    <string name="rail_roadsense">Straßensinn</string>
     <string name="rail_hazard_map">Karte</string>
-    <string name="roadsense_title">RoadSense</string>
+    <string name="roadsense_title">Straßensinn</string>
     <string name="roadsense_pill_scanning">Scannen</string>
-    <string name="roadsense_pill_idle">RoadSense</string>
+    <string name="roadsense_pill_idle">Straßensinn</string>
     <string name="roadsense_status_idle">Leerlauf</string>
     <!-- VEHICLE calibration (suspension-learning) — the green/orange/red dot. Worded
          about the car, not the route, since that's what maturity actually measures. -->
@@ -1048,6 +1103,10 @@
     <string name="roadsense_map_poi_charging_generic">Ladestation</string>
     <string name="roadsense_map_poi_fuel_generic">Tankstelle</string>
     <string name="roadsense_map_route_switched">Gewechselte Route</string>
+    <!-- "then <next maneuver>" preview shown in the maneuver banner -->
+    <string name="roadsense_map_then">dann</string>
+    <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
+    <string name="roadsense_map_exit_n">beenden %1$d</string>
     <!-- Hazards-along-route pills (%1$d = count) -->
     <string name="roadsense_map_pill_severe">%1$d schwer</string>
     <string name="roadsense_map_pill_moderate">%1$d moderiert</string>
@@ -1074,4 +1133,36 @@
     <string name="roadsense_map_move_stop_down">Stopp nach unten</string>
     <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">Bis zu %1$d Stopps erlaubt</string>
+    <!-- Map day/night override (Auto → Light → Dark) -->
+    <string name="roadsense_map_theme_toggle">Kartenthema</string>
+    <string name="roadsense_map_theme_auto">Kartenthema: Auto</string>
+    <string name="roadsense_map_theme_light">Kartenthema: Hell</string>
+    <string name="roadsense_map_theme_dark">Kartenthema: dunkel</string>
+    <!-- Saved places (Home / Work / custom favourites) -->
+    <string name="roadsense_map_saved_home">Zuhause</string>
+    <string name="roadsense_map_saved_work">Arbeit</string>
+    <string name="roadsense_map_saved_set_home">Haus setzen</string>
+    <string name="roadsense_map_saved_set_work">Werk festlegen</string>
+    <!-- Short action label for the "save as a custom favourite" button. -->
+    <string name="roadsense_map_saved_favourite">Favorit</string>
+    <string name="roadsense_map_save_place">Ort speichern</string>
+    <string name="roadsense_map_save_as_home">Als Zuhause speichern</string>
+    <string name="roadsense_map_save_as_work">Als Arbeit speichern</string>
+    <string name="roadsense_map_save_as_custom">Als Favorit speichern…</string>
+    <string name="roadsense_map_saved_added">Gespeichert</string>
+    <string name="roadsense_map_saved_removed">Aus dem Gespeichert entfernt</string>
+    <string name="roadsense_map_saved_remove">Entfernen</string>
+    <string name="roadsense_map_recent_remove">Aus den letzten Apps entfernen</string>
+    <string name="roadsense_map_recent_removed">Aus den letzten Apps entfernt</string>
+    <string name="roadsense_map_custom_label_hint">Label (z.B. Gym, Mum)</string>
+    <string name="roadsense_map_custom_label_title">Diesen Ort benennen</string>
+    <string name="roadsense_map_save">Speichern</string>
+    <string name="roadsense_map_cancel">Abbrechen</string>
+    <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
+    <string name="roadsense_map_dropped_pin">Pin fallen gelassen</string>
+    <string name="roadsense_map_navigate_here">Hier navigieren</string>
+    <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
+    <string name="roadsense_map_search_to_save">Suche einen Ort zum setzen %1$s</string>
+    <!-- Shown when re-entering the map with a previously-set trip restored. -->
+    <string name="roadsense_map_trip_restored">Reise wiederhergestellt</string>
 </resources>

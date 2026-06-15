@@ -389,8 +389,46 @@
     <string name="toast_updated_to">تم التحديث إلى %1$s</string>
     <string name="toast_update_install_failed">فشل تثبيت التحديث: %1$s</string>
     <string name="toast_checking_for_updates">التحقق من وجود تحديثات…</string>
-    <string name="toast_app_up_to_date">التطبيق حديث (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">فشل التحقق من التحديث: %1$s</string>
+    <!-- Update dialog + version picker -->
+    <string name="update_dialog_available_title">التحديث متاح</string>
+    <string name="update_dialog_subtitle">بناء أحدث جاهز للتثبيت</string>
+    <string name="update_dialog_current">الحالي: v%1$s</string>
+    <string name="update_dialog_new">جديد: ضد%1$s</string>
+    <string name="update_dialog_current_label">مثبت</string>
+    <string name="update_dialog_new_label">إصدار جديد</string>
+    <string name="update_dialog_whats_new">ما الجديد</string>
+    <string name="update_dialog_install_now">تثبيت الآن</string>
+    <string name="update_dialog_later">لاحقاً</string>
+    <string name="update_picker_title">اختر نسخة</string>
+    <string name="update_picker_subtitle">تثبيت أي بناء منشور - أحدث أو أقدم</string>
+    <string name="update_picker_empty">لا توجد إصدارات منشورة بعد.</string>
+    <string name="update_picker_current_suffix">%1$s (مثبت)</string>
+    <string name="update_picker_older_suffix">%1$s (قديم)</string>
+    <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
+    <string name="update_progress_title">تحديث فوق القرص</string>
+    <string name="update_step_downloading">تحميل التحديث…</string>
+    <string name="update_step_verifying">التحقق من التحميل…</string>
+    <string name="update_step_stopping">إيقاف الهدايا…</string>
+    <string name="update_step_installing">تثبيت التحديث…</string>
+    <string name="update_step_installed">تم تثبيت التحديث</string>
+    <string name="update_step_restarting">إعادة تشغيل التطبيق…</string>
+    <string name="update_step_queued">بدء التحديث…</string>
+    <string name="update_error_title">فشل التحديث</string>
+    <string name="update_error_daemon_down">لم يتم تشغيل الكاميرا. ابدأ من شاشة دايمونز، ثم حاول التحديث مرة أخرى.</string>
+    <string name="update_error_start_failed">تعذر بدء التحديث: %1$s</string>
+    <string name="update_error_lost_headunit">الاتصال الضائع مع وحدة الرأس قبل انتهاء التثبيت. على النفق؟ تحقق من تيليجرام لعنوان URL الجديد، أو استخدم IP المحلي.</string>
+    <string name="update_hide">إخفاء</string>
+    <!-- Update channel selector (Settings → About) -->
+    <string name="settings_update_channel_title">تحديث القناة</string>
+    <string name="settings_update_channel_alpha">ألفا</string>
+    <string name="settings_update_channel_braveheart">قلب الشجاعة</string>
+    <string name="settings_update_channel_alpha_desc">الإصدار المستقر. يتم الاحتفاظ بكل نسخة منشورة - اختر أي شيء لتثبيته (يسمح بالدرجات). مستحسن للاستخدام اليومي.</string>
+    <string name="settings_update_channel_braveheart_desc">بنايات النزلاق ، سلمت لحظة نشرها. تحصل على ميزات جديدة أولا، ولكن قد تكون غير مستقرة أو غير مستقرة. إذا توقف شيء ما، افتح شاشة دايمونز، اضغط على سجل دايمون، اختر \"تحميل &amp; احصل على رمز\"، وشارك الكود معنا على قنوات المجتمع.</string>
+    <string name="settings_update_channel_save_failed">تعذر حفظ قناة التحديث</string>
+    <string name="settings_update_channel_braveheart_toast">تم التبديل إلى القلب الشجاع. قد تكون المباني غير مستقرة - إذا توقف شيء ما، وإرسال سجل الديمون والإبلاغ عنه على ديسكورد/GitHub/WhatsApp.</string>
+    <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">إذن التخزين مطلوب للتسجيلات</string>
     <string name="toast_url_copied_short">تم نسخ الرابط!</string>
     <string name="toast_camera_set_to_auto">تم تعيين الكاميرا إلى تلقائي</string>
@@ -519,6 +557,23 @@
     <string name="log_header_source">المصدر: %1$s</string>
     <string name="log_header_exported">تم التصدير: %1$s</string>
     <string name="log_header_truncated">ملاحظة: السجل مقتطف إلى آخر 10000 سطر (المجموع: %1$d سطر)</string>
+    <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
+    <string name="logs_send_title">إرسال سجل %1$s</string>
+    <string name="logs_send_title_plain">إرسال سجل دايمون</string>
+    <string name="logs_send_subtitle">%1$s · اختر كيفية إرساله إلينا</string>
+    <string name="logs_send_upload">تحميل &amp; احصل على رمز</string>
+    <string name="logs_send_upload_desc">يرسل السجل إلينا ويعطيك رمز قصير. أسهل للحصول على الدعم.</string>
+    <string name="logs_send_share">مشاركة الملف…</string>
+    <string name="logs_send_share_desc">حفظ أو إرسال السجل بنفسك عبر ورقة المشاركة.</string>
+    <string name="logs_uploading_title">تحميل السجل…</string>
+    <string name="logs_uploading_subtitle">إعادة كتابة الأسرار وإرسالها بشكل آمن</string>
+    <string name="logs_uploaded_title">تم رفع السجل</string>
+    <string name="logs_uploaded_instructions">شارك هذه التعليمات البرمجية معنا، مع ملاحظة حول ما كنت تفعله عند كسرها. انشره على ديسكورد، GitHub مشكلات أو WhatsApp - الروابط على الشاشة.</string>
+    <string name="logs_uploaded_privacy">تم تعديل الأسرار · تنتهي صلاحية السجل تلقائياً</string>
+    <string name="logs_copy_code">نسخ الرمز</string>
+    <string name="logs_done">تم</string>
+    <string name="placeholder_dash">—</string>
+    <string name="errors_network">خطأ في الشبكة</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">لا يمكن تشغيل الفيديو: %1$s</string>
@@ -529,7 +584,7 @@
     <string name="toast_batch_delete_partial">%1$d تم حذفه، %2$d فشل</string>
     <string name="play_with_chooser">اللعب مع</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">تم التحديث إلى v%1$s — إعادة تأكيد التشغيل التلقائي، يمحو BYD على كل تثبيت</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">مُنحت بالفعل</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">نصائح &amp; استكشاف الأخطاء</string>
@@ -1088,6 +1143,10 @@
     <string name="roadsense_map_poi_charging_generic">محطة الشحن</string>
     <string name="roadsense_map_poi_fuel_generic">محطة الوقود</string>
     <string name="roadsense_map_route_switched">مسار التبديل</string>
+    <!-- "then <next maneuver>" preview shown in the maneuver banner -->
+    <string name="roadsense_map_then">ثم</string>
+    <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
+    <string name="roadsense_map_exit_n">الخروج %1$d</string>
     <!-- Hazards-along-route pills (%1$d = count) -->
     <string name="roadsense_map_pill_severe">%1$d حادة</string>
     <string name="roadsense_map_pill_moderate">%1$d moderate</string>
@@ -1114,4 +1173,36 @@
     <string name="roadsense_map_move_stop_down">إيقاف الحركة للأسفل</string>
     <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">يسمح حتى %1$d محطات</string>
+    <!-- Map day/night override (Auto → Light → Dark) -->
+    <string name="roadsense_map_theme_toggle">سمة الخريطة</string>
+    <string name="roadsense_map_theme_auto">سمة الخريطة: تلقائي</string>
+    <string name="roadsense_map_theme_light">سمة الخريطة: ضوء</string>
+    <string name="roadsense_map_theme_dark">سمة الخريطة: الظلام</string>
+    <!-- Saved places (Home / Work / custom favourites) -->
+    <string name="roadsense_map_saved_home">المنزل</string>
+    <string name="roadsense_map_saved_work">العمل</string>
+    <string name="roadsense_map_saved_set_home">تعيين الصفحة الرئيسية</string>
+    <string name="roadsense_map_saved_set_work">تعيين العمل</string>
+    <!-- Short action label for the "save as a custom favourite" button. -->
+    <string name="roadsense_map_saved_favourite">المفضلة</string>
+    <string name="roadsense_map_save_place">حفظ المكان</string>
+    <string name="roadsense_map_save_as_home">حفظ كمنزل</string>
+    <string name="roadsense_map_save_as_work">حفظ كعمل</string>
+    <string name="roadsense_map_save_as_custom">حفظ كالمفضلة…</string>
+    <string name="roadsense_map_saved_added">محفوظ</string>
+    <string name="roadsense_map_saved_removed">إزالة من المحفوظة</string>
+    <string name="roadsense_map_saved_remove">إزالة</string>
+    <string name="roadsense_map_recent_remove">إزالة من التطبيقات الحديثة</string>
+    <string name="roadsense_map_recent_removed">تمت الإزالة من التطبيقات الحديثة</string>
+    <string name="roadsense_map_custom_label_hint">تسمية (على سبيل المثال Gym, Mum\'s)</string>
+    <string name="roadsense_map_custom_label_title">اسم هذا المكان</string>
+    <string name="roadsense_map_save">حفظ</string>
+    <string name="roadsense_map_cancel">إلغاء</string>
+    <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
+    <string name="roadsense_map_dropped_pin">دبوس مسقط</string>
+    <string name="roadsense_map_navigate_here">التنقل هنا</string>
+    <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
+    <string name="roadsense_map_search_to_save">البحث عن مكان لتعيينه كـ %1$s</string>
+    <!-- Shown when re-entering the map with a previously-set trip restored. -->
+    <string name="roadsense_map_trip_restored">تم استعادة الرحلة</string>
 </resources>

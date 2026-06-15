@@ -84,6 +84,11 @@
     "update_already_in_progress": "एक अद्यतन पहले से ही चल रहा है",
     "update_pre_install_failed_with_detail": "पूर्व-स्थापना जांच विफल: {0}",
     "update_no_update_available": "कोई अद्यतन उपलब्ध नहीं",
+    "update_invalid_channel": "Invalid update channel",
+    "update_channel_write_failed": "Could not save the update channel",
+    "update_channel_tag_mismatch": "That version is on a different channel. Switch channels first.",
+    "logs_upload_unavailable": "Log upload is not available in this build",
+    "logs_unknown_daemon": "Unknown daemon. Try: {0}",
     "update_progress_unreadable": "प्रगति फ़ाइल अपठनीय",
     "vehicle_data_unavailable": "वाहन डेटा उपलब्ध नहीं",
     "vehicle_trunk_unlock_failed": "ट्रंक नहीं खोल सकता, अनलॉक विफल रहा। कार अभी भी लॉक हो सकता है।",
@@ -101,12 +106,7 @@
     "mqtt_not_initialized": "MQTT प्रारंभ नहीं किया गया",
     "max_connections_reached": "अधिकतम कनेक्शन प्राप्त ({0})",
     "missing_connection_id": "अनुपस्थित कनेक्शन आईडी",
-    "connection_not_found": "कनेक्शन नहीं मिलाः {0}",
-    "update_invalid_channel": "अमान्य अपडेट चैनल",
-    "update_channel_write_failed": "अपडेट चैनल सहेजा नहीं जा सका",
-    "update_channel_tag_mismatch": "वह संस्करण एक अलग चैनल पर है। पहले चैनल बदलें।",
-    "logs_upload_unavailable": "इस बिल्ड में लॉग अपलोड उपलब्ध नहीं है",
-    "logs_unknown_daemon": "अज्ञात डीमन। प्रयास करें: {0}"
+    "connection_not_found": "कनेक्शन नहीं मिलाः {0}"
   },
   "notifications": {
     "charging_started": "चार्जिंग शुरू",

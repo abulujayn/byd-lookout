@@ -377,8 +377,46 @@
     <string name="toast_updated_to">Ενημερώθηκε στο %1$s</string>
     <string name="toast_update_install_failed">Η εγκατάσταση της ενημέρωσης απέτυχε: %1$s</string>
     <string name="toast_checking_for_updates">Checking for updates…</string>
-    <string name="toast_app_up_to_date">Η εφαρμογή είναι ενημερωμένη (v%1$s)</string>
+    <string name="toast_app_up_to_date">App is up to date (%1$s)</string>
     <string name="toast_update_check_failed">Έλεγχος ενημερώσεων απέτυχε: %1$s</string>
+    <!-- Update dialog + version picker -->
+    <string name="update_dialog_available_title">Διαθέσιμη ενημέρωση</string>
+    <string name="update_dialog_subtitle">Μια νεότερη έκδοση είναι έτοιμη για εγκατάσταση</string>
+    <string name="update_dialog_current">Τρέχουσα: v%1$s</string>
+    <string name="update_dialog_new">Νέο: v%1$s</string>
+    <string name="update_dialog_current_label">Εγκατεστημένο</string>
+    <string name="update_dialog_new_label">Νέα έκδοση</string>
+    <string name="update_dialog_whats_new">Τι νέο υπάρχει</string>
+    <string name="update_dialog_install_now">Εγκατάσταση τώρα</string>
+    <string name="update_dialog_later">Αργότερα</string>
+    <string name="update_picker_title">Επιλέξτε μια έκδοση</string>
+    <string name="update_picker_subtitle">Εγκαταστήστε οποιαδήποτε δημοσιευμένη έκδοση — νεότερη ή παλαιότερη έκδοση</string>
+    <string name="update_picker_empty">Καμία έκδοση δεν έχει δημοσιευθεί ακόμα.</string>
+    <string name="update_picker_current_suffix">%1$s (εγκατεστημένο)</string>
+    <string name="update_picker_older_suffix">%1$s (παλαιότερο)</string>
+    <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
+    <string name="update_progress_title">Ενημέρωση Overdrive</string>
+    <string name="update_step_downloading">Downloading update…</string>
+    <string name="update_step_verifying">Verifying download…</string>
+    <string name="update_step_stopping">Διακοπή δαιμόνων…</string>
+    <string name="update_step_installing">Installing update…</string>
+    <string name="update_step_installed">Η ενημέρωση εγκαταστάθηκε</string>
+    <string name="update_step_restarting">Restarting app…</string>
+    <string name="update_step_queued">Starting update…</string>
+    <string name="update_error_title">Η ενημέρωση απέτυχε</string>
+    <string name="update_error_daemon_down">Ο δαίμονας κάμερας δεν εκτελείται. Ξεκινήστε τον από την οθόνη των δαίμων και δοκιμάστε ξανά την ενημέρωση.</string>
+    <string name="update_error_start_failed">Δεν ήταν δυνατή η εκκίνηση της ενημέρωσης: %1$s</string>
+    <string name="update_error_lost_headunit">Η χαμένη επαφή με την κεφαλή μονάδα πριν την εγκατάσταση τελειώσει. Σε ένα τούνελ? Ελέγξτε το Telegram για το νέο URL, ή χρησιμοποιήστε το τοπικό IP.</string>
+    <string name="update_hide">Απόκρυψη</string>
+    <!-- Update channel selector (Settings → About) -->
+    <string name="settings_update_channel_title">Ενημέρωση καναλιού</string>
+    <string name="settings_update_channel_alpha">Άλφα</string>
+    <string name="settings_update_channel_braveheart">Braveheart</string>
+    <string name="settings_update_channel_alpha_desc">Η σταθερή έκδοση. Κάθε δημοσιευμένη έκδοση διατηρείται - επιλέξτε οποιαδήποτε για εγκατάσταση (υποβαθμίσεις επιτρέπεται). Συνιστάται για καθημερινή χρήση.</string>
+    <string name="settings_update_channel_braveheart_desc">Bleeding-edge builds, delivered the moment they\'re published. You get new features first, but they may be unstable or buggy. If something breaks, open the Daemons screen, tap a daemon\'s log, choose \"Upload &amp; get a code\", and share the code with us on the community channels.</string>
+    <string name="settings_update_channel_save_failed">Δεν ήταν δυνατή η αποθήκευση του καναλιού ενημέρωσης</string>
+    <string name="settings_update_channel_braveheart_toast">Εναλλαγή σε Braveheart. Οι κατασκευές μπορεί να είναι ασταθείς — αν κάτι σπάσει, στείλτε το αρχείο καταγραφής δαίμονα και αναφέρετέ το στο Discord/GitHub/WhatsApp.</string>
+    <!-- Community / report-a-bug links -->
     <string name="toast_storage_permission_required">Απαιτείται άδεια αποθήκευσης για εγγραφές</string>
     <string name="toast_url_copied_short">Το URL αντιγράφηκε!</string>
     <string name="toast_camera_set_to_auto">Κάμερα ρυθμισμένη σε Αυτόματο</string>
@@ -507,6 +545,23 @@
     <string name="log_header_source">Πηγή: %1$s</string>
     <string name="log_header_exported">Εξήχθησαν: %1$s</string>
     <string name="log_header_truncated">ΣΗΜΕΙΩΣΗ: Καταργήστε τις τελευταίες 10000 γραμμές (συνολικά: %1$d γραμμές)</string>
+    <!-- Braveheart log send (upload to Cloudflare or share-sheet) -->
+    <string name="logs_send_title">Αποστολή αρχείου καταγραφής %1$s</string>
+    <string name="logs_send_title_plain">Αποστολή αρχείου καταγραφής δαίμονα</string>
+    <string name="logs_send_subtitle">%1$s · επιλέξτε πώς να μας το στείλετε</string>
+    <string name="logs_send_upload">Upload &amp; get a code</string>
+    <string name="logs_send_upload_desc">Στέλνει το αρχείο καταγραφής σε εμάς και σας δίνει ένα σύντομο κώδικα.</string>
+    <string name="logs_send_share">Κοινή χρήση αρχείου…</string>
+    <string name="logs_send_share_desc">Αποθηκεύστε ή στείλτε το αρχείο καταγραφής μόνοι σας μέσω του φύλλου κοινής χρήσης.</string>
+    <string name="logs_uploading_title">Uploading log…</string>
+    <string name="logs_uploading_subtitle">Επαναλάβετε τα μυστικά και στέλνετε με ασφάλεια</string>
+    <string name="logs_uploaded_title">Η καταγραφή ανέβηκε</string>
+    <string name="logs_uploaded_instructions">Μοιραστείτε τον κώδικα μαζί μας, μαζί με μια σημείωση για το τι κάνατε όταν έσπασε. Δημοσιεύστε το στο Discord, θέματα GitHub ή WhatsApp - οι σύνδεσμοι είναι στην οθόνη Σχετικά με.</string>
+    <string name="logs_uploaded_privacy">Μυστικά redacted · το αρχείο καταγραφής auto-expires</string>
+    <string name="logs_copy_code">Αντιγραφή κώδικα</string>
+    <string name="logs_done">Ολοκληρώθηκε</string>
+    <string name="placeholder_dash">—</string>
+    <string name="errors_network">Σφάλμα δικτύου</string>
     <!-- Recording controls -->
     <!-- Recording library -->
     <string name="toast_cannot_play_video">Αδυναμία αναπαραγωγής βίντεο: %1$s</string>
@@ -517,7 +572,7 @@
     <string name="toast_batch_delete_partial">%1$d διαγράφηκε, %2$d απέτυχε</string>
     <string name="play_with_chooser">Παίξτε με</string>
     <!-- Setup guide -->
-    <string name="setup_version_banner">Ενημερώθηκε για v%1$s - επιβεβαιώστε ξανά το autostart, το BYD σκουπίζει σε κάθε εγκατάσταση</string>
+    <string name="setup_version_banner">Updated to %1$s — re-confirm autostart, BYD wipes it on every install</string>
     <string name="setup_overlay_already_granted">Χορηγήθηκε Ήδη</string>
     <!-- Setup guide — post-setup tips section -->
     <string name="setup_tips_header">Συμβουλές &amp; Αντιμετώπιση προβλημάτων</string>
@@ -1048,6 +1103,10 @@
     <string name="roadsense_map_poi_charging_generic">Σταθμός φόρτισης</string>
     <string name="roadsense_map_poi_fuel_generic">Σταθμός καυσίμων</string>
     <string name="roadsense_map_route_switched">Εναλλαγή διαδρομής</string>
+    <!-- "then <next maneuver>" preview shown in the maneuver banner -->
+    <string name="roadsense_map_then">τότε</string>
+    <!-- Roundabout exit ordinal in the maneuver banner (%1$d = exit number) -->
+    <string name="roadsense_map_exit_n">έξοδος %1$d</string>
     <!-- Hazards-along-route pills (%1$d = count) -->
     <string name="roadsense_map_pill_severe">%1$d σοβαρή</string>
     <string name="roadsense_map_pill_moderate">%1$d μέτρια</string>
@@ -1074,4 +1133,36 @@
     <string name="roadsense_map_move_stop_down">Μετακίνηση στάσης κάτω</string>
     <!-- %1$d is the maximum number of stops allowed. -->
     <string name="roadsense_map_max_stops">Μέχρι το %1$d επιτρέπονται οι στάσεις</string>
+    <!-- Map day/night override (Auto → Light → Dark) -->
+    <string name="roadsense_map_theme_toggle">Θέμα χάρτη</string>
+    <string name="roadsense_map_theme_auto">Θέμα χάρτη: Αυτόματο</string>
+    <string name="roadsense_map_theme_light">Θέμα χάρτη: Φως</string>
+    <string name="roadsense_map_theme_dark">Θέμα χάρτη: Σκοτεινό</string>
+    <!-- Saved places (Home / Work / custom favourites) -->
+    <string name="roadsense_map_saved_home">Αρχική</string>
+    <string name="roadsense_map_saved_work">Εργασία</string>
+    <string name="roadsense_map_saved_set_home">Ορισμός Αρχικής Σελίδας</string>
+    <string name="roadsense_map_saved_set_work">Ορισμός Εργασίας</string>
+    <!-- Short action label for the "save as a custom favourite" button. -->
+    <string name="roadsense_map_saved_favourite">Αγαπημένο</string>
+    <string name="roadsense_map_save_place">Αποθήκευση τόπου</string>
+    <string name="roadsense_map_save_as_home">Αποθήκευση ως Αρχική σελίδα</string>
+    <string name="roadsense_map_save_as_work">Αποθήκευση ως εργασία</string>
+    <string name="roadsense_map_save_as_custom">Save as favourite…</string>
+    <string name="roadsense_map_saved_added">Αποθηκεύτηκε</string>
+    <string name="roadsense_map_saved_removed">Αφαιρέθηκε από αποθηκευμένο</string>
+    <string name="roadsense_map_saved_remove">Αφαίρεση</string>
+    <string name="roadsense_map_recent_remove">Αφαίρεση από πρόσφατα</string>
+    <string name="roadsense_map_recent_removed">Αφαιρέθηκε από πρόσφατα</string>
+    <string name="roadsense_map_custom_label_hint">Ετικέτα (π.χ. Γυμναστήριο, Mum\'s)</string>
+    <string name="roadsense_map_custom_label_title">Όνομα αυτού του τόπου</string>
+    <string name="roadsense_map_save">Αποθήκευση</string>
+    <string name="roadsense_map_cancel">Ακύρωση</string>
+    <!-- Place-action sheet (long-press the map or a search result to save/navigate) -->
+    <string name="roadsense_map_dropped_pin">Απορριφθέν pin</string>
+    <string name="roadsense_map_navigate_here">Πλοηγηθείτε εδώ</string>
+    <!-- Shown after tapping an unset Home/Work chip: search picks the place to save. -->
+    <string name="roadsense_map_search_to_save">Αναζητήστε ένα μέρος για να ορίσετε ως %1$s</string>
+    <!-- Shown when re-entering the map with a previously-set trip restored. -->
+    <string name="roadsense_map_trip_restored">Η διαδρομή επαναφέρθηκε</string>
 </resources>
