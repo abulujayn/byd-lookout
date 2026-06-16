@@ -392,7 +392,7 @@
     <string name="update_picker_current_suffix">%1$s (インストール済み)</string>
     <string name="update_picker_older_suffix">%1$s (古い)</string>
     <!-- Update progress (title + per-step status; no emoji — state icon carries the cue) -->
-    <string name="update_progress_title">オーバードライブの更新</string>
+    <string name="update_progress_title">Overdrive の更新</string>
     <string name="update_step_downloading">Downloading update…</string>
     <string name="update_step_verifying">Verifying download…</string>
     <string name="update_step_stopping">Stopping daemons…</string>
@@ -605,7 +605,7 @@
          notifications into one shade entry. The summary text is intentionally
          generic so it stays accurate whether all three services are running
          or only the keepalive survived an OOM respawn. -->
-    <string name="daemon_keepalive_notif_title">オーバードライブ有効</string>
+    <string name="daemon_keepalive_notif_title">Overdrive 有効</string>
     <string name="daemon_keepalive_notif_text">車両システムの監視</string>
     <string name="overdrive_status_summary_title">オーバードライブ</string>
     <string name="overdrive_status_summary_text">バックグラウンドサービスを実行中</string>
@@ -1051,7 +1051,7 @@
     <!-- Snackbar / toast confirmations -->
     <string name="roadsense_map_confirmed_toast">ハザードの確認</string>
     <string name="roadsense_map_deleted_toast">ハザード削除</string>
-    <string name="roadsense_map_action_failed">ロードセンスに到達できませんでした。もう一度お試しください。</string>
+    <string name="roadsense_map_action_failed">RoadSense に到達できませんでした。もう一度お試しください。</string>
     <string name="roadsense_map_no_location">Waiting for GPS fix…</string>
     <!-- Navigation: search + routing + turn-by-turn -->
     <string name="roadsense_map_search_hint">検索先</string>
