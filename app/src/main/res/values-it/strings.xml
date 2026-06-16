@@ -669,7 +669,7 @@ Questa azione non puo essere annullata.</string>
     <string name="settings_about_license_title">Licenza</string>
     <string name="settings_about_license_value">MIT — open source. Tocca per vedere il testo completo.</string>
     <string name="settings_about_source_title">Codice sorgente</string>
-    <string name="settings_about_source_value">github.com/yash-srivastava/OverDrive-release</string>
+    <string name="settings_about_source_value">github.com/yash-srivastava/Overdrive-release</string>
     <string name="settings_about_star_title">Metti una stella su GitHub</string>
     <string name="settings_about_star_value">Ci vuole un secondo. Conta molto.</string>
     <string name="settings_about_thanks_title">Grazie</string>

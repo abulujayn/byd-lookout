@@ -48,7 +48,7 @@
     "about_group": "À propos de",
     "brand_home": "OverDrive — ouvrir le tableau de bord",
     "telegram": "Telegram",
-    "road_sense": "Sens de route"
+    "road_sense": "RoadSense"
   },
   "road_sense": {
     "page_title": "Paramètres RoadSense",
@@ -98,7 +98,7 @@
     "bs_needs_overlay": "Autoriser \"Afficher sur les autres applications\" à afficher la vue \"aveugle\"",
     "saved": "Enregistré",
     "save_failed": "Échec de l'enregistrement",
-    "master_title": "Sens de route",
+    "master_title": "RoadSense",
     "master_enable": "Activer RoadSense",
     "master_enable_desc": "Détecte les dangers de la route (bosses, selles, brise-vitesse) du mouvement et du GPS, et vous avertit de ceux qui sont connus. Tous les autres paramètres de RoadSense ne prennent effet que lorsque cette option est activée.",
     "map_title": "Carte",

@@ -98,7 +98,7 @@
     "bs_needs_overlay": "Erlaube \"über andere Apps anzeigen\" die Blind-Spot-Ansicht anzuzeigen",
     "saved": "Gespeichert",
     "save_failed": "Speichern fehlgeschlagen",
-    "master_title": "Straßensinn",
+    "master_title": "RoadSense",
     "master_enable": "RoadSense aktivieren",
     "master_enable_desc": "Erkennt Strassenrisiken (Beulen, Schlaglöcher, Geschwindigkeitsbrecher) von Bewegung und GPS und warnt Sie vor bekannten Gefahren. Alle anderen RoadSense-Einstellungen werden nur aktiviert, wenn dies aktiviert ist.",
     "map_title": "Karte",

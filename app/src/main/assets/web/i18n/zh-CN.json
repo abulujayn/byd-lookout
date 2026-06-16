@@ -22,7 +22,7 @@
     "byd_cloud_title": "BYD 云 - OverDrive",
     "telegram_title": "Telegram - OverDrive",
     "dashboard_title": "仪表板 - OverDrive",
-    "road_sense_title": "公路传感器-过载驱动器"
+    "road_sense_title": "RoadSense - OverDrive"
   },
   "nav": {
     "dashboard": "仪表板",
@@ -48,7 +48,7 @@
     "about_group": "关于",
     "brand_home": "OverDrive — 打开仪表板",
     "telegram": "Telegram",
-    "road_sense": "道路Sense"
+    "road_sense": "RoadSense"
   },
   "road_sense": {
     "page_title": "RoadSense 设置",
@@ -98,7 +98,7 @@
     "bs_needs_overlay": "允许“在其他应用上显示”以显示盲点视图",
     "saved": "已保存",
     "save_failed": "保存失败",
-    "master_title": "道路Sense",
+    "master_title": "RoadSense",
     "master_enable": "启用 RoadSense",
     "master_enable_desc": "检测运动和 GPS 引起的道路危险(水泵、马铃薯、断速器)，并警告您在已知道路之前。 所有其他的 RoadSense 设置仅在开启时生效。",
     "map_title": "地图",
@@ -140,7 +140,7 @@
     "calibration_enable_desc": "在屏幕叠加显示每个检测到的危险，并以确认/正确的按钮，让您可以教RoadSense 哪些检测是真实的。 用这个来为你的车辆调节检测，然后关掉它。",
     "overlay_title": "屏幕叠加",
     "overlay_show": "在屏幕上显示叠加",
-    "overlay_show_desc": "在屏幕上显示浮动的道路传感器避孕药和危险卡。 关闭此选项以隐藏它 — — 检测、音频警告和群众来源继续在后台运行；只有屏幕显示是隐藏的。",
+    "overlay_show_desc": "Shows the floating RoadSense pill and hazard card on the screen. Turn this off to hide it — detection, audio warnings, and crowdsourcing keep running in the background; only the on-screen display is hidden.",
     "warn_title": "警告",
     "warn_enable": "在已知危险之前发出警告",
     "warn_enable_desc": "当你接近危险时警告你，RoadSense 已经知道你的路线上的危险。",

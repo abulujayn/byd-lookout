@@ -22,7 +22,7 @@
     "byd_cloud_title": "Облако BYD - OverDrive",
     "telegram_title": "Telegram - OverDrive",
     "dashboard_title": "Конструкторная панель - OverDrive",
-    "road_sense_title": "RoadSense - Перевод"
+    "road_sense_title": "RoadSense - OverDrive"
   },
   "nav": {
     "dashboard": "Панель",
@@ -48,7 +48,7 @@
     "about_group": "О",
     "brand_home": "OverDrive — открыть Панель",
     "telegram": "Telegram",
-    "road_sense": "РоудСенс"
+    "road_sense": "RoadSense"
   },
   "road_sense": {
     "page_title": "Настройки RoadSense",
@@ -98,7 +98,7 @@
     "bs_needs_overlay": "Разрешить отображение поверх других приложений для отображения точки слепого",
     "saved": "Сохранено",
     "save_failed": "Не удалось сохранить",
-    "master_title": "РоудСенс",
+    "master_title": "RoadSense",
     "master_enable": "Включить RoadSense",
     "master_enable_desc": "Обнаружение опасностей дорожного движения (бампы, яблоки, выключатели скорости) от движения и GPS, и предупреждает вас об этом заранее. Все остальные настройки RoadSense вступят в силу только во время включения.",
     "map_title": "Карта",

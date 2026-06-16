@@ -48,7 +48,7 @@
     "about_group": "En cuanto a",
     "brand_home": "OverDrive — abrir Panel",
     "telegram": "Telegram",
-    "road_sense": "Sentido de carretera"
+    "road_sense": "RoadSense"
   },
   "road_sense": {
     "page_title": "Ajustes de RoadSense",
@@ -98,7 +98,7 @@
     "bs_needs_overlay": "Permitir \"mostrar sobre otras aplicaciones\" para mostrar la vista de punto ciego",
     "saved": "Guardado",
     "save_failed": "Error al guardar",
-    "master_title": "Sentido de carretera",
+    "master_title": "RoadSense",
     "master_enable": "Activar RoadSense",
     "master_enable_desc": "Detecta los peligros de las carreteras (bumps, pótoles, martillos de velocidad) de movimiento y GPS, y te advierte por delante de los conocidos. Todos los demás ajustes de RoadSense sólo surten efecto mientras esté activado.",
     "map_title": "Mapa",

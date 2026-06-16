@@ -607,7 +607,7 @@
          or only the keepalive survived an OOM respawn. -->
     <string name="daemon_keepalive_notif_title">Overdrive 激活</string>
     <string name="daemon_keepalive_notif_text">监测车辆系统</string>
-    <string name="overdrive_status_summary_title">超载驱动器</string>
+    <string name="overdrive_status_summary_title">Overdrive</string>
     <string name="overdrive_status_summary_text">后台服务运行</string>
     <!-- ============================================================== -->
     <!-- M3 Revamp: navigation rail + settings sub-rail + theme picker  -->
@@ -977,11 +977,11 @@
     <!-- ============================================================
          RoadSense — road-hazard detection feature
          ============================================================ -->
-    <string name="rail_roadsense">道路Sense</string>
+    <string name="rail_roadsense">RoadSense</string>
     <string name="rail_hazard_map">地图</string>
-    <string name="roadsense_title">道路Sense</string>
+    <string name="roadsense_title">RoadSense</string>
     <string name="roadsense_pill_scanning">正在扫描</string>
-    <string name="roadsense_pill_idle">道路Sense</string>
+    <string name="roadsense_pill_idle">RoadSense</string>
     <string name="roadsense_status_idle">空闲的</string>
     <!-- VEHICLE calibration (suspension-learning) — the green/orange/red dot. Worded
          about the car, not the route, since that's what maturity actually measures. -->

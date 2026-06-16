@@ -22,7 +22,7 @@
     "byd_cloud_title": "Nuvem BYD - OverDrive",
     "telegram_title": "Telegram - OverDrive",
     "dashboard_title": "Painel de controle - OverDrive",
-    "road_sense_title": "Sentido - Sobrecarga"
+    "road_sense_title": "RoadSense - OverDrive"
   },
   "nav": {
     "dashboard": "Painel",
@@ -48,7 +48,7 @@
     "about_group": "Sobre",
     "brand_home": "OverDrive — abrir Painel",
     "telegram": "Telegram",
-    "road_sense": "Sentido"
+    "road_sense": "RoadSense"
   },
   "road_sense": {
     "page_title": "Configurações de RoadSense",
@@ -98,7 +98,7 @@
     "bs_needs_overlay": "Permitir \"exibir sobre outros apps\" para mostrar o ponto de vista cego",
     "saved": "Salvo",
     "save_failed": "Falha ao salvar",
-    "master_title": "Sentido",
+    "master_title": "RoadSense",
     "master_enable": "Habilitar RoadSense",
     "master_enable_desc": "Detecta perigos na estrada (propulsões, potholes, disjuntores de velocidade) de movimento e GPS, e avisa você antes dos conhecidos. Todas as outras configurações de RoadSense só terão efeito enquanto isto estiver ativado.",
     "map_title": "Mapear",
