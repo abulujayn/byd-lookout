@@ -69,6 +69,21 @@ class TunnelLauncher(
                     callback.onLog("Tunnel already running, getting URL...")
                     getTunnelUrl { existingUrl ->
                         if (existingUrl != null) {
+                            // Check if current tunnel matches configured version
+                            val isPaid = com.overdrive.app.config.CloudflaredPaidConfig.isPaidVersion()
+                            val isFreeUrl = existingUrl.contains("trycloudflare.com")
+                            
+                            if (isPaid && isFreeUrl) {
+                                logManager.info(TAG, "Running tunnel is free but paid version selected. Restarting...")
+                                callback.onLog("Restarting tunnel for paid version...")
+                                stopTunnel(object : TunnelCallback {
+                                    override fun onLog(message: String) {}
+                                    override fun onTunnelUrl(url: String) { launchCloudflaredInternal(callback) }
+                                    override fun onError(error: String) { launchCloudflaredInternal(callback) }
+                                })
+                                return@getTunnelUrl
+                            }
+
                             logManager.info(TAG, "Reusing existing tunnel: $existingUrl")
                             callback.onLog("Reusing existing tunnel")
                             callback.onTunnelUrl(existingUrl)
@@ -230,9 +245,7 @@ class TunnelLauncher(
 // FIX: Removed invalid flags. Added 'retries' and 'grace-period'.
 // --grace-period 45s: Waits 45s before panicking (Covers the 24s blackout)
 // --retries 20: Keeps trying to reconnect for a long time
-            append("$CLOUDFLARED_TMP_PATH tunnel --url http://127.0.0.1:8080 ")
-            append("--edge-ip-version 4 --protocol http2 --no-autoupdate ")
-            append("--retries 20 --grace-period 45s")
+            append("$CLOUDFLARED_TMP_PATH ${com.overdrive.app.config.CloudflaredPaidConfig.getArgs()}")
             append("' > $CLOUDFLARED_LOG 2>&1 &")
         }
         
@@ -287,15 +300,12 @@ class TunnelLauncher(
 
     private fun doWaitForTunnelUrlPoll(callback: TunnelCallback, attempt: Int) {
         adbShellExecutor.execute(
-            command = "cat $CLOUDFLARED_LOG 2>/dev/null",
+            command = com.overdrive.app.config.CloudflaredPaidConfig.getUrlExtractionCommand(CLOUDFLARED_LOG),
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(logContent: String) {
-                    // URL pattern: https://xxx-xxx.trycloudflare.com
-                    val cfUrlPattern = Regex("https://([a-z0-9]+-[a-z0-9-]+)\\.trycloudflare\\.com")
-                    val match = cfUrlPattern.find(logContent)
+                    val tunnelUrl = com.overdrive.app.config.CloudflaredPaidConfig.parseUrl(logContent)
                     
-                    if (match != null) {
-                        val tunnelUrl = match.value
+                    if (tunnelUrl != null) {
                         logManager.info(TAG, "Tunnel established: $tunnelUrl")
                         callback.onLog("Tunnel established: $tunnelUrl")
                         callback.onTunnelUrl(tunnelUrl)
@@ -384,11 +394,16 @@ class TunnelLauncher(
         // Use grep to find URL directly instead of loading entire log
         // This eliminates large memory allocations from reading log files
         adbShellExecutor.execute(
-            command = "grep -o 'https://[a-z0-9-]*\\.trycloudflare\\.com' $CLOUDFLARED_LOG 2>/dev/null | grep -v 'api\\.' | head -1",
+            command = com.overdrive.app.config.CloudflaredPaidConfig.getGrepUrlCommand(CLOUDFLARED_LOG),
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
-                    val url = output.trim()
-                    if (url.isNotEmpty() && url.startsWith("https://") && url.contains("-")) {
+                    var url = output.trim()
+                    if (url.isNotEmpty()) {
+                        // Ensure it has protocol
+                        if (!url.startsWith("https://") && !url.startsWith("http://")) {
+                            url = "https://$url"
+                        }
+
                         logManager.info(TAG, "Found tunnel URL: $url")
                         callback(url)
                     } else {

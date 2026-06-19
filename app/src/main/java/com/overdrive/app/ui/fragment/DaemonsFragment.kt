@@ -124,6 +124,9 @@ class DaemonsFragment : Fragment() {
         when (type) {
             DaemonType.ZROK_TUNNEL -> showZrokTokenDialog()
             DaemonType.TAILSCALE_TUNNEL -> showTailscaleSettingsDialog()
+            DaemonType.CLOUDFLARED_TUNNEL -> {
+                com.overdrive.app.config.CloudflaredPaidConfig.showSettingsDialog(requireContext(), daemonsViewModel)
+            }
             else -> {
                 // Other daemons don't need configuration yet
                 val ctx = context ?: return
@@ -611,6 +614,8 @@ class DaemonsFragment : Fragment() {
                                 putExtra(android.content.Intent.EXTRA_STREAM, uri)
                                 putExtra(android.content.Intent.EXTRA_SUBJECT, getString(R.string.log_share_title, localizedName, timestamp))
                                 addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                // Explicitly set ClipData to ensure the Chooser and target app can access the URI
+                                clipData = android.content.ClipData.newRawUri(null, uri)
                             }
                             startActivity(android.content.Intent.createChooser(shareIntent, getString(R.string.log_share_chooser, localizedName)))
                         } catch (e: Exception) {

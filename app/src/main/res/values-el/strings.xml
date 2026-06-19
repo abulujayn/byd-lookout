@@ -1165,4 +1165,12 @@
     <string name="roadsense_map_search_to_save">Αναζητήστε ένα μέρος για να ορίσετε ως %1$s</string>
     <!-- Shown when re-entering the map with a previously-set trip restored. -->
     <string name="roadsense_map_trip_restored">Η διαδρομή επαναφέρθηκε</string>
+    <!-- dialog_cloudflared_settings -->
+    <string name="cloudflared_token_storage_note">Το διακριτικό αποθηκεύεται με ασφάλεια και κοινοποιείται μεταξύ της εφαρμογής και των διεργασιών δαίμονα.</string>
+    <string name="cloudflared_token_hint">Εισαγάγετε το διακριτικό cloudflared</string>
+    <string name="cloudflare_paid_version">Έκδοση επί πληρωμή Cloudflare</string>
+    <string name="dialog_cloudflared_settings_title">🌐 Ρυθμίσεις Cloudflared</string>
+    <string name="dialog_cloudflared_settings_message">Καθορίστε εάν χρησιμοποιείτε Cloudflare επί πληρωμή ή trycloudflare. Εάν χρησιμοποιείτε Cloudflare επί πληρωμή, εισαγάγετε το διακριτικό της σήραγγας σας.</string>
+    <string name="toast_cloudflared_token_cannot_be_empty">Εάν οριστεί σε έκδοση επί πληρωμή, το διακριτικό δεν μπορεί να είναι κενό</string>
+    <string name="toast_cloudflared_saved_settings">Οι ρυθμίσεις του Cloudflared αποθηκεύτηκαν</string>
 </resources>

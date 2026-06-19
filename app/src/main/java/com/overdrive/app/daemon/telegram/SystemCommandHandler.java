@@ -113,10 +113,21 @@ public class SystemCommandHandler implements TelegramCommandHandler {
 
             if (cfUp) {
                 String url = null;
-                String grepResult = ctx.execShell("grep -o 'https://[a-z0-9-]*\\.trycloudflare\\.com' /data/local/tmp/cloudflared.log 2>/dev/null | grep -v 'api\\.' | head -1");
-                if (grepResult != null && grepResult.startsWith("https://") && grepResult.contains("-")) {
-                    url = grepResult.trim();
+                boolean isPaid = com.overdrive.app.config.CloudflaredPaidConfig.isPaidVersion();
+                String token = com.overdrive.app.config.CloudflaredPaidConfig.getToken();
+
+                if (isPaid && !token.isEmpty()) {
+                    String grepResult = ctx.execShell("grep --line-buffered -iE 'ingress|hostname' /data/local/tmp/cloudflared.log 2>>/dev/null | grep --line-buffered -oE '[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}' | grep -vE '127.0.0.1' | tail -1");
+                    if (grepResult != null) {
+                        url = "https://" + grepResult.trim();
+                    }
+                } else {
+                    String grepResult = ctx.execShell("grep -o 'https://[a-z0-9-]*\\.trycloudflare\\.com' /data/local/tmp/cloudflared.log 2>/dev/null | grep -v 'api\\.' | head -1");
+                    if (grepResult != null && grepResult.startsWith("https://") && grepResult.contains("-")) {
+                        url = grepResult.trim();
+                    }
                 }
+
                 if (url != null) {
                     sb.append("• *Cloudflared:* ").append(url).append("\n");
                     resolved++;

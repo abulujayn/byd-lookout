@@ -1185,4 +1185,12 @@
     <string name="roadsense_map_search_to_save">Szukaj miejsca, które chcesz ustawić jako %1$s</string>
     <!-- Shown when re-entering the map with a previously-set trip restored. -->
     <string name="roadsense_map_trip_restored">Przejazd przywrócony</string>
+    <!-- dialog_cloudflared_settings -->
+    <string name="cloudflared_token_storage_note">Token jest bezpiecznie przechowywany i udostępniany między aplikacją a procesami demona.</string>
+    <string name="cloudflared_token_hint">Wprowadź token cloudflared</string>
+    <string name="cloudflare_paid_version">Płatna wersja Cloudflare</string>
+    <string name="dialog_cloudflared_settings_title">🌐 Ustawienia Cloudflared</string>
+    <string name="dialog_cloudflared_settings_message">Zdefiniuj, czy używasz płatnego Cloudflare, czy trycloudflare. Jeśli używasz płatnego Cloudflare, wprowadź swój token tunelu.</string>
+    <string name="toast_cloudflared_token_cannot_be_empty">Jeśli wybrano płatną wersję, token nie może być pusty</string>
+    <string name="toast_cloudflared_saved_settings">Zapisano ustawienia Cloudflared</string>
 </resources>

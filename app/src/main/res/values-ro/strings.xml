@@ -1175,4 +1175,12 @@
     <string name="roadsense_map_search_to_save">Căutați un loc pentru a seta ca %1$s</string>
     <!-- Shown when re-entering the map with a previously-set trip restored. -->
     <string name="roadsense_map_trip_restored">Cursă restaurată</string>
+    <!-- dialog_cloudflared_settings -->
+    <string name="cloudflared_token_storage_note">Jetonul este stocat în siguranță și partajat între procesele aplicației și ale demonului.</string>
+    <string name="cloudflared_token_hint">Introduceți jetonul cloudflared</string>
+    <string name="cloudflare_paid_version">Versiunea plătită Cloudflare</string>
+    <string name="dialog_cloudflared_settings_title">🌐 Setări Cloudflared</string>
+    <string name="dialog_cloudflared_settings_message">Definiți dacă utilizați Cloudflare plătit sau trycloudflare. Dacă utilizați Cloudflare plătit, introduceți jetonul tunelului.</string>
+    <string name="toast_cloudflared_token_cannot_be_empty">Dacă este setat pe versiunea plătită, jetonul nu poate fi gol</string>
+    <string name="toast_cloudflared_saved_settings">Setările Cloudflared au fost salvate</string>
 </resources>

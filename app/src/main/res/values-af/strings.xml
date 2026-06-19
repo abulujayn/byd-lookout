@@ -1165,4 +1165,12 @@
     <string name="roadsense_map_search_to_save">Search a place to set as %1$s</string>
     <!-- Shown when re-entering the map with a previously-set trip restored. -->
     <string name="roadsense_map_trip_restored">Trip restored</string>
+    <!-- dialog_cloudflared_settings -->
+    <string name="cloudflared_token_storage_note">Teken word veilig gestoor en gedeel tussen toepassing- en daemon-prosesse.</string>
+    <string name="cloudflared_token_hint">Voer cloudflared-teken in</string>
+    <string name="cloudflare_paid_version">Cloudflare Betaalde Weergawe</string>
+    <string name="dialog_cloudflared_settings_title">🌐 Cloudflared Instellings</string>
+    <string name="dialog_cloudflared_settings_message">Definieer of jy betaalde Cloudflare of trycloudflare gebruik. As jy betaalde Cloudflare gebruik, voer jou tonnelteken in.</string>
+    <string name="toast_cloudflared_token_cannot_be_empty">As dit op die betaalde weergawe gestel is, mag die teken nie leeg wees nie</string>
+    <string name="toast_cloudflared_saved_settings">Cloudflared-instellings gestoor</string>
 </resources>

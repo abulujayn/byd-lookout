@@ -621,9 +621,7 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
                 }
                 
                 // Same flags as UI version
-                cfCmd.append("/data/local/tmp/cloudflared tunnel --url http://127.0.0.1:8080 ");
-                cfCmd.append("--edge-ip-version 4 --protocol http2 --no-autoupdate ");
-                cfCmd.append("--retries 20 --grace-period 45s");
+                cfCmd.append("/data/local/tmp/cloudflared ").append(com.overdrive.app.config.CloudflaredPaidConfig.getArgs());
                 cfCmd.append("' > /data/local/tmp/cloudflared.log 2>&1 &");
                 
                 cmd = cfCmd.toString();
@@ -791,13 +789,27 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
             for (int i = 0; i < 15; i++) { // Wait up to 15 seconds
                 try { Thread.sleep(1000); } catch (InterruptedException ignored) {}
                 // SOTA FIX: Use grep instead of cat to avoid loading entire log into memory
-                String grepResult = ctx.execShell("grep -o 'https://[a-z0-9-]*\\.trycloudflare\\.com' /data/local/tmp/cloudflared.log 2>/dev/null | grep -v 'api\\.' | head -1");
-                if (grepResult != null && grepResult.startsWith("https://") && grepResult.contains("-")) {
-                    tunnelUrl = grepResult.trim();
-                    ctx.log("Tunnel URL: " + tunnelUrl);
-                    // Save URL to file for /url command
-                    saveTunnelUrl(tunnelUrl, ctx);
-                    break;
+                boolean isPaid = com.overdrive.app.config.CloudflaredPaidConfig.isPaidVersion();
+                String token = com.overdrive.app.config.CloudflaredPaidConfig.getToken();
+
+                if (isPaid && !token.isEmpty()) {
+                    String grepResult = ctx.execShell("grep --line-buffered -iE 'ingress|hostname' /data/local/tmp/cloudflared.log 2>>/dev/null | grep --line-buffered -oE '[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}' | grep -vE '127.0.0.1' | tail -1");
+                    if (grepResult != null) {
+                        tunnelUrl = "https://" + grepResult.trim();
+                        ctx.log("Tunnel URL (Paid): " + tunnelUrl);
+                        // Save URL to file for /url command
+                        saveTunnelUrl(tunnelUrl, ctx);
+                        break;
+                    }
+                } else {
+                    String grepResult = ctx.execShell("grep -o 'https://[a-z0-9-]*\\.trycloudflare\\.com' /data/local/tmp/cloudflared.log 2>/dev/null | grep -v 'api\\.' | head -1");
+                    if (grepResult != null && grepResult.startsWith("https://") && grepResult.contains("-")) {
+                        tunnelUrl = grepResult.trim();
+                        ctx.log("Tunnel URL (Free): " + tunnelUrl);
+                        // Save URL to file for /url command
+                        saveTunnelUrl(tunnelUrl, ctx);
+                        break;
+                    }
                 }
                 // Check for errors (only read last few lines)
                 String tailLog = ctx.execShell("tail -5 /data/local/tmp/cloudflared.log 2>/dev/null");

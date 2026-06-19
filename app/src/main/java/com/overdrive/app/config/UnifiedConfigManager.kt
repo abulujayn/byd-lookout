@@ -499,6 +499,13 @@ object UnifiedConfigManager {
         }
         if (!bydCloud.has("enabled")) bydCloud.put("enabled", false)
 
+        // Cloudflared defaults
+        val cloudflared = config.optJSONObject("cloudflared") ?: JSONObject().also {
+            config.put("cloudflared", it)
+        }
+        if (!cloudflared.has("isPaid")) cloudflared.put("isPaid", false)
+        if (!cloudflared.has("token")) cloudflared.put("token", "")
+
         // RoadSense Map (navMap) — routing BYOK credential section. Basemap (OpenFreeMap)
         // needs no key; only the routing provider is bring-your-own-key, stored encrypted
         // via CredentialCipher (see NavMapConfig). Default disabled until the user adds a key.
@@ -1460,6 +1467,25 @@ object UnifiedConfigManager {
     @JvmStatic
     fun setBydCloud(bydCloud: JSONObject): Boolean {
         return updateSection("bydCloud", bydCloud)
+    }
+
+    /**
+     * Get Cloudflared config section.
+     */
+    @JvmStatic
+    fun getCloudflared(): JSONObject {
+        return loadConfig().optJSONObject("cloudflared") ?: JSONObject().apply {
+            put("isPaid", false)
+            put("token", "")
+        }
+    }
+
+    /**
+     * Update Cloudflared config section.
+     */
+    @JvmStatic
+    fun setCloudflared(cloudflared: JSONObject): Boolean {
+        return updateSection("cloudflared", cloudflared)
     }
 
     /**

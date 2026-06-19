@@ -1205,4 +1205,12 @@
     <string name="roadsense_map_search_to_save">البحث عن مكان لتعيينه كـ %1$s</string>
     <!-- Shown when re-entering the map with a previously-set trip restored. -->
     <string name="roadsense_map_trip_restored">تم استعادة الرحلة</string>
+    <!-- dialog_cloudflared_settings -->
+    <string name="cloudflared_token_storage_note">يتم تخزين الرمز بشكل آمن ومشاركته بين عمليات التطبيق والبرامج المساعدة.</string>
+    <string name="cloudflared_token_hint">أدخل رمز cloudflared</string>
+    <string name="cloudflare_paid_version">إصدار كلاود فلير المدفوع</string>
+    <string name="dialog_cloudflared_settings_title">🌐 إعدادات Cloudflared</string>
+    <string name="dialog_cloudflared_settings_message">حدد ما إذا كنت تستخدم Cloudflare المدفوع أو trycloudflare. إذا كنت تستخدم Cloudflare المدفوع، فأدخل رمز النفق الخاص بك.</string>
+    <string name="toast_cloudflared_token_cannot_be_empty">إذا تم الضبط على الإصدار المدفوع، فلا يمكن أن يكون الرمز فارغًا</string>
+    <string name="toast_cloudflared_saved_settings">تم حفظ إعدادات Cloudflared</string>
 </resources>
