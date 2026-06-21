@@ -773,7 +773,6 @@ public class PanoramicCameraGpu {
                         logger.info("Startup: ACC is ON, checking for AVM activity...");
                         
                         // We wait up to 4 seconds for the native AVM app to claim the slot.
-                        // If it's visible, we wait for it to initialize properly.
                         long deadline = System.currentTimeMillis() + 4000;
                         boolean avmDetected = false;
                         while (System.currentTimeMillis() < deadline && running) {
