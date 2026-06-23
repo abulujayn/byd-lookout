@@ -52,7 +52,7 @@ class DaemonsViewModel(app: Application) : AndroidViewModel(app) {
     }
     
     init {
-        cloudflaredController = CloudflaredController(adbLauncher)
+        cloudflaredController = CloudflaredController(app, adbLauncher)
         zrokController = ZrokController(app, adbLauncher)
         tailscaleController = TailscaleController(app, adbLauncher)
         cameraDaemonController = CameraDaemonController(app, adbLauncher)
@@ -309,6 +309,14 @@ class DaemonsViewModel(app: Application) : AndroidViewModel(app) {
                 doRefreshDaemonStatus(type, controller, logResult)
             }
             return
+        } else if (type == DaemonType.CLOUDFLARED_TUNNEL) {
+            if (!com.overdrive.app.config.CloudflaredPaidConfig.isConfigured()) {
+                updateCloudflaredNeedsConfig("Paid version requires a token. Tap to set up.")
+                if (logResult) {
+                    LogManager.getInstance().debug("Daemons", "${type.name}: Paid version requires a token")
+                }
+                return
+            }
         } else if (type == DaemonType.TAILSCALE_TUNNEL) {
             tailscaleController.needsLogin { needsLogin ->
                 if (needsLogin) {
@@ -482,6 +490,15 @@ class DaemonsViewModel(app: Application) : AndroidViewModel(app) {
     fun updateZrokNeedsConfig(message: String) {
         val currentStates = _daemonStates.value?.toMutableMap() ?: mutableMapOf()
         currentStates[DaemonType.ZROK_TUNNEL] = DaemonState.needsConfig(DaemonType.ZROK_TUNNEL, message)
+        _daemonStates.postValue(currentStates)
+    }
+
+    /**
+     * Update Cloudflared state to indicate configuration is needed.
+     */
+    fun updateCloudflaredNeedsConfig(message: String) {
+        val currentStates = _daemonStates.value?.toMutableMap() ?: mutableMapOf()
+        currentStates[DaemonType.CLOUDFLARED_TUNNEL] = DaemonState.needsConfig(DaemonType.CLOUDFLARED_TUNNEL, message)
         _daemonStates.postValue(currentStates)
     }
 

@@ -586,7 +586,7 @@ public class BydDataCollector {
         }
     }
 
-    private void startPolling() {
+        private void startPolling() {
         pollScheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "BydDataPoll");
             t.setDaemon(true);

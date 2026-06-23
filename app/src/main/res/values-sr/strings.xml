@@ -1175,4 +1175,12 @@
     <string name="roadsense_map_search_to_save">Search a place to set as %1$s</string>
     <!-- Shown when re-entering the map with a previously-set trip restored. -->
     <string name="roadsense_map_trip_restored">Trip restored</string>
+    <!-- dialog_cloudflared_settings -->
+    <string name="cloudflared_token_storage_note">Token se bezbedno čuva i deli između aplikacije i procesa demona.</string>
+    <string name="cloudflared_token_hint">Unesite cloudflared token</string>
+    <string name="cloudflare_paid_version">Plaćena verzija Cloudflare-a</string>
+    <string name="dialog_cloudflared_settings_title">🌐 Podešavanja Cloudflared-a</string>
+    <string name="dialog_cloudflared_settings_message">Definišite da li koristite plaćeni Cloudflare ili trycloudflare. Ako koristite plaćeni Cloudflare, unesite svoj token tunela.</string>
+    <string name="toast_cloudflared_token_cannot_be_empty">Ako je podešeno na plaćenu verziju, token ne može biti prazan</string>
+    <string name="toast_cloudflared_saved_settings">Podešavanja Cloudflared-a su sačuvana</string>
 </resources>

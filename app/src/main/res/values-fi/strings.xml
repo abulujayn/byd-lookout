@@ -1165,4 +1165,12 @@
     <string name="roadsense_map_search_to_save">Etsi paikka joka asetetaan %1$s</string>
     <!-- Shown when re-entering the map with a previously-set trip restored. -->
     <string name="roadsense_map_trip_restored">Matka palautettu</string>
+    <!-- dialog_cloudflared_settings -->
+    <string name="cloudflared_token_storage_note">Tunnus tallennetaan turvallisesti ja jaetaan sovellus- ja taustaprosessien välillä.</string>
+    <string name="cloudflared_token_hint">Syötä cloudflared-tunnus</string>
+    <string name="cloudflare_paid_version">Cloudflaren maksullinen versio</string>
+    <string name="dialog_cloudflared_settings_title">🌐 Cloudflared-asetukset</string>
+    <string name="dialog_cloudflared_settings_message">Määritä, käytätkö maksullista Cloudflarea vai trycloudflare-palvelua. Jos käytät maksullista Cloudflarea, syötä tunnelitunnuksesi.</string>
+    <string name="toast_cloudflared_token_cannot_be_empty">Jos asetettu maksulliseen versioon, tunnus ei voi olla tyhjä</string>
+    <string name="toast_cloudflared_saved_settings">Cloudflared-asetukset tallennettu</string>
 </resources>

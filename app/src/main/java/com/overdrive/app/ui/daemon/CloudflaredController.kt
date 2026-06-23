@@ -11,6 +11,7 @@ import com.overdrive.app.ui.util.PreferencesManager
  * Controller for the Cloudflared Tunnel.
  */
 class CloudflaredController(
+    private val context: android.content.Context,
     private val adbLauncher: AdbDaemonLauncher
 ) : DaemonController {
     
@@ -18,8 +19,29 @@ class CloudflaredController(
     
     private val _tunnelUrl = MutableLiveData<String?>()
     val tunnelUrl: LiveData<String?> = _tunnelUrl
+
+    /**
+     * Check if cloudflared is correctly configured (either free or paid with token).
+     */
+    fun isConfigured(): Boolean {
+        return com.overdrive.app.config.CloudflaredPaidConfig.isConfigured()
+    }
     
     override fun start(callback: DaemonCallback) {
+        if (!isConfigured()) {
+            // SOTA: Reset state if misconfigured to allow user to retry
+            if (com.overdrive.app.config.CloudflaredPaidConfig.isPaidVersion() && 
+                com.overdrive.app.config.CloudflaredPaidConfig.getToken().isEmpty()) {
+                val resetConfig = org.json.JSONObject()
+                resetConfig.put("isPaid", false)
+                resetConfig.put("token", "")
+                Thread {
+                    com.overdrive.app.config.UnifiedConfigManager.setCloudflared(resetConfig)
+                }.start()
+            }
+            callback.onError("Paid version requires a token")
+            return
+        }
         callback.onStatusChanged(DaemonStatus.STARTING, "Starting cloudflared tunnel...")
         
         adbLauncher.launchTunnel(object : AdbDaemonLauncher.TunnelCallback {

@@ -1165,4 +1165,12 @@
     <string name="roadsense_map_search_to_save">Zoek een plaats om in te stellen als %1$s</string>
     <!-- Shown when re-entering the map with a previously-set trip restored. -->
     <string name="roadsense_map_trip_restored">Rit hersteld</string>
+    <!-- dialog_cloudflared_settings -->
+    <string name="cloudflared_token_storage_note">Token wordt veilig opgeslagen en gedeeld tussen app- en daemonprocessen.</string>
+    <string name="cloudflared_token_hint">Voer cloudflared-token in</string>
+    <string name="cloudflare_paid_version">Cloudflare Betaalde Versie</string>
+    <string name="dialog_cloudflared_settings_title">🌐 Cloudflared-instellingen</string>
+    <string name="dialog_cloudflared_settings_message">Geef aan of u betaalde Cloudflare of trycloudflare gebruikt. Als u betaalde Cloudflare gebruikt, voert u uw tunneltoken in.</string>
+    <string name="toast_cloudflared_token_cannot_be_empty">Als dit is ingesteld op de betaalde versie, mag het token niet leeg zijn</string>
+    <string name="toast_cloudflared_saved_settings">Cloudflared-instellingen opgeslagen</string>
 </resources>

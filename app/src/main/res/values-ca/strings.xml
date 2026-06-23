@@ -1165,4 +1165,12 @@
     <string name="roadsense_map_search_to_save">Search a place to set as %1$s</string>
     <!-- Shown when re-entering the map with a previously-set trip restored. -->
     <string name="roadsense_map_trip_restored">Trip restored</string>
+    <!-- dialog_cloudflared_settings -->
+    <string name="cloudflared_token_storage_note">El testimoni s\'emmagatzema de manera segura i es comparteix entre l\'aplicació i els processos del dimoni.</string>
+    <string name="cloudflared_token_hint">Introduïu el testimoni de cloudflared</string>
+    <string name="cloudflare_paid_version">Versió de pagament de Cloudflare</string>
+    <string name="dialog_cloudflared_settings_title">🌐 Configuració de Cloudflared</string>
+    <string name="dialog_cloudflared_settings_message">Defineix si estàs utilitzant Cloudflare de pagament o trycloudflare. Si estàs utilitzant Cloudflare de pagament, introdueix el teu testimoni de túnel.</string>
+    <string name="toast_cloudflared_token_cannot_be_empty">Si es selecciona la versió de pagament, el testimoni no pot estar buit</string>
+    <string name="toast_cloudflared_saved_settings">S\'ha desat la configuració de Cloudflared</string>
 </resources>

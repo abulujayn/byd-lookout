@@ -262,6 +262,11 @@
     <string name="zrok_reset_environment">Reset Zrok Environment</string>
     <string name="zrok_reset_environment_desc">Removes environment and token. You will need to re-enable with your token (uses a device slot).</string>
 
+    <!-- dialog_cloudflared_settings -->
+    <string name="cloudflared_token_storage_note">Token is stored securely and shared between app and daemon processes.</string>
+    <string name="cloudflared_token_hint">Enter cloudflared token</string>
+    <string name="cloudflare_paid_version">Cloudflare Paid Version</string>
+
     <!-- dialog_reset_data -->
     <string name="reset_title">Reset Data</string>
     <string name="reset_subtitle">Wipe accumulated data by category</string>
@@ -587,6 +592,10 @@
     <!-- ABRP -->
 
     <!-- Daemons fragment -->
+    <string name="dialog_cloudflared_settings_title">🌐 Cloudflared Settings</string>
+    <string name="dialog_cloudflared_settings_message">Define whether you are using paid Cloudflare or trycloudflare. If you are using paid Cloudflare, enter your tunnel token.</string>
+    <string name="toast_cloudflared_token_cannot_be_empty">If you set to paid version the token cannot be empty</string>
+    <string name="toast_cloudflared_saved_settings">Cloudflared settings saved</string>
     <string name="toast_no_config_needed">No configuration needed for %1$s</string>
     <string name="dialog_zrok_token_title">Zrok Tunnel Token</string>
     <string name="dialog_zrok_token_message">Enter your Zrok enable token.\nGet one at: zrok.io</string>

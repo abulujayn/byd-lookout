@@ -114,6 +114,17 @@ object UnifiedConfigManager {
             Log.i(TAG, "Unified config not found, migrating from legacy configs...")
             migrateFromLegacy()
         } else {
+            // SOTA: Always re-assert 666 if we're the daemon. If the app
+            // process wrote the file during the update window, it might
+            // have different permissions than we expect on some builds (DiLink 3).
+            if (android.os.Process.myUid() == SHELL_DAEMON_UID) {
+                try {
+                    configFile.setReadable(true, false)
+                    configFile.setWritable(true, false)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to re-assert permissions: ${e.message}")
+                }
+            }
             Log.i(TAG, "Unified config exists at $CONFIG_PATH")
             loadConfig()
         }
@@ -499,6 +510,13 @@ object UnifiedConfigManager {
         }
         if (!bydCloud.has("enabled")) bydCloud.put("enabled", false)
 
+        // Cloudflared defaults
+        val cloudflared = config.optJSONObject("cloudflared") ?: JSONObject().also {
+            config.put("cloudflared", it)
+        }
+        if (!cloudflared.has("isPaid")) cloudflared.put("isPaid", false)
+        if (!cloudflared.has("token")) cloudflared.put("token", "")
+
         // RoadSense Map (navMap) — routing BYOK credential section. Basemap (OpenFreeMap)
         // needs no key; only the routing provider is bring-your-own-key, stored encrypted
         // via CredentialCipher (see NavMapConfig). Default disabled until the user adds a key.
@@ -626,10 +644,10 @@ object UnifiedConfigManager {
                     // nested keys wouldn't exist.
                     //
                     // Detect "needs migration" cheaply (legacy key at the
-                    // top of geocoding) so non-migrating loads stay zero-
-                    // overhead.
+                    // top of geocoding, or missing new sections).
                     val migrationNeeded = run {
-                        val geo = config.optJSONObject("geocoding") ?: return@run false
+                        if (!config.has("cloudflared")) return@run true
+                        val geo = config.optJSONObject("geocoding") ?: return@run true
                         geo.has("enabled") || geo.has("allowOnline")
                             || geo.has("customNominatimBase")
                             || geo.has("nominatimCooldownUntilMs")
@@ -1460,6 +1478,25 @@ object UnifiedConfigManager {
     @JvmStatic
     fun setBydCloud(bydCloud: JSONObject): Boolean {
         return updateSection("bydCloud", bydCloud)
+    }
+
+    /**
+     * Get Cloudflared config section.
+     */
+    @JvmStatic
+    fun getCloudflared(): JSONObject {
+        return loadConfig().optJSONObject("cloudflared") ?: JSONObject().apply {
+            put("isPaid", false)
+            put("token", "")
+        }
+    }
+
+    /**
+     * Update Cloudflared config section.
+     */
+    @JvmStatic
+    fun setCloudflared(cloudflared: JSONObject): Boolean {
+        return updateSection("cloudflared", cloudflared)
     }
 
     /**

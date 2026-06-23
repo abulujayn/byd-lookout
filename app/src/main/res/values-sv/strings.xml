@@ -1165,4 +1165,12 @@
     <string name="roadsense_map_search_to_save">Sök en plats att ange som %1$s</string>
     <!-- Shown when re-entering the map with a previously-set trip restored. -->
     <string name="roadsense_map_trip_restored">Resan återställd</string>
+    <!-- dialog_cloudflared_settings -->
+    <string name="cloudflared_token_storage_note">Token lagras säkert och delas mellan app- och daemonprocesser.</string>
+    <string name="cloudflared_token_hint">Ange cloudflared-token</string>
+    <string name="cloudflare_paid_version">Cloudflare Betalversion</string>
+    <string name="dialog_cloudflared_settings_title">🌐 Cloudflared-inställningar</string>
+    <string name="dialog_cloudflared_settings_message">Definiera om du använder betald Cloudflare eller trycloudflare. Om du använder betald Cloudflare, ange din tunneltoken.</string>
+    <string name="toast_cloudflared_token_cannot_be_empty">Om inställd på betalversion får token inte vara tom</string>
+    <string name="toast_cloudflared_saved_settings">Cloudflared-inställningar sparade</string>
 </resources>

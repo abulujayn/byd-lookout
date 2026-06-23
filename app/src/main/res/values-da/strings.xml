@@ -1165,4 +1165,12 @@
     <string name="roadsense_map_search_to_save">Søg efter et sted der skal angives som %1$s</string>
     <!-- Shown when re-entering the map with a previously-set trip restored. -->
     <string name="roadsense_map_trip_restored">Tur gendannet</string>
+    <!-- dialog_cloudflared_settings -->
+    <string name="cloudflared_token_storage_note">Token opbevares sikkert og deles mellem app- og daemonprocesser.</string>
+    <string name="cloudflared_token_hint">Indtast cloudflared-token</string>
+    <string name="cloudflare_paid_version">Cloudflare Betalt Version</string>
+    <string name="dialog_cloudflared_settings_title">🌐 Cloudflared-indstillinger</string>
+    <string name="dialog_cloudflared_settings_message">Definer om du bruger betalt Cloudflare eller trycloudflare. Hvis du bruger betalt Cloudflare, skal du indtaste dit tunneltoken.</string>
+    <string name="toast_cloudflared_token_cannot_be_empty">Hvis den er indstillet til betalt version, må token ikke være tom</string>
+    <string name="toast_cloudflared_saved_settings">Cloudflared-indstillinger gemt</string>
 </resources>

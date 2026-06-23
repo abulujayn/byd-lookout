@@ -1,5 +1,6 @@
 package com.overdrive.app.ui.fragment
 
+import android.content.ClipData
 import android.content.Intent
 import android.os.Bundle
 import android.os.Handler
@@ -1281,6 +1282,8 @@ class RecordingLibraryFragment : Fragment() {
                 val intent = Intent(Intent.ACTION_VIEW).apply {
                     setDataAndType(uri, "video/mp4")
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    // Explicitly set ClipData to ensure the Chooser and target app can access the URI
+                    clipData = ClipData.newRawUri(null, uri)
                 }
                 startActivity(Intent.createChooser(intent, getString(R.string.play_with_chooser)))
             } catch (e2: Exception) {
@@ -1306,6 +1309,8 @@ class RecordingLibraryFragment : Fragment() {
                 type = "video/mp4"
                 putExtra(Intent.EXTRA_STREAM, uri)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                // Explicitly set ClipData to ensure the Chooser and target app can access the URI
+                clipData = ClipData.newRawUri(null, uri)
             }
             startActivity(Intent.createChooser(intent, getString(R.string.action_share)))
         } catch (e: Exception) {
@@ -1337,6 +1342,14 @@ class RecordingLibraryFragment : Fragment() {
                 type = "video/mp4"
                 putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                // Set ClipData for all URIs to ensure the Chooser and target app can access them
+                if (uris.isNotEmpty()) {
+                    val cd = ClipData.newRawUri(null, uris[0])
+                    for (i in 1 until uris.size) {
+                        cd.addItem(ClipData.Item(uris[i]))
+                    }
+                    this.clipData = cd
+                }
             }
             startActivity(Intent.createChooser(intent, getString(R.string.action_share)))
             Toast.makeText(

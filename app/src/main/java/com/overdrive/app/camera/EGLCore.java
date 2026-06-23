@@ -279,6 +279,8 @@ public class EGLCore {
         if (!EGL14.eglMakeCurrent(eglDisplay, surface, surface, eglContext)) {
             throw new RuntimeException("Failed to make surface current");
         }
+
+        EGL14.eglSwapInterval(eglDisplay, 1);
         
         checkEglError("makeCurrent");
     }

@@ -271,12 +271,16 @@ android {
             
             // Update channel: "alpha" for release builds (checks alpha tag on GitHub)
             buildConfigField("String", "UPDATE_CHANNEL", "\"alpha\"")
+            buildConfigField("boolean", "LOG_CAPTURE", "true")
+            buildConfigField("String", "LOG_UPLOAD_URL", "\"\"")
         }
         debug {
             isMinifyEnabled = false
             
             // Debug builds also check alpha channel for updates
             buildConfigField("String", "UPDATE_CHANNEL", "\"alpha\"")
+            buildConfigField("boolean", "LOG_CAPTURE", "true")
+            buildConfigField("String", "LOG_UPLOAD_URL", "\"\"")
         }
     }
     

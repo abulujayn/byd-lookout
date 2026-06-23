@@ -54,6 +54,11 @@ public class LocationSidecarService extends Service implements LocationListener 
     private volatile double altitude = 0.0;
     private boolean permissionGranted = false;
 
+    // SOTA: Throttling fields to prevent IPC/Disk spam.
+    // Holds the last location that was actually SENT to the daemon or SAVED to disk.
+    private Location lastProcessedLocation = null;
+    private long lastProcessedTime = 0;
+
     @Override
     public void onCreate() {
         super.onCreate();
@@ -170,10 +175,13 @@ public class LocationSidecarService extends Service implements LocationListener 
                     }
                 }
                 
-                handler.postDelayed(this, 2000);
+                // SOTA: Slow down periodic sender to 15s.
+                // Its purpose is only to recover if the daemon restarts; 15s is
+                // plenty and saves CPU/IPC overhead.
+                handler.postDelayed(this, 15000);
             }
         };
-        handler.postDelayed(periodicSender, 2000);
+        handler.postDelayed(periodicSender, 5000);
     }
     
     private boolean hasLocationPermission() {
@@ -230,28 +238,29 @@ public class LocationSidecarService extends Service implements LocationListener 
                 return;
             }
             
-            // Request GPS updates
+            // SOTA: Request updates less aggressively.
+            // 2s / 2m for GPS is enough for surveillance and trip logs.
             if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
                 locationManager.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER,
-                    1000,  // 1 second
-                    0.0f,  // 0 meters - always get updates even when stationary
+                    2000,  // 2 seconds
+                    2.0f,  // 2 meters
                     this,
                     workerThread.getLooper()  // deliver off the UI thread
                 );
-                Log.i(TAG, "GPS provider started (minDistance=0)");
+                Log.i(TAG, "GPS provider started (2s/2m)");
             }
             
             // Also use network provider as fallback
             if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
                 locationManager.requestLocationUpdates(
                     LocationManager.NETWORK_PROVIDER,
-                    2000,  // 2 seconds
-                    0.0f,  // 0 meters
+                    5000,  // 5 seconds
+                    10.0f, // 10 meters
                     this,
                     workerThread.getLooper()  // deliver off the UI thread
                 );
-                Log.i(TAG, "Network provider started (minDistance=0)");
+                Log.i(TAG, "Network provider started (5s/10m)");
             }
             
             // Get last known location immediately
@@ -281,10 +290,12 @@ public class LocationSidecarService extends Service implements LocationListener 
     public void onLocationChanged(Location location) {
         if (location == null) return;
         
-        double prevLat = latitude;
-        double prevLng = longitude;
-        boolean hadFix = (prevLat != 0.0 || prevLng != 0.0);
-        
+        long now = System.currentTimeMillis();
+        float distanceMoved = (lastProcessedLocation != null) ? location.distanceTo(lastProcessedLocation) : Float.MAX_VALUE;
+        long timeSinceLastProcess = now - lastProcessedTime;
+
+        // Update volatiles immediately so the periodic sender (and any other 
+        // internal consumer) has access to the absolutely latest fix.
         latitude = location.getLatitude();
         longitude = location.getLongitude();
         speed = location.hasSpeed() ? location.getSpeed() : 0.0f;
@@ -292,20 +303,29 @@ public class LocationSidecarService extends Service implements LocationListener 
         accuracy = location.hasAccuracy() ? location.getAccuracy() : 0.0f;
         altitude = location.hasAltitude() ? location.getAltitude() : 0.0;
         
-        // Only log the first fix at INFO; suppress steady-state spam.
-        // Individual fixes go to DEBUG so they're still available via
-        // `adb logcat *:V` but don't fill the normal log.
-        if (!hadFix) {
-            Log.i(TAG, "First location fix: " + latitude + ", " + longitude);
-        } else if (com.overdrive.app.BuildConfig.DEBUG) {
-            Log.d(TAG, "Location update: " + latitude + ", " + longitude);
+        // SOTA: Throttle Log, IPC and Disk I/O.
+        // We only "Process" (heavy lifting) if:
+        // 1. Car moved > 3 meters (ignores typical stationary GPS "jumping")
+        // 2. OR > 10 seconds passed (ensures time-accuracy in logs even if stationary)
+        // 3. OR it's the first fix ever.
+        if (lastProcessedLocation == null || distanceMoved > 3.0f || timeSinceLastProcess > 10_000) {
+            boolean isFirstFix = (lastProcessedLocation == null);
+            lastProcessedLocation = new Location(location);
+            lastProcessedTime = now;
+
+            if (isFirstFix) {
+                Log.i(TAG, "First location fix: " + latitude + ", " + longitude);
+            } else if (com.overdrive.app.BuildConfig.DEBUG) {
+                // Individual fixes go to DEBUG; only shown if explicitly requested in logcat.
+                Log.d(TAG, "Location update (moved=" + String.format("%.1f", distanceMoved) + "m): " + latitude + ", " + longitude);
+            }
+            
+            // Send to daemon via IPC
+            sendGpsViaTcp();
+            
+            // Also save to app's local cache (persists across reboots, readable by daemon)
+            saveToLocalCache();
         }
-        
-        // Send to daemon via IPC
-        sendGpsViaTcp();
-        
-        // Also save to app's local cache (persists across reboots, readable by daemon)
-        saveToLocalCache();
     }
     
     /**

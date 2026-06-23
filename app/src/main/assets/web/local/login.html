@@ -287,6 +287,7 @@
             <div id="deviceInfo" class="device-info">
                 <div class="device-info-label" data-i18n="login.device_id">Device ID</div>
                 <div class="device-info-value" id="deviceIdDisplay" data-i18n="common.loading">Loading...</div>
+                <div class="device-info-value" id="deviceIdDisplay">...</div>
             </div>
 
             <div id="statusMessage" class="status-message"></div>
@@ -317,7 +318,9 @@
     </div>
 
     <script>
+        // Initialize i18n
         BYD.i18n.init();
+
         // Parse redirect URL from query string
         let redirectUrl = '/';
         const urlParams = new URLSearchParams(window.location.search);
@@ -327,23 +330,56 @@
         
         // Store device ID for token construction
         let deviceId = '';
-        
+
+        // Set initial loading text (localized if catalog is already hot, else fallback)
+        function setInitialLoadingText() {
+            const el = document.getElementById('deviceIdDisplay');
+            if (deviceId) return; // Don't overwrite a real ID
+            const loadingText = (window.BYD && BYD.i18n && BYD.i18n.t)
+                ? (BYD.i18n.t('common.loading') || 'Loading...')
+                : 'Loading...';
+            el.textContent = loadingText;
+        }
+
         // Check device info on load
         async function checkDevice() {
             try {
+                // Show "Loading..." while we fetch
+                setInitialLoadingText();
+
                 const response = await fetch('/auth/status');
                 const data = await response.json();
                 
+                const displayEl = document.getElementById('deviceIdDisplay');
                 if (data.deviceId && data.deviceId !== 'unknown') {
                     deviceId = data.deviceId;
-                    document.getElementById('deviceIdDisplay').textContent = data.deviceId;
+                    updateDeviceIdDisplay();
                 } else {
-                    document.getElementById('deviceIdDisplay').textContent = 'Unknown device';
+                    displayEl.textContent = 'Unknown device';
                 }
             } catch (e) {
                 console.error('Failed to check device:', e);
-                document.getElementById('deviceIdDisplay').textContent = 'Connection error';
+                const displayEl = document.getElementById('deviceIdDisplay');
+                displayEl.textContent = 'Connection error';
             }
+        }
+
+        // Apply device ID to the DOM. We don't use data-i18n on the value element
+        // because the i18n hydration engine would overwrite our dynamic ID
+        // with the translated "Loading..." string.
+        function updateDeviceIdDisplay() {
+            if (deviceId) {
+                const el = document.getElementById('deviceIdDisplay');
+                el.textContent = deviceId;
+            }
+        }
+
+        // Listen for language changes to ensure the "Loading..." state is
+        // localized if the catalog loads before the fetch completes.
+        if (window.BYD && BYD.i18n && BYD.i18n.onChange) {
+            BYD.i18n.onChange(function() {
+                if (!deviceId) setInitialLoadingText();
+            });
         }
         
         // Show status message

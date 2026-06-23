@@ -1185,4 +1185,12 @@
     <string name="roadsense_map_search_to_save">Искать место для установки как %1$s</string>
     <!-- Shown when re-entering the map with a previously-set trip restored. -->
     <string name="roadsense_map_trip_restored">Поездка восстановлена</string>
+    <!-- dialog_cloudflared_settings -->
+    <string name="cloudflared_token_storage_note">Токен хранится в безопасности и используется совместно приложением и фоновыми процессами.</string>
+    <string name="cloudflared_token_hint">Введите токен cloudflared</string>
+    <string name="cloudflare_paid_version">Платная версия Cloudflare</string>
+    <string name="dialog_cloudflared_settings_title">🌐 Настройки Cloudflared</string>
+    <string name="dialog_cloudflared_settings_message">Укажите, используете ли вы платный Cloudflare или trycloudflare. Если вы используете платный Cloudflare, введите свой токен туннеля.</string>
+    <string name="toast_cloudflared_token_cannot_be_empty">Если выбрана платная версия, токен не может быть пустым</string>
+    <string name="toast_cloudflared_saved_settings">Настройки Cloudflared сохранены</string>
 </resources>

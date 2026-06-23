@@ -1165,4 +1165,12 @@
     <string name="roadsense_map_search_to_save">Search a place to set as %1$s</string>
     <!-- Shown when re-entering the map with a previously-set trip restored. -->
     <string name="roadsense_map_trip_restored">Trip restored</string>
+    <!-- dialog_cloudflared_settings -->
+    <string name="cloudflared_token_storage_note">A tokent biztonságosan tárolja a rendszer, és megosztja az alkalmazás és a démon folyamatok között.</string>
+    <string name="cloudflared_token_hint">Adja meg a cloudflared tokent</string>
+    <string name="cloudflare_paid_version">Cloudflare fizetős verzió</string>
+    <string name="dialog_cloudflared_settings_title">🌐 Cloudflared beállítások</string>
+    <string name="dialog_cloudflared_settings_message">Határozza meg, hogy fizetős Cloudflare-t vagy trycloudflare-t használ-e. Ha fizetős Cloudflare-t használ, adja meg az alagút tokent.</string>
+    <string name="toast_cloudflared_token_cannot_be_empty">Ha fizetős verzióra van állítva, a token nem lehet üres</string>
+    <string name="toast_cloudflared_saved_settings">Cloudflared beállítások mentve</string>
 </resources>

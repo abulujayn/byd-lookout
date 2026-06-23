@@ -1185,4 +1185,12 @@
     <string name="roadsense_map_search_to_save">Search a place to set as %1$s</string>
     <!-- Shown when re-entering the map with a previously-set trip restored. -->
     <string name="roadsense_map_trip_restored">Trip restored</string>
+    <!-- dialog_cloudflared_settings -->
+    <string name="cloudflared_token_storage_note">האסימון מאוחסן בצורה מאובטחת ומשותף בין האפליקציה לתהליכי הדמון.</string>
+    <string name="cloudflared_token_hint">הזן אסימון cloudflared</string>
+    <string name="cloudflare_paid_version">גרסה בתשלום של Cloudflare</string>
+    <string name="dialog_cloudflared_settings_title">🌐 הגדרות Cloudflared</string>
+    <string name="dialog_cloudflared_settings_message">הגדר אם אתה משתמש ב-Cloudflare בתשלום או ב-trycloudflare. אם אתה משתמש ב-Cloudflare בתשלום, הזן את אסימון המנהרה שלך.</string>
+    <string name="toast_cloudflared_token_cannot_be_empty">אם מוגדר לגרסה בתשלום, האסימון לא יכול להיות ריק</string>
+    <string name="toast_cloudflared_saved_settings">הגדרות Cloudflared נשמרו</string>
 </resources>

@@ -1185,4 +1185,12 @@
     <string name="roadsense_map_search_to_save">Hledat místo, které chcete nastavit jako %1$s</string>
     <!-- Shown when re-entering the map with a previously-set trip restored. -->
     <string name="roadsense_map_trip_restored">Jízda obnovena</string>
+    <!-- dialog_cloudflared_settings -->
+    <string name="cloudflared_token_storage_note">Token je bezpečně uložen a sdílen mezi aplikací a procesy démona.</string>
+    <string name="cloudflared_token_hint">Zadejte token cloudflared</string>
+    <string name="cloudflare_paid_version">Placená verze Cloudflare</string>
+    <string name="dialog_cloudflared_settings_title">🌐 Nastavení Cloudflared</string>
+    <string name="dialog_cloudflared_settings_message">Definujte, zda používáte placený Cloudflare nebo trycloudflare. Pokud používáte placený Cloudflare, zadejte svůj token tunelu.</string>
+    <string name="toast_cloudflared_token_cannot_be_empty">Pokud je nastavena placená verze, token nemůže být prázdný</string>
+    <string name="toast_cloudflared_saved_settings">Nastavení Cloudflared uloženo</string>
 </resources>
