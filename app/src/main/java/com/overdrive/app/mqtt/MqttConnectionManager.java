@@ -559,8 +559,13 @@ public class MqttConnectionManager {
             // isn't actively polled and carries forward its last value (e.g. R after backing into
             // a spot), so gear alone would wrongly report not-parked while the car sits switched
             // off. A powered-off car is always parked.
+            // Gear source preference: the 5Hz GearMonitor poller (fresh within ~200ms) over the
+            // 5s/90s collector snapshot — via the snapshot a P→D shift took 10-14s to reach
+            // consumers. Snapshot stays as the fallback when the monitor isn't running.
             boolean isParked = false;
-            if (vd != null && vd.gearMode != BydVehicleData.UNAVAILABLE) {
+            if (gearMonitor.isActive()) {
+                isParked = gearMonitor.getCurrentGear() == GearMonitor.GEAR_P;
+            } else if (vd != null && vd.gearMode != BydVehicleData.UNAVAILABLE) {
                 isParked = vd.gearMode == GearMonitor.GEAR_P;
             } else {
                 isParked = gearMonitor.getCurrentGear() == GearMonitor.GEAR_P;
@@ -613,7 +618,13 @@ public class MqttConnectionManager {
             }
 
             // gear (extra field not in ABRP — useful for MQTT consumers)
-            if (vd != null && vd.gearMode != BydVehicleData.UNAVAILABLE) {
+            // Prefer the 5Hz GearMonitor poller (fresh within ~200ms) over the 5s/90s
+            // collector snapshot: via the snapshot a P→D shift took 10-14s to reach HA,
+            // and the gearbox SDK listener can't be used (crashes as uid 2000). The
+            // snapshot stays as the fallback when the monitor isn't running.
+            if (gearMonitor.isActive()) {
+                payload.put("gear", GearMonitor.gearToString(gearMonitor.getCurrentGear()));
+            } else if (vd != null && vd.gearMode != BydVehicleData.UNAVAILABLE) {
                 payload.put("gear", GearMonitor.gearToString(vd.gearMode));
             } else {
                 payload.put("gear", GearMonitor.gearToString(gearMonitor.getCurrentGear()));

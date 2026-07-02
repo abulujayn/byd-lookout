@@ -43,6 +43,10 @@ public class GearMonitor {
     private volatile boolean isRunning = false;
     private volatile int currentGear = GEAR_P;
     private long lastUpdateTime = 0;
+
+    /** Whether the 200ms poll thread is active — i.e. getCurrentGear() is fresh
+     *  to within ~POLL_INTERVAL_MS rather than a cold initial value. */
+    public boolean isActive() { return isRunning; }
     
     // TelemetryDataCollector reference — when set, read gear from its cached snapshot
     // instead of polling the BYD device directly (avoids duplicate CAN bus reads)
