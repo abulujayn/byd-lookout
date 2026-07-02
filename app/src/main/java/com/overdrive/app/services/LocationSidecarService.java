@@ -282,7 +282,18 @@ public class LocationSidecarService extends Service implements LocationListener 
             // IPC/disk spam happens downstream in onLocationChanged (the
             // distance/time gate), NOT at the provider — coarsening the
             // provider here would starve hazard approach detection.
-            if (locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+            //
+            // Register UNCONDITIONALLY — never gate on isProviderEnabled().
+            // The head unit disables location (location_mode=0) whenever the
+            // car is off, and app (re)starts almost always happen parked, so
+            // an isProviderEnabled gate here meant the listener was NEVER
+            // registered for that app instance and the callback path never
+            // delivered — fixes then only arrived via the periodic
+            // getLastKnownLocation poll, riding on the factory nav's own GPS
+            // request while driving. Android accepts registration while a
+            // provider is disabled and starts delivering the moment it comes
+            // on (ACC-on) — exactly the behavior we want.
+            try {
                 locationManager.requestLocationUpdates(
                     LocationManager.GPS_PROVIDER,
                     1000,  // 1 second
@@ -290,12 +301,15 @@ public class LocationSidecarService extends Service implements LocationListener 
                     this,
                     workerThread.getLooper()  // deliver off the UI thread
                 );
-                Log.i(TAG, "GPS provider started (1s/0m)");
+                Log.i(TAG, "GPS provider registered (1s/0m), enabled="
+                        + locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER));
+            } catch (Exception e) {
+                Log.e(TAG, "GPS provider registration failed: " + e.getMessage());
             }
 
             // Also use network provider as fallback. 5s cadence is fine; keep
             // min-distance 0 so it doesn't pre-filter fixes the gate wants.
-            if (locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+            try {
                 locationManager.requestLocationUpdates(
                     LocationManager.NETWORK_PROVIDER,
                     5000,  // 5 seconds
@@ -303,7 +317,10 @@ public class LocationSidecarService extends Service implements LocationListener 
                     this,
                     workerThread.getLooper()  // deliver off the UI thread
                 );
-                Log.i(TAG, "Network provider started (5s/0m)");
+                Log.i(TAG, "Network provider registered (5s/0m), enabled="
+                        + locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER));
+            } catch (Exception e) {
+                Log.e(TAG, "Network provider registration failed: " + e.getMessage());
             }
             
             // Get last known location immediately
