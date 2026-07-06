@@ -109,7 +109,6 @@
 .form-grid .row .inputs { margin-left: -5px; margin-right: -5px; }
 .form-grid .row .inputs > *, .form-grid .row > .input {
     flex: 0 0 25%;
-    padding: 0 5px;
     margin: 5px 0;
     box-sizing: border-box;
 }
@@ -124,7 +123,7 @@
         flex: 0 0 50%;
     }
 }
-@media (max-width: 768px) {
+@media (max-width: 773px) {
     .form-grid .row .inputs > *, .form-grid .row > .input {
         flex: 0 0 100%;
     }
@@ -136,7 +135,8 @@
 .form-grid .row .inputs > .type-selector > .description-icon {
     width: 20px;
     height: 20px;
-    margin-left: 6px;   /* selector → info icon (flex gap ignored on Chrome-58) */
+    margin-left: 3px;   /* selector → info icon (flex gap ignored on Chrome-58) */
+    margin-right: 3px;
     color: var(--text-muted);
     cursor: pointer;
     flex: 0 0 auto;

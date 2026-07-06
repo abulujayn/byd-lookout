@@ -1,6 +1,7 @@
 package com.overdrive.app.automation.action;
 
 import com.overdrive.app.automation.type.EnumType;
+import com.overdrive.app.automation.type.IntType;
 import com.overdrive.app.automation.value.Label;
 import com.overdrive.app.server.Messages;
 
@@ -25,6 +26,22 @@ public class Actions {
         addAction(new VehicleControlAction(
                 new Label("drl", "automation.set_drl"), "automation.set_drl_description",
                 new EnumType(new Label("payload", "automation.action"), new Label("off", "automation.off"), new Label("on", "automation.on"))));
+        // The all windows option can't be done to a specific percentage so not including it
+        addAction(new ApiAction(
+                new Label("windows", "automation.open_windows"),
+                "automation.open_windows_description",
+                "POST",
+                "/api/vehicle/window",
+                "{\"area\":${area},\"targetPercent\":${percent}}",
+                new EnumType(
+                        new Label("area", "automation.area"),
+                        new Label("1", "automation.area_lf"),
+                        new Label("2", "automation.area_rf"),
+                        new Label("3", "automation.area_lr"),
+                        new Label("4", "automation.area_rr"),
+                        new Label("5", "automation.area_sunroof"),
+                        new Label("6", "automation.area_sunshade")),
+                new IntType(new Label("percent", "automation.percent"), 0, 100)));
         addAction(new VehicleControlAction(
                 new Label("sunshade", "automation.set_sunshade"),
                 "automation.set_sunshade_description",
@@ -41,6 +58,27 @@ public class Actions {
                         new Label("close", "automation.close"),
                         new Label("open", "automation.open"),
                         new Label("stop", "automation.stop"))));
+        addAction(new ApiAction(
+                new Label("setAc", "automation.set_ac"),
+                "automation.set_ac_description",
+                "POST",
+                "/api/vehicle/climate",
+                "{\"action\":\"power_${action}\"}",
+                new EnumType(new Label("action", "automation.action"), new Label("off", "automation.off"), new Label("on", "automation.on"))));
+        addAction(new ApiAction(
+                new Label("setAcTemp", "automation.set_ac_temp"),
+                "automation.set_ac_temp_description",
+                "POST",
+                "/api/vehicle/climate",
+                "{\"action\":\"set_temp\",\"temp\":${temperature}}",
+                new IntType(new Label("temperature", "automation.temperature"), 17, 33)));
+        addAction(new ApiAction(
+                new Label("setAcFan", "automation.set_ac_fan"),
+                "automation.set_ac_fan_description",
+                "POST",
+                "/api/vehicle/climate",
+                "{\"action\":\"set_fan\",\"fan\":${speed}}",
+                new IntType(new Label("speed", "automation.speed"), 1, 7)));
         addAction(new VehicleControlAction(
                 new Label("seat", "automation.seat_climate"),
                 "automation.set_seat_climate_description",
@@ -57,6 +95,40 @@ public class Actions {
                         new Label("off", "automation.off"),
                         new Label("low", "automation.low"),
                         new Label("high", "automation.high"))));
+        addAction(new ApiAction(
+                new Label("seatPosition", "automation.set_seat_position"),
+                "automation.set_seat_position_description",
+                "POST",
+                "/api/vehicle/seat",
+                "{\"action\":\"position\",\"position\":${position}}",
+                new EnumType(
+                        new Label("position", "automation.action"),
+                        new Label("1", "automation.position_1"),
+                        new Label("2", "automation.position_2"))));
+        addAction(new ApiAction(
+                new Label("surveillance", "automation.set_surveillance"),
+                "automation.set_surveillance_description",
+                "POST",
+                "/api/surveillance/${action}",
+                "",
+                new EnumType(
+                        new Label("action", "automation.action"),
+                        new Label("disable", "automation.off"),
+                        new Label("enable", "automation.on"))));
+        // Recording settings are inline in the handleClient method so can't be accessed. Only doing surveillance for now.
+        // addAction(new ApiAction(
+        //         new Label("recording", "automation.set_recording"),
+        //         "automation.set_recording_description",
+        //         "POST",
+        //         "/api/recording/mode",
+        //         "{\"mode\":\"${mode}\"}",
+        //         new EnumType(
+        //                 new Label("mode", "automation.mode"),
+        //                 new Label("NONE", "automation.none"),
+        //                 new Label("CONTINUOUS", "automation.continuous"),
+        //                 new Label("DRIVE_MODE", "automation.drive_mode"),
+        //                 new Label("PROXIMITY_GUARD", "automation.proximity_guard"))));
+
     }
 
     /**
