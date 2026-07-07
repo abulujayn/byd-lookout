@@ -243,6 +243,8 @@ object UnifiedConfigManager {
         unified.put("telemetryOverlay", JSONObject())
         unified.put("tripAnalytics", JSONObject())
         unified.put("oemDashcam", JSONObject())
+        unified.put("keymap", JSONObject())
+        unified.put("automation", JSONObject())
         unified.put("version", 1)
         unified.put("lastModified", System.currentTimeMillis())
         
@@ -445,6 +447,15 @@ object UnifiedConfigManager {
         // navMap below.
         config.optJSONObject("telegram") ?: JSONObject().also {
             config.put("telegram", it)
+        }
+
+        // Key-mapping section: {enabled, allowAdvanced, bindings:[...]}. Bindings
+        // are user-authored (keycode + pressType + action), so there are no
+        // default keys to seed — just guarantee the section object exists so a
+        // partial/restored config is never missing it (same rationale as
+        // telegram above). enabled/allowAdvanced default false at read time.
+        config.optJSONObject("keymap") ?: JSONObject().also {
+            config.put("keymap", it)
         }
 
         // Surveillance defaults
@@ -1424,6 +1435,63 @@ object UnifiedConfigManager {
     fun setBlindSpotTarget(target: String): Boolean =
         updateValues("blindspot", mapOf(
             "target" to (if (target == "cluster") "cluster" else "head_unit")))
+
+    /** Physical-key mapping section: {enabled, allowAdvanced, bindings:[
+     *  {keycode:int, pressType:"single|double|long", action:{type, variables}}]}.
+     *  Consumed by KeepAliveAccessibilityService.onKeyEvent → KeyMapDispatcher
+     *  (app UID) which fires the mapped action through the daemon; callers needing
+     *  cross-UID freshness (the a11y service in the app process reading a
+     *  web/daemon write) should forceReload() first. mtime-gated loadConfig
+     *  otherwise. */
+    @JvmStatic
+    fun getKeymap(): JSONObject {
+        return loadConfig().optJSONObject("keymap") ?: JSONObject()
+    }
+
+    /** Master switch — key interception is a no-op (all keys pass through)
+     *  unless this is true. Defaults false so a fresh install never swallows
+     *  hardware buttons until the user opts in. */
+    @JvmStatic
+    fun isKeymapEnabled(): Boolean = getKeymap().optBoolean("enabled", false)
+
+    /** Gate for the advanced escape hatch (raw-CAN / shell bindings). Curated
+     *  actions run regardless; advanced payloads are refused at dispatch unless
+     *  this is true. Defaults false. */
+    @JvmStatic
+    fun isKeymapAdvancedAllowed(): Boolean = getKeymap().optBoolean("allowAdvanced", false)
+
+    /** The automation config section: {allowShell}. Distinct from the automations
+     *  LIST (which Automations.java persists in its own file) — this holds
+     *  automation-wide settings toggles. */
+    @JvmStatic
+    fun getAutomation(): JSONObject = loadConfig().optJSONObject("automation") ?: JSONObject()
+
+    /** Gate for the automation ShellAction — DISTINCT from [isKeymapAdvancedAllowed].
+     *  Automations fire autonomously on vehicle events (not a deliberate button
+     *  press), so arming shell there is a separate, stricter opt-in: enabling the
+     *  key-mapping advanced hatch must NOT silently also allow unattended shell in
+     *  automations. Lives in the automation section (its toggle is on the
+     *  Automations page). Re-checked at fire time in ShellAction.trigger; callers
+     *  in the daemon should forceReload() for cross-UID freshness. Defaults false. */
+    @JvmStatic
+    fun isAutomationShellAllowed(): Boolean = getAutomation().optBoolean("allowShell", false)
+
+    /** Persist the automation-shell gate. Single-key merge on the automation
+     *  section (updateValues), off the main looper. */
+    @JvmStatic
+    fun setAutomationShellAllowed(allow: Boolean): Boolean =
+        updateValues("automation", mapOf("allowShell" to allow))
+
+    /** The list of key bindings. Empty array when unset. Never null. */
+    @JvmStatic
+    fun getKeymapBindings(): org.json.JSONArray =
+        getKeymap().optJSONArray("bindings") ?: org.json.JSONArray()
+
+    /** Replace the whole keymap section (enabled/allowAdvanced/bindings). Callers
+     *  MUST invoke this off the main looper — updateSection round-trips to the
+     *  daemon over localhost. */
+    @JvmStatic
+    fun setKeymap(keymap: JSONObject): Boolean = updateSection("keymap", keymap)
 
     /**
      * Recording-side dewarp strength (Fitzgibbon division model).

@@ -483,6 +483,23 @@
 }
 .vc-panel-row > * { margin: 2px; }
 
+/* Sound panel: engine-sound sub-group (toggle + preset stepper) sits together
+   on its own line below the tone tiles. */
+.vc-sound-engine {
+    display: -webkit-flex; display: flex;
+    -webkit-align-items: center; align-items: center;
+    -webkit-justify-content: center; justify-content: center;
+    -webkit-flex-basis: 100%; flex-basis: 100%;
+    margin-top: 6px;
+}
+.vc-sound-hint {
+    -webkit-flex-basis: 100%; flex-basis: 100%;
+    text-align: center;
+    font-size: 12px;
+    color: #71717A;
+    padding: 8px 12px;
+}
+
 /* Windows panel: 4 rows × 5 preset tiles */
 .vc-window-grid {
     display: -webkit-flex; display: flex;

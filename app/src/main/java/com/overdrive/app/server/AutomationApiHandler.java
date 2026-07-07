@@ -58,7 +58,43 @@ public final class AutomationApiHandler {
             if (isBlankId(id)) return rejectBlankId(out);
             return disableAutomation(id, body, out);
         }
+        // Automation-wide settings (not per-automation): currently just the
+        // shell-action gate. Kept on the automations surface — it governs
+        // automations firing autonomously, so it lives with them, not on the
+        // key-mapping page (the flag is a distinct opt-in from keymap advanced).
+        if (path.equals("/api/automations/settings") && method.equals("GET")) {
+            return getSettings(out);
+        }
+        if (path.equals("/api/automations/settings") && method.equals("POST")) {
+            return saveSettings(body, out);
+        }
         return false;
+    }
+
+    /** GET automation-wide settings: { allowShell }. Fresh read for cross-UID. */
+    private static boolean getSettings(OutputStream out) throws Exception {
+        com.overdrive.app.config.UnifiedConfigManager.forceReload();
+        JSONObject resp = new JSONObject();
+        resp.put("success", true);
+        resp.put("allowShell", com.overdrive.app.config.UnifiedConfigManager.isAutomationShellAllowed());
+        HttpResponse.sendJson(out, resp.toString());
+        return true;
+    }
+
+    /** POST { allowShell:bool } — persist the autonomous-shell gate. */
+    private static boolean saveSettings(String body, OutputStream out) throws Exception {
+        JSONObject resp = new JSONObject();
+        if (body == null || body.isBlank()) { HttpResponse.sendJsonError(out, "Empty request body"); return true; }
+        boolean allow;
+        try {
+            allow = new JSONObject(body).optBoolean("allowShell", false);
+        } catch (Exception e) { HttpResponse.sendJsonError(out, "Invalid JSON"); return true; }
+        boolean ok = com.overdrive.app.config.UnifiedConfigManager.setAutomationShellAllowed(allow);
+        resp.put("success", ok);
+        resp.put("allowShell", allow);
+        if (!ok) resp.put("error", "Failed to persist automation settings");
+        HttpResponse.sendJson(out, resp.toString());
+        return true;
     }
 
     /**

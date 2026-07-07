@@ -37,6 +37,38 @@ class WebViewFragment : Fragment() {
         const val ARG_PAGE_PATH = "page_path"
         private const val KEY_SAVED_URL = "saved_url"
 
+        // ── Key-mapping capture bridge ────────────────────────────────────
+        // The Key Mapping "press a button to capture it" box lives in the
+        // WebView, but hardware buttons hit the NATIVE AccessibilityService
+        // (onKeyEvent) — they never become WebView DOM keydown events. So the
+        // dispatcher, while the page is in capture mode, forwards the keycode to
+        // the live WebView here; onCapturedKey(...) pushes it into the page via
+        // evaluateJavascript (window.KM.onNativeKey). captureArmed lets the
+        // dispatcher cheaply know whether to forward+consume (during capture) vs.
+        // run the normal mapping. Set by the page through
+        // AndroidBridge.setKeyCapture(bool).
+        @Volatile private var liveWebView: WebView? = null
+        @JvmStatic @Volatile var captureArmed: Boolean = false
+            private set
+
+        /** Called by the a11y dispatcher (app process) when a hardware key
+         *  arrives during capture. Pushes the keycode into the page on the UI
+         *  thread. No-op if no page is live. Best-effort. */
+        @JvmStatic
+        fun onCapturedKey(keyCode: Int) {
+            val wv = liveWebView ?: return
+            wv.post {
+                try {
+                    wv.evaluateJavascript(
+                        "window.KM && window.KM.onNativeKey && window.KM.onNativeKey(" + keyCode + ");",
+                        null)
+                } catch (_: Throwable) { /* page navigated away */ }
+            }
+        }
+
+        /** Page toggles capture mode via AndroidBridge.setKeyCapture(). */
+        @JvmStatic fun setCaptureArmed(armed: Boolean) { captureArmed = armed }
+
         // CDN strategy short-circuit. The fetch loop tries HTTP-proxy →
         // SOCKS-proxy → direct in order. On the head unit's mobile data
         // path each failing attempt eats up to (connect + read) ms, and
@@ -382,6 +414,9 @@ class WebViewFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         webView = view.findViewById(R.id.webView)
+        // Publish the live WebView so the key-mapping capture bridge can push
+        // native hardware keycodes into whatever page is showing.
+        liveWebView = webView
         loadingOverlay = view.findViewById(R.id.loadingOverlay)
         errorOverlay = view.findViewById(R.id.errorOverlay)
         btnRetry = view.findViewById(R.id.btnRetry)
@@ -1169,6 +1204,19 @@ class WebViewFragment : Fragment() {
             }
         }
 
+        /**
+         * Key Mapping capture toggle. The capture box calls this with true when
+         * "Capture a key" is armed and false when it disarms. While armed, the
+         * native AccessibilityService (KeyMapDispatcher) forwards the next
+         * hardware keycode into the page (window.KM.onNativeKey) and consumes it,
+         * instead of running the normal mapping — so a physical button that never
+         * reaches the WebView DOM can still be captured.
+         */
+        @android.webkit.JavascriptInterface
+        fun setKeyCapture(armed: Boolean) {
+            setCaptureArmed(armed)
+        }
+
         @android.webkit.JavascriptInterface
         fun getAppTheme(): String {
             // Source-of-truth ordering — try the strongest signal first:
@@ -1495,6 +1543,33 @@ class WebViewFragment : Fragment() {
     }
 
     override fun onPause() {
+        // Disarm key-capture when the keymap page leaves the foreground.
+        // captureArmed is a process-wide static that used to be cleared only in
+        // onDestroyView — arming capture then leaving the app (HOME / app-switch)
+        // left the a11y service (KeyMapDispatcher) consuming and swallowing every
+        // system-wide hardware key until the WebView resumed and the JS self-heal
+        // ran. Clearing it here bounds capture consumption to the foreground page.
+        if (captureArmed) {
+            captureArmed = false
+            // Mirror the reset into the page so its capturing flag + capture-box
+            // label reset too (best-effort — the page may already be gone). We
+            // prefer an explicit external setter if the page exposes one; else we
+            // fall back to toggling ONLY when the box is still armed so we never
+            // accidentally RE-arm capture on a page that already disarmed itself.
+            webView?.let { wv ->
+                wv.post {
+                    try {
+                        wv.evaluateJavascript(
+                            "(function(){try{" +
+                                "if(window.KM&&window.KM.setCaptureExternally){window.KM.setCaptureExternally(false);return;}" +
+                                "var b=document.getElementById('kmCaptureBox');" +
+                                "if(b&&b.classList&&b.classList.contains('armed')&&window.KM&&window.KM.toggleCapture){window.KM.toggleCapture();}" +
+                                "}catch(e){}})();",
+                            null)
+                    } catch (_: Throwable) { /* page navigated away */ }
+                }
+            }
+        }
         webView?.onPause()
         super.onPause()
     }
@@ -1513,7 +1588,10 @@ class WebViewFragment : Fragment() {
             (wv.parent as? ViewGroup)?.removeView(wv)
             wv.destroy()
         }
+        // Drop the capture-bridge ref if it points at this (now-destroyed) view.
+        if (liveWebView === webView) liveWebView = null
         webView = null
+        captureArmed = false
         super.onDestroyView()
     }
 }

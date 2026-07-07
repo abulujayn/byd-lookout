@@ -61,7 +61,150 @@ public class AudioTestApiHandler {
             return true;
         }
 
+        // AVAS exterior-speaker tone patterns (AVAH tone generator).
+        if (cleanPath.equals("/api/audio/avas-tone") && method.equals("POST")) {
+            handleAvasTone(out, body);
+            return true;
+        }
+
+        // Engine-sound simulator (factory "Boombox" presets on the exterior speaker).
+        if (cleanPath.equals("/api/audio/engine-sound")) {
+            if (method.equals("GET")) { handleEngineSoundState(out); return true; }
+            if (method.equals("POST")) { handleEngineSound(out, body); return true; }
+        }
+
         return false;
+    }
+
+    // ==================== AVAS EXTERIOR SPEAKER ====================
+
+    /**
+     * POST /api/audio/avas-tone — play (or stop) a factory tone pattern on the
+     * exterior AVAS speaker via the AVAH tone generator.
+     *
+     * Body:
+     * {
+     *   "pattern": 0..7,      // AvasController.PATTERN_* index; omit or -1 = stop
+     *   "stop": true          // alternative explicit stop
+     * }
+     *
+     * Note: this is the ONLY way to make sound on the exterior speaker — custom
+     * audio (TTS/PCM/files) cannot route there (MCU DSP I2S/AVAH hard-split).
+     * Requires AVAS enabled in Vehicle Settings > Notification.
+     */
+    private static void handleAvasTone(OutputStream out, String body) throws Exception {
+        JSONObject response = new JSONObject();
+        try {
+            boolean available = com.overdrive.app.byd.AvasController.isAvailable();
+            response.put("avasAvailable", available);
+            if (!available) {
+                response.put("success", false);
+                response.put("error", "AVAS unreachable — 'auto' service null (car asleep or non-BYD build)");
+                HttpResponse.sendJson(out, response.toString());
+                return;
+            }
+
+            int pattern = -1;
+            boolean stop = false;
+            if (body != null && !body.isEmpty()) {
+                JSONObject req = new JSONObject(body);
+                pattern = req.optInt("pattern", -1);
+                stop = req.optBoolean("stop", false);
+            }
+
+            if (stop || pattern < 0) {
+                com.overdrive.app.byd.AvasController.stop();
+                response.put("success", true);
+                response.put("action", "stopped");
+            } else {
+                boolean ok = com.overdrive.app.byd.AvasController.playPattern(pattern);
+                response.put("success", ok);
+                response.put("action", ok ? "playing" : "rejected");
+                response.put("pattern", pattern);
+                response.put("patternName", com.overdrive.app.byd.AvasController.patternName(pattern));
+                if (!ok) response.put("error", "invalid pattern index (0-"
+                        + (com.overdrive.app.byd.AvasController.PATTERN_COUNT - 1) + ")");
+            }
+            logger.info("avas-tone: " + response.optString("action"));
+        } catch (Exception e) {
+            logger.warn("avas-tone failed: " + e.getMessage());
+            response.put("success", false);
+            response.put("error", e.getMessage());
+        }
+        HttpResponse.sendJson(out, response.toString());
+    }
+
+    /**
+     * GET /api/audio/engine-sound — report engine-sound simulator capability +
+     * current state.
+     */
+    private static void handleEngineSoundState(OutputStream out) throws Exception {
+        JSONObject response = new JSONObject();
+        try {
+            boolean available = com.overdrive.app.byd.AvasController.isAvailable();
+            response.put("avasAvailable", available);
+            response.put("success", true);
+            if (available) {
+                response.put("supported", com.overdrive.app.byd.AvasController.isEngineSoundSupported());
+                response.put("on", com.overdrive.app.byd.AvasController.isEngineSoundOn());
+                response.put("preset", com.overdrive.app.byd.AvasController.getEngineSoundPreset());
+            } else {
+                response.put("supported", false);
+            }
+        } catch (Exception e) {
+            logger.warn("engine-sound state failed: " + e.getMessage());
+            response.put("success", false);
+            response.put("error", e.getMessage());
+        }
+        HttpResponse.sendJson(out, response.toString());
+    }
+
+    /**
+     * POST /api/audio/engine-sound — enable/disable the simulator or select a
+     * preset.
+     *
+     * Body:
+     * {
+     *   "on": true|false,     // toggle simulator; omit to only change preset
+     *   "preset": 1..N        // preset index to select
+     * }
+     */
+    private static void handleEngineSound(OutputStream out, String body) throws Exception {
+        JSONObject response = new JSONObject();
+        try {
+            boolean available = com.overdrive.app.byd.AvasController.isAvailable();
+            response.put("avasAvailable", available);
+            if (!available) {
+                response.put("success", false);
+                response.put("error", "AVAS unreachable — 'auto' service null");
+                HttpResponse.sendJson(out, response.toString());
+                return;
+            }
+
+            JSONObject req = (body != null && !body.isEmpty()) ? new JSONObject(body) : new JSONObject();
+            boolean hasOn = req.has("on");
+            int preset = req.optInt("preset", -1);
+
+            if (hasOn) {
+                boolean on = req.getBoolean("on");
+                boolean ok = com.overdrive.app.byd.AvasController.setEngineSound(on, preset);
+                response.put("success", ok);
+                response.put("on", on);
+            } else if (preset >= 1) {
+                int applied = com.overdrive.app.byd.AvasController.selectEngineSoundPreset(preset);
+                response.put("success", applied >= 0);
+                response.put("preset", applied);
+            } else {
+                response.put("success", false);
+                response.put("error", "provide 'on' (bool) and/or 'preset' (>=1)");
+            }
+            logger.info("engine-sound: on=" + req.opt("on") + " preset=" + preset);
+        } catch (Exception e) {
+            logger.warn("engine-sound failed: " + e.getMessage());
+            response.put("success", false);
+            response.put("error", e.getMessage());
+        }
+        HttpResponse.sendJson(out, response.toString());
     }
 
     /**

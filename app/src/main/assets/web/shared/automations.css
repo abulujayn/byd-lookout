@@ -34,6 +34,43 @@
 .empty-state p { font-size: 14px; margin-bottom: 6px; color: var(--text-secondary); }
 .empty-state .empty-state-hint { font-size: 13px; margin-bottom: 20px; color: var(--text-muted); }
 
+/* ===== STRING FIELD WITH WARNING (e.g. shell-command action) ===== */
+/* Wraps a string input + an amber caution box, matching the key-mapping shell
+   field. The wrapper carries the .variable-input class the form adds, so its
+   type-change teardown (querySelectorAll('.variable-input').remove()) still
+   clears it correctly. */
+/* The wrapper stands in for a full-width textarea in the flex .inputs row, so it
+   must claim the full row (overriding the default 0 0 25% / responsive 50% that
+   every direct .inputs child otherwise gets) and stack the field above the
+   warning. Without the !important-strength override via a more specific selector,
+   the shell field is squeezed into a quarter-width column and the warning
+   overlaps it — the reported misalignment. */
+.form-grid .row .inputs > .string-with-warning {
+    flex: 0 0 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 10px 0;
+    padding: 0 5px;
+    box-sizing: border-box;
+}
+/* The textarea now lives inside the wrapper, so the `.inputs > textarea`
+   full-width rule no longer reaches it — restore its size here. */
+.string-with-warning > textarea {
+    width: 100%;
+    min-height: 6em;
+    resize: vertical;
+    box-sizing: border-box;
+}
+.field-warning {
+    display: flex; gap: 8px; align-items: flex-start;
+    padding: 8px 12px; border-radius: 10px;
+    background: rgba(255, 179, 0, 0.10);
+    border: 1px solid rgba(255, 179, 0, 0.35);
+    font-size: 12px; line-height: 1.45; color: var(--text-secondary);
+}
+.field-warning svg { width: 16px; height: 16px; flex: none; color: #ffb300; margin-top: 1px; }
+
 /* ===== ICON BUTTONS (automation-specific — no shared equivalent) ===== */
 .icon-btn {
     background: none; border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 6px;
@@ -51,6 +88,29 @@
 .form-grid input, .form-grid select, .form-grid textarea {
     padding: 10px 12px; background: var(--bg-elevated); border: 1px solid var(--border-default);
     border-radius: var(--radius-sm); color: var(--text-primary); font-size: 14px; font-family: inherit;
+}
+/* Selects need appearance:none + a custom chevron, or Chrome 58 (the head-unit
+   WebView) paints the native OS control chrome — a clashing default arrow and
+   system-styled popup that doesn't match the app. Mirrors .select-control in
+   styles.css so the automation dropdowns look identical to the key-mapping ones. */
+.form-grid select {
+    appearance: none;
+    -webkit-appearance: none;
+    padding-right: 32px;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a1a1aa' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 10px center;
+}
+.form-grid select:focus {
+    outline: none;
+    border-color: var(--brand-primary);
+    box-shadow: 0 0 0 2px rgba(0, 212, 170, 0.15);
+}
+.form-grid select option {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    padding: 8px;
 }
 .form-grid .label {
     font-size: 14px;

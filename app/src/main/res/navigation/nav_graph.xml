@@ -105,6 +105,18 @@
             android:defaultValue="/automations" />
     </fragment>
 
+    <!-- Key Mapping (web canonical) -->
+    <fragment
+        android:id="@+id/keyMappingFragment"
+        android:name="com.overdrive.app.ui.fragment.WebViewFragment"
+        android:label="@string/rail_key_mapping"
+        tools:layout="@layout/fragment_webview">
+        <argument
+            android:name="page_path"
+            app:argType="string"
+            android:defaultValue="/key-mapping" />
+    </fragment>
+
     <!-- Integrations: roll-up of Telegram + ABRP + MQTT -->
     <fragment
         android:id="@+id/integrationsFragment"

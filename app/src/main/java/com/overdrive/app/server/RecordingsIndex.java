@@ -183,6 +183,24 @@ public final class RecordingsIndex {
                         && (msg.contains("Locked by another process")
                                 || msg.contains("lock.db")
                                 || msg.contains("already in use"));
+                // Corruption: a hard power-cut / SIGKILL mid-write can leave the
+                // MVStore file half-flushed. H2 surfaces this as "File corrupted"
+                // / IO_EXCEPTION (SQLState-adjacent code 90030). This is NOT
+                // recoverable by retrying the same file — the previous behaviour
+                // (return false) left `initialized=false` for the whole daemon
+                // lifetime, and because there is no direct-FS listing fallback
+                // anymore, EVERY /api/recordings query returned an empty list
+                // even with .mp4 files present on disk → the app/web UI showed
+                // no recordings at all. The index is a pure derived cache of the
+                // filesystem (warmup rebuilds it by walking every dir), so the
+                // safe recovery is to wipe the corrupt store and reopen fresh;
+                // warmupAsync() then repopulates every row from disk.
+                boolean corruptErr = msg != null
+                        && (msg.contains("File corrupted")
+                                || msg.contains("90030")
+                                || msg.contains("Corrupt")
+                                || msg.contains("Unable to read")
+                                || msg.contains("MVStoreException"));
                 if (lockErr && attempt < maxRetries) {
                     logger.warn("Index DB locked (attempt " + attempt + "/" + maxRetries + "), cleaning stale locks");
                     cleanupStaleLocks();
@@ -191,6 +209,15 @@ public final class RecordingsIndex {
                         Thread.currentThread().interrupt();
                         return false;
                     }
+                } else if (corruptErr && attempt < maxRetries) {
+                    logger.error("Index DB corrupted (attempt " + attempt + "/" + maxRetries
+                            + "), wiping store to rebuild from filesystem: " + msg, e);
+                    // A partially-opened connection can hold an OS handle on the
+                    // file — close it before deleting so the unlink actually frees
+                    // the inode and the reopen sees a clean directory.
+                    closeQuietly();
+                    wipeCorruptStore();
+                    // No sleep needed — this isn't a transient contention error.
                 } else {
                     logger.error("Failed to init RecordingsIndex: " + msg, e);
                     return false;
@@ -207,6 +234,54 @@ public final class RecordingsIndex {
             connection = null;
         }
         initialized = false;
+    }
+
+    /**
+     * Close the JDBC connection without touching {@link #initialized} or
+     * logging at error level — used during the init retry loop when a
+     * partially-opened connection must be dropped before wiping a corrupt
+     * store. {@link #close()} would flip {@code initialized=false} (already
+     * false here) and is a slightly heavier "public shutdown" contract.
+     */
+    private void closeQuietly() {
+        if (connection != null) {
+            try { connection.close(); }
+            catch (Exception e) { logger.debug("closeQuietly failed: " + e.getMessage()); }
+            connection = null;
+        }
+    }
+
+    /**
+     * Delete every H2 store artifact for a corrupt recordings index so the
+     * next {@link DriverManager#getConnection} call creates a fresh empty DB.
+     * The index is a derived cache of the filesystem — warmupAsync() rebuilds
+     * every row by walking the recording dirs — so wiping it loses no
+     * authoritative data, only the pre-parsed metadata cache.
+     *
+     * <p>MVStore uses {@code <path>.mv.db}; older PageStore builds and the
+     * trace/lock siblings are removed too so no half-written companion file
+     * confuses the reopen.
+     */
+    private void wipeCorruptStore() {
+        String[] suffixes = {
+            ".mv.db",        // MVStore (current H2 default)
+            ".mv.db.tmp",    // in-progress compaction temp
+            ".h2.db",        // legacy PageStore
+            ".trace.db",
+            ".lock.db",
+            ".newFile",      // MVStore atomic-write scratch
+            ".tempFile"
+        };
+        for (String sfx : suffixes) {
+            try {
+                File f = new File(DB_PATH + sfx);
+                if (f.exists() && f.delete()) {
+                    logger.warn("Wiped corrupt index artifact: " + f.getName());
+                }
+            } catch (Exception e) {
+                logger.debug("wipeCorruptStore(" + sfx + ") failed: " + e.getMessage());
+            }
+        }
     }
 
     private void cleanupStaleLocks() {

@@ -1271,6 +1271,50 @@ var VC = {
             this.fetchChargingSchedule();
             this.fetchChargeCap();
         }
+        if (panelId === 'panelSound') {
+            this.fetchEngineSoundState();
+        }
+    },
+
+    /**
+     * Query exterior-speaker availability + engine-sound simulator state and
+     * reflect it in the Sound panel. Hides the engine-sound row when the
+     * vehicle doesn't support the simulator, and shows an "unavailable" hint
+     * when the 'auto' service is unreachable (car asleep / non-BYD build).
+     */
+    fetchEngineSoundState: function() {
+        var self = this;
+        fetch('/api/audio/engine-sound').then(function(resp) {
+            return resp.json();
+        }).then(function(data) {
+            var hint = document.getElementById('avasUnavailableHint');
+            var engineRow = document.getElementById('engineSoundRow');
+            if (!data || data.avasAvailable === false) {
+                if (hint) hint.style.display = '';
+                if (engineRow) engineRow.style.display = 'none';
+                return;
+            }
+            if (hint) hint.style.display = 'none';
+            if (engineRow) engineRow.style.display = data.supported ? '' : 'none';
+            self.vehicleState.engineSoundOn = data.on === true;
+            if (typeof data.preset === 'number' && data.preset >= 1) {
+                self.vehicleState.enginePreset = data.preset;
+            }
+            self.updateEngineSoundUI();
+        }).catch(function() {
+            var hint = document.getElementById('avasUnavailableHint');
+            if (hint) hint.style.display = '';
+        });
+    },
+
+    updateEngineSoundUI: function() {
+        var preset = document.getElementById('enginePreset');
+        if (preset) preset.textContent = String(this.vehicleState.enginePreset || 1);
+        var toggle = document.getElementById('btnEngineToggle');
+        if (toggle) {
+            if (this.vehicleState.engineSoundOn) toggle.classList.add('active');
+            else toggle.classList.remove('active');
+        }
     },
 
     /** Update tab dot indicators based on vehicle state */
@@ -1690,6 +1734,51 @@ var VC = {
             self.updateClimateUI();
             self.triggerSonarVFX(0, 0.5, 0, new THREE.Color(0x52525B));
             self.apiPost('/api/vehicle/climate', { action: 'set_fan', fan: f });
+        });
+
+        // === EXTERIOR SPEAKER (AVAS) CONTROLS ===
+        // Tone tiles carry data-avas-pattern; POST the index to /api/audio/avas-tone.
+        var toneBtns = document.querySelectorAll('#panelSound [data-avas-pattern]');
+        for (var ti = 0; ti < toneBtns.length; ti++) {
+            (function(btn) {
+                var pattern = parseInt(btn.getAttribute('data-avas-pattern'), 10);
+                self.bindBtn(btn.id, function() {
+                    self.triggerSonarVFX(0, 0.6, 0, new THREE.Color(0xFBBF24));
+                    self.apiPost('/api/audio/avas-tone', { pattern: pattern }).then(function(r) {
+                        self.toastFromResult(r, BYD.i18n.t('vehicle.avas_playing'), BYD.i18n.t('vehicle.avas_failed'));
+                    });
+                });
+            })(toneBtns[ti]);
+        }
+        this.bindBtn('btnAvasStop', function() {
+            self.apiPost('/api/audio/avas-tone', { stop: true }).then(function(r) {
+                self.toastFromResult(r, BYD.i18n.t('vehicle.avas_stopped'), BYD.i18n.t('vehicle.avas_failed'));
+            });
+        });
+        this.bindBtn('btnEngineToggle', function() {
+            var next = !self.vehicleState.engineSoundOn;
+            self.apiPost('/api/audio/engine-sound', { on: next, preset: self.vehicleState.enginePreset || 1 }).then(function(r) {
+                if (r.success) { self.vehicleState.engineSoundOn = next; self.updateEngineSoundUI(); }
+                self.toastFromResult(r, BYD.i18n.t('vehicle.engine_sound'), BYD.i18n.t('vehicle.avas_failed'));
+            });
+        });
+        this.bindBtn('btnEngineNext', function() {
+            var p = (self.vehicleState.enginePreset || 1) + 1;
+            self.apiPost('/api/audio/engine-sound', { preset: p }).then(function(r) {
+                if (r.success && typeof r.preset === 'number' && r.preset >= 1) {
+                    self.vehicleState.enginePreset = r.preset;
+                    self.updateEngineSoundUI();
+                }
+            });
+        });
+        this.bindBtn('btnEnginePrev', function() {
+            var p = Math.max(1, (self.vehicleState.enginePreset || 1) - 1);
+            self.apiPost('/api/audio/engine-sound', { preset: p }).then(function(r) {
+                if (r.success && typeof r.preset === 'number' && r.preset >= 1) {
+                    self.vehicleState.enginePreset = r.preset;
+                    self.updateEngineSoundUI();
+                }
+            });
         });
 
         // Seat heating — cycles 0→1→2→0

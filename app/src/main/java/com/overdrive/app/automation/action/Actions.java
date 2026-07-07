@@ -105,6 +105,33 @@ public class Actions {
                         new Label("position", "automation.action"),
                         new Label("1", "automation.position_1"),
                         new Label("2", "automation.position_2"))));
+        // Drive / energy modes — same catalog entities the keymap and MQTT use.
+        // The Label id must match the VehicleControlCatalog key so
+        // VehicleControlAction.trigger resolves it.
+        addAction(new VehicleControlAction(
+                new Label("drive_mode", "automation.set_drive_mode"), "automation.set_drive_mode_description",
+                // Operation mode has exactly two SDK values: ENERGY_OPERATION_ECONOMY(1)
+                // and ENERGY_OPERATION_SPORT(2). "normal"/"snow" are NOT operation modes
+                // (snow is a separate road-surface axis), so they are not offered — a
+                // binding to them would send an invalid value the HAL rejects.
+                new EnumType(new Label("payload", "automation.mode"),
+                        new Label("eco", "automation.mode_eco"),
+                        new Label("sport", "automation.mode_sport"))));
+        addAction(new VehicleControlAction(
+                new Label("powertrain_mode", "automation.set_powertrain_mode"), "automation.set_powertrain_mode_description",
+                new EnumType(new Label("payload", "automation.mode"),
+                        new Label("ev", "automation.mode_ev"),
+                        new Label("hev", "automation.mode_hev"))));
+        addAction(new VehicleControlAction(
+                new Label("regen_level", "automation.set_regen"), "automation.set_regen_description",
+                new EnumType(new Label("payload", "automation.level"),
+                        new Label("standard", "automation.regen_standard"),
+                        new Label("high", "automation.regen_high"))));
+        addAction(new VehicleControlAction(
+                new Label("steering_mode", "automation.set_steering"), "automation.set_steering_description",
+                new EnumType(new Label("payload", "automation.mode"),
+                        new Label("comfort", "automation.steering_comfort"),
+                        new Label("sport", "automation.steering_sport"))));
         addAction(new ApiAction(
                 new Label("surveillance", "automation.set_surveillance"),
                 "automation.set_surveillance_description",
@@ -128,6 +155,12 @@ public class Actions {
         //                 new Label("CONTINUOUS", "automation.continuous"),
         //                 new Label("DRIVE_MODE", "automation.drive_mode"),
         //                 new Label("PROXIMITY_GUARD", "automation.proximity_guard"))));
+        // Shell command — the free-text StringType variable is defined inside
+        // ShellAction. Autonomous exec, so it self-gates on the dedicated
+        // automation.allowShell flag (toggle on the Automations page) at fire
+        // time (off → logged no-op). Registered last so curated actions lead.
+        addAction(new ShellAction(
+                new Label("shell", "automation.run_shell"), "automation.run_shell_description"));
 
     }
 

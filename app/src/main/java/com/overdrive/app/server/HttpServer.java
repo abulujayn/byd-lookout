@@ -544,6 +544,10 @@ public class HttpServer {
                 if (!serveStaticFile(out, "local/notifications.html")) {
                     HttpResponse.sendError(out, 404, "notifications.html not found");
                 }
+            } else if (path.equals("/key-mapping.html") || path.equals("/key-mapping")) {
+                if (!serveStaticFile(out, "local/key-mapping.html")) {
+                    HttpResponse.sendError(out, 404, "key-mapping.html not found");
+                }
             } else if (path.equals("/about.html") || path.equals("/about")) {
                 if (!serveStaticFile(out, "local/about.html")) {
                     HttpResponse.sendError(out, 404, "about.html not found");
@@ -804,6 +808,12 @@ public class HttpServer {
         // Vehicle Control API
         if (path.startsWith("/api/vehicle")) {
             return VehicleControlApiHandler.handle(method, path, body, out);
+        }
+
+        // Key-mapping actuation — physical-key bindings fired by the app-process
+        // accessibility service POST here so BYD SDK writes run in the daemon UID.
+        if (path.startsWith("/api/keymap")) {
+            return KeymapApiHandler.handle(method, path, body, out);
         }
 
         // Autoservice AIDL debug sweep — read-only reach probes for the BYD

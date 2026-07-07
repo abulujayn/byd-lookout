@@ -463,7 +463,8 @@ public class Automations {
      * The returned boolean reports only whether the automation EXISTS (so the API can answer 404 for
      * unknown ids); a known automation that was skipped because it is disabled or its conditions are
      * no longer met still returns true — testing a disabled automation is an accepted edge case that
-     * reports success without firing.
+     * reports success without firing. A known automation whose action throws also returns true (it
+     * exists): the throw is swallowed here so the API never confuses an action failure with a 404.
      *
      * @param id              The id of the automation to run the actions for
      * @param checkConditions Whether to check that the conditions match before running the actions
@@ -481,7 +482,21 @@ public class Automations {
 
         if (!checkConditions || automation.conditionsMet(state)) {
             logger.info("Triggering automation actions: " + id);
-            automation.triggerActions();
+            // Guard the action run at the shared choke point that BOTH callers flow through: the
+            // autonomous queue worker (AutomationQueue.java:135-139) already wraps its call in
+            // catch(Throwable), but the /test endpoint (AutomationApiHandler.testAutomation) does not.
+            // A misbehaving or null action element (reachable via the unchecked
+            // actions.add(action.fromJson(...)) in Automation.fromJson) would otherwise let an NPE/Error
+            // propagate out of the test call, up through handle() to HttpServer's catch(Exception) which
+            // only logs and closes the socket in its finally block — leaving the client with no HTTP
+            // response at all. Swallowing it here (mirroring the queue worker) means the caller still
+            // gets a proper response and the daemon stays up. We return true (the automation EXISTS) so
+            // the failure is never misreported as a 404 by callers that map false -> 404.
+            try {
+                automation.triggerActions();
+            } catch (Throwable t) {
+                logger.error("Automation action threw while triggering: " + id);
+            }
         }
         return true;
     }

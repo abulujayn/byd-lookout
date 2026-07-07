@@ -32,7 +32,7 @@
     </script>
     <script src="../shared/app-tabs.js"></script>
     <link rel="stylesheet" href="../shared/styles.css?v=16">
-    <link rel="stylesheet" href="../shared/automations.css">
+    <link rel="stylesheet" href="../shared/automations.css?v=shell3">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 </head>
@@ -92,6 +92,33 @@
                     </div>
                 </div>
 
+                <!-- Automation-wide settings (Automations tab). The shell-action
+                     gate governs autonomous shell execution, so it lives here on
+                     the automations surface — a distinct opt-in from the
+                     key-mapping "Advanced actions" toggle. -->
+                <div class="card" data-tab="automations">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                            <span data-i18n="automation.settings_title">Settings</span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="setting-row" style="border-bottom:none;">
+                            <div class="setting-info">
+                                <div class="setting-name" data-i18n="automation.allow_shell">Allow shell actions</div>
+                                <div class="setting-desc" data-i18n="automation.allow_shell_desc">Let automations run a raw shell command automatically when their conditions match. This runs unattended in the background — leave off unless you are certain what your automations do.</div>
+                            </div>
+                            <div class="setting-control">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="autoAllowShell" onchange="AutomationSettings.saveSettings()">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Add / Edit Form (Add tab) — always rendered; the .footer-bar
                      #btnApply isn't used here, the form has its own Save button. -->
                 <div id="formCard" class="card" data-tab="add">
@@ -122,7 +149,7 @@
     <script src="../shared/auth.js"></script>
     <script src="../shared/core.js"></script>
     <script src="../shared/update-flow.js"></script>
-    <script src="../shared/automations.js"></script>
+    <script src="../shared/automations.js?v=shell1"></script>
     <script>
         function toggleSidebar() {
             document.getElementById('sidebar').classList.toggle('open');

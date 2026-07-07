@@ -41,6 +41,40 @@ BYD.automations = {
     init() {
         this.loadAutomations();
         this.loadAutomationSchema();
+        this.loadSettings();
+    },
+
+    // Automation-wide settings (currently just the shell-action gate). Kept
+    // separate from the per-automation CRUD above.
+    async loadSettings() {
+        try {
+            const resp = await fetch('/api/automations/settings', { cache: 'no-store' });
+            const data = await resp.json();
+            const el = document.getElementById('autoAllowShell');
+            if (el) el.checked = !!(data && data.allowShell);
+        } catch (e) {
+            console.warn('[Automations] Failed to load settings:', e);
+        }
+    },
+
+    async saveSettings() {
+        const el = document.getElementById('autoAllowShell');
+        const allow = !!(el && el.checked);
+        try {
+            const resp = await fetch('/api/automations/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ allowShell: allow })
+            });
+            const data = await resp.json();
+            if (!data || !data.success) {
+                if (el) el.checked = !allow; // revert the toggle on failure
+                if (window.BYD && BYD.utils && BYD.utils.toast) BYD.utils.toast(BYD.i18n.t('automation.settings_save_failed'), 'error');
+            }
+        } catch (e) {
+            if (el) el.checked = !allow;
+            if (window.BYD && BYD.utils && BYD.utils.toast) BYD.utils.toast(BYD.i18n.t('automation.settings_save_failed'), 'error');
+        }
     },
 
     async loadAutomations() {
@@ -500,6 +534,26 @@ BYD.automations = {
         };
         input.addEventListener('change', changeEvent);
         changeEvent();
+        // Optional cautionary note (e.g. the shell-command action). When present
+        // we wrap the input + an amber warning box, matching the key-mapping
+        // shell field. The wrapper still carries the input classes the caller
+        // adds (variable-input etc.), and .value/.addEventListener are proxied so
+        // the caller's eventListener + form serialization keep working unchanged.
+        if (data.warning) {
+            const wrap = document.createElement('div');
+            wrap.classList.add('string-with-warning');
+            wrap.append(input);
+            const warn = document.createElement('div');
+            warn.classList.add('field-warning');
+            warn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg><span></span>';
+            warn.querySelector('span').textContent = data.warning;
+            wrap.append(warn);
+            // Proxy the class list add the caller performs onto the actual input
+            // so styling/serialization hooks still land on the field, not the div.
+            // (createInput's caller does variableSelector.classList.add(...); the
+            // wrapper tolerates that harmlessly, and the input keeps 'string'.)
+            return wrap;
+        }
         return input;
     },
 

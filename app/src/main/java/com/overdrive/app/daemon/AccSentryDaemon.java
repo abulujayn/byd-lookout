@@ -2347,19 +2347,65 @@ public class AccSentryDaemon {
 
     /**
      * True when CameraDaemon's GPU pipeline is actively consuming camera
-     * frames. CameraDaemon writes surveillance.cameraActiveUntilMs ~5s ahead
-     * of now while gpuPipeline.isRunning(); we read it here to skip the
-     * keepalive's backlight-off tick during that window. Legacy fleet
-     * doesn't write the key (default 0), so isCameraPipelineActive() is
-     * false there and the existing power-save behaviour stays bit-exact.
+     * frames. CameraDaemon refreshes a lease deadline ~8s ahead of now while
+     * gpuPipeline.isRunning(); we read it here to skip the keepalive's
+     * backlight-off tick during that window.
+     *
+     * <p>The lease lives in a dedicated sidecar file (a single timestamp), NOT
+     * in the shared unified config — reading/writing it must not take the
+     * cross-process config lock or bump the config mtime every 4s (that defeated
+     * the mtime-gated config cache other subsystems rely on; see
+     * CameraDaemon.writeCameraActiveLease). We read the sidecar directly and fall
+     * back to the legacy {@code surveillance.cameraActiveUntilMs} key for
+     * compatibility with an older CameraDaemon build that still writes it there.
+     * A missing/unparseable lease → false, so legacy fleets (that write neither)
+     * keep the existing power-save behaviour bit-exact.
      */
+    private static final String CAMERA_ACTIVE_LEASE_PATH =
+        "/data/local/tmp/camera_active_lease";
+
+    // Upper bound on how far ahead of "now" a lease deadline may legitimately be.
+    // CameraDaemon only ever writes now + 8s, so any live lease is <=8s out; we
+    // allow a generous 5-min horizon to absorb any future bump to the lease
+    // duration. A deadline BEYOND this is not a real lease — it means a stale
+    // file persisted across an unclean teardown (crash / kill / power-loss never
+    // runs clearCameraActiveLease) and the wall clock then stepped BACKWARD, a
+    // documented BYD head-unit condition (see UnifiedConfigManager.isCacheFresh:
+    // "BYD head units boot with a wrong clock" / "the RTC stepped backward").
+    // Without this bound such a file reads as active FOREVER — with no camera
+    // running and nothing to refresh or clear it — pinning the backlight on for a
+    // parked car all night. Clamp fails safe to "not active", matching the
+    // isDilink4CameraMode() invariant that a stuck flag can never keep the
+    // screen on permanently.
+    private static final long CAMERA_ACTIVE_LEASE_MAX_HORIZON_MS = 5 * 60_000L;
+
+    private static boolean isLeaseDeadlineLive(long deadlineMs, long nowMs) {
+        return deadlineMs > nowMs
+                && deadlineMs <= nowMs + CAMERA_ACTIVE_LEASE_MAX_HORIZON_MS;
+    }
+
     private static boolean isCameraPipelineActive() {
+        long now = System.currentTimeMillis();
+        // Primary: the dedicated sidecar file (cheap, lock-free, no config parse).
+        try {
+            java.io.File f = new java.io.File(CAMERA_ACTIVE_LEASE_PATH);
+            if (f.exists()) {
+                byte[] raw = java.nio.file.Files.readAllBytes(f.toPath());
+                long deadline = Long.parseLong(new String(raw, java.nio.charset.StandardCharsets.US_ASCII).trim());
+                return isLeaseDeadlineLive(deadline, now);
+            }
+        } catch (Throwable ignored) {
+            // Torn/absent/unparseable read fails safe to the fallback below.
+        }
+        // Fallback: legacy config key (older CameraDaemon build). Only reached
+        // when the sidecar is absent, so it does not reintroduce the 4s config
+        // churn on a current build.
         try {
             org.json.JSONObject s = com.overdrive.app.config.UnifiedConfigManager.loadConfig()
                     .optJSONObject("surveillance");
             if (s == null) return false;
             long deadline = s.optLong("cameraActiveUntilMs", 0L);
-            return deadline > System.currentTimeMillis();
+            return isLeaseDeadlineLive(deadline, now);
         } catch (Throwable t) {
             return false;
         }

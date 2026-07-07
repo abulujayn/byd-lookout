@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService;
 import android.accessibilityservice.AccessibilityServiceInfo;
 import android.content.Intent;
 import android.util.Log;
+import android.view.KeyEvent;
 import android.view.accessibility.AccessibilityEvent;
 
 import com.overdrive.app.ui.daemon.DaemonStartupManager;
@@ -40,16 +41,40 @@ public class KeepAliveAccessibilityService extends AccessibilityService {
 
         Log.i(TAG, "AccessibilityService connected — process is now protected");
 
-        // Minimal config — we don't need to observe any events
+        // Config must match the WORKING shape proven on DiLink firmware (verified
+        // against a known-good OEM app): a service that subscribes to ZERO event
+        // types (eventTypes=0) is treated as inert by this firmware's
+        // AccessibilityManager — it binds, but onKeyEvent is NEVER dispatched to
+        // it (observed live: service bound, capabilities=8, yet keycode 302 hit
+        // WindowManager with FLAG_PASS_TO_USER and never reached onKeyEvent). The
+        // fix is to subscribe to a real event type (typeWindowStateChanged) and
+        // enable window-content retrieval, which fully wires the service into the
+        // input path so FLAG_REQUEST_FILTER_KEY_EVENTS actually delivers keys.
+        //
+        // We MODIFY the info returned by getServiceInfo() (which already carries
+        // the manifest XML config) rather than rebuilding it, and only assert the
+        // fields that matter — never zero out eventTypes.
         AccessibilityServiceInfo info = getServiceInfo();
         if (info == null) {
             info = new AccessibilityServiceInfo();
         }
-        info.eventTypes = 0; // No events
+        // Mirror the proven OEM config EXACTLY (no extra flags): subscribe to a
+        // real event type + report-view-ids + filter-key-events. Adding more than
+        // the known-good set risks a different firmware quirk, so match it 1:1.
+        info.eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED;
         info.feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC;
-        info.notificationTimeout = 5000;
-        info.flags = 0;
+        info.notificationTimeout = 100;
+        info.flags |= AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
+                | AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
         setServiceInfo(info);
+
+        // Prime the key-mapping snapshot off-thread so the first hardware key
+        // press already has its bindings (onKeyEvent never reads disk itself).
+        try {
+            KeyMapDispatcher.INSTANCE.warmUp();
+        } catch (Throwable t) {
+            Log.w(TAG, "KeyMapDispatcher warmUp failed: " + t.getMessage());
+        }
 
         // No foreground notification needed — DaemonKeepaliveService already has one.
         // The AccessibilityService binding alone is enough to protect the process.
@@ -67,6 +92,38 @@ public class KeepAliveAccessibilityService extends AccessibilityService {
         // No-op — we don't process accessibility events
     }
 
+    /**
+     * Hardware key filter. With FLAG_REQUEST_FILTER_KEY_EVENTS this is invoked
+     * for physical KeyEvents (steering-wheel / dash buttons) BEFORE the OEM
+     * handler. Returning true CONSUMES the event so the default action does not
+     * also run; false lets it pass through untouched.
+     *
+     * Delegates to {@link KeyMapDispatcher}, which is fast (a config lookup) and
+     * punts any actual actuation to a background thread — this callback runs on
+     * the platform input-dispatch path and must never block, or the whole system
+     * UI would ANR. If the feature is off or the key is unmapped, the dispatcher
+     * returns false and the key behaves exactly as stock.
+     */
+    @Override
+    protected boolean onKeyEvent(KeyEvent event) {
+        try {
+            boolean down = event.getAction() == KeyEvent.ACTION_DOWN;
+            // Unconditional diagnostic: proves whether the firmware actually
+            // dispatches hardware keys to our filter at all. Without this, an
+            // absent log is ambiguous (never-called vs called-but-unmapped).
+            // Cheap; keep until key mapping is field-confirmed on this firmware.
+            Log.i(TAG, "onKeyEvent keyCode=" + event.getKeyCode()
+                    + " down=" + down + " repeat=" + event.getRepeatCount());
+            return KeyMapDispatcher.INSTANCE.onKey(
+                    event.getKeyCode(), down, event.getRepeatCount());
+        } catch (Throwable t) {
+            // Never let a mapping bug swallow keys or crash input dispatch —
+            // fail open (pass the key through) on any error.
+            Log.w(TAG, "onKeyEvent error, passing through: " + t.getMessage());
+            return false;
+        }
+    }
+
     @Override
     public void onInterrupt() {
         // No-op
@@ -76,6 +133,18 @@ public class KeepAliveAccessibilityService extends AccessibilityService {
     public void onDestroy() {
         Log.w(TAG, "AccessibilityService destroyed — attempting restart");
         instance = null;
+
+        // Clear transient key-gesture state so a gesture torn down mid-flight
+        // (service destroyed between a promoting DOWN and its UP) can't strand a
+        // suppressLongUntilUp entry and swallow the next long-press after re-enable.
+        // Honors KeyMapDispatcher.teardown()'s documented contract; the FileObserver
+        // is intentionally left running (warmUp()'s watcher != null guard keeps a
+        // reconnect from leaking a second observer).
+        try {
+            KeyMapDispatcher.INSTANCE.teardown();
+        } catch (Throwable t) {
+            Log.w(TAG, "KeyMapDispatcher teardown failed: " + t.getMessage());
+        }
 
         // Self-restart: send broadcast to trigger re-enable
         try {

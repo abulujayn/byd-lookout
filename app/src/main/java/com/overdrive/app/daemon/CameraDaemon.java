@@ -635,6 +635,21 @@ public class CameraDaemon {
         // user cycled ACC OFF→ON.
         storageManager.startSdCardWatchdog();
 
+        // Start the accessibility bind watchdog. Key mapping rides on the
+        // app-process KeepAliveAccessibilityService, whose OS bind can wedge in
+        // AMS "Binding" on a long-lived heavy app process (keys go dead + the OEM
+        // action loops). This daemon runs as a different UID, so it survives the
+        // app force-stop and is the stable supervisor: when key mapping is enabled
+        // with bindings AND the service is confirmed enabled-but-not-bound, it
+        // force-restarts the app so AMS re-binds into a fresh process. No-ops
+        // entirely when key mapping is off / unconfigured, and only ever restarts
+        // when the keys are already broken — see KeymapApiHandler for the ladder.
+        try {
+            com.overdrive.app.server.KeymapApiHandler.startAccessibilityWatchdog();
+        } catch (Throwable t) {
+            log("Keymap a11y watchdog start failed: " + t.getMessage());
+        }
+
         // Touch the OEM-dashcam cleaner singleton so its constructor runs
         // and (if enabled in saved config) auto-starts the periodic monitor.
         // Without this the cleaner is lazy-initialized on first UI/API hit,
@@ -1417,11 +1432,15 @@ public class CameraDaemon {
     // AccSentryDaemon (UID 2000, separate process) runs a 10s keepalive
     // that calls setBacklightState(false). On byd_apa firmware that tears
     // down the AVMCamera preview surface and emits HAL event=8. To stop
-    // that, we publish surveillance.cameraActiveUntilMs ~5s ahead of now
-    // every 4s while the GPU pipeline is consuming frames; AccSentryDaemon
-    // reads the same key cross-process and skips its backlight-off tick
-    // while we're hot. Gated on cameraMode=dilink4 — legacy cars don't
-    // have the HAL-display coupling and shouldn't suppress power-save.
+    // that, we refresh a lease deadline CAMERA_ACTIVE_LEASE_MS (8s) ahead of
+    // now every CAMERA_ACTIVE_TICK_MS (4s) while the GPU pipeline is consuming
+    // frames. The lease is a single timestamp in a dedicated sidecar file
+    // (/data/local/tmp/camera_active_lease), NOT a unified-config key — see
+    // writeCameraActiveLease for why the shared-config channel was too
+    // expensive at a 4s cadence. AccSentryDaemon reads the sidecar cross-process
+    // and skips its backlight-off tick while the lease is live. Gated on
+    // cameraMode=dilink4 — legacy cars don't have the HAL-display coupling and
+    // shouldn't suppress power-save.
     private static volatile Thread cameraActiveHeartbeatThread = null;
     private static volatile boolean cameraActiveHeartbeatRunning = false;
     private static final long CAMERA_ACTIVE_TICK_MS = 4_000L;
@@ -1554,27 +1573,69 @@ public class CameraDaemon {
         return isDilink4ModeActive();
     }
 
+    // Dedicated sidecar file for the camera-active lease — a single timestamp
+    // (millis-epoch deadline), NOT a key in the shared unified config. This is
+    // written every 4s while the pipeline runs; routing it through
+    // updateSection("surveillance",…) meant every 4s taking the cross-process
+    // config file lock, re-reading + re-parsing + re-serializing the whole ~10KB
+    // config, atomic-renaming it, and firing the listener fanout — AND bumping the
+    // config mtime, which defeated the mtime-gated loadConfig cache that RoadSense
+    // (500ms tick), KeyMapDispatcher, StatusOverlayService etc. rely on, forcing
+    // THEM to re-parse too and stalling every peer process on the shared lock. A
+    // tiny sidecar file the other daemon reads directly is O(bytes) with no lock,
+    // no parse, and no cross-subsystem cache invalidation. The reader
+    // (AccSentryDaemon.isCameraPipelineActive) is a different process at the same
+    // UID 2000, so a plain file in /data/local/tmp is the right cross-process channel.
+    private static final String CAMERA_ACTIVE_LEASE_PATH =
+        "/data/local/tmp/camera_active_lease";
+
     private static void publishCameraActiveLease() {
-        try {
-            org.json.JSONObject patch = new org.json.JSONObject();
-            patch.put("cameraActiveUntilMs",
-                System.currentTimeMillis() + CAMERA_ACTIVE_LEASE_MS);
-            com.overdrive.app.config.UnifiedConfigManager
-                .updateSection("surveillance", patch);
-        } catch (Throwable t) {
-            // Throttle — log only on first failure per minute, otherwise
-            // a stuck unified-config write would flood the daemon log.
-            log("publishCameraActiveLease failed: " + t.getMessage());
-        }
+        writeCameraActiveLease(System.currentTimeMillis() + CAMERA_ACTIVE_LEASE_MS);
     }
 
     private static void clearCameraActiveLease() {
+        writeCameraActiveLease(0L);
+    }
+
+    private static void writeCameraActiveLease(long deadlineMs) {
         try {
-            org.json.JSONObject patch = new org.json.JSONObject();
-            patch.put("cameraActiveUntilMs", 0L);
-            com.overdrive.app.config.UnifiedConfigManager
-                .updateSection("surveillance", patch);
-        } catch (Throwable ignored) {}
+            byte[] payload = Long.toString(deadlineMs)
+                .getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+            // Atomic write: write to a temp sibling then rename, so a concurrent
+            // reader never sees a half-written value (a torn read would only ever
+            // fail safe to "not active" anyway, but the rename keeps it clean).
+            // NO fsync: this lease is EPHEMERAL — it self-expires in 8s and is
+            // meaningless across a reboot, and cross-process visibility to the
+            // peer daemon is via the page cache (fsync isn't needed for that). An
+            // fsync every 4s on the car-ON path would be a real disk-flush cost on
+            // exactly the path this change exists to make cheap, so it's omitted.
+            java.io.File tmp = new java.io.File(CAMERA_ACTIVE_LEASE_PATH + ".tmp");
+            try (java.io.FileOutputStream fos = new java.io.FileOutputStream(tmp)) {
+                fos.write(payload);
+            }
+            java.io.File dest = new java.io.File(CAMERA_ACTIVE_LEASE_PATH);
+            if (!tmp.renameTo(dest)) {
+                // Rename can fail across some FUSE quirks — fall back to a direct
+                // overwrite (the value is a single token, torn read fails safe).
+                try (java.io.FileOutputStream fos = new java.io.FileOutputStream(dest)) {
+                    fos.write(payload);
+                }
+                tmp.delete();
+            }
+            // Match the UnifiedConfigManager invariant for /data/local/tmp files:
+            // world-readable/writable so a non-creator UID could open it. The only
+            // reader today is the same-UID (2000) acc_sentry daemon, so this isn't
+            // strictly required now, but it keeps parity with the config files and
+            // future-proofs against an app-UID (10xxx) reader. Cheap: perms are
+            // sticky to the inode, so this is a no-op stat/chmod once set.
+            dest.setReadable(true, false);
+            dest.setWritable(true, false);
+        } catch (Throwable t) {
+            // Throttled by the caller's cadence; a failed lease write just means
+            // the peer daemon may run one backlight-off tick during active camera,
+            // which self-corrects on the next 4s write.
+            log("writeCameraActiveLease failed: " + t.getMessage());
+        }
     }
     
     // ==================== GETTERS ====================
@@ -5387,8 +5448,19 @@ public class CameraDaemon {
                 return looper != null ? looper : android.os.Looper.myLooper();
             }
         }
+        // Return the WRAPPER, not the raw base. The BYD SDK commonly normalizes to
+        // the application context before a permission check
+        // (ctx.getApplicationContext().checkSelfPermission("BYDAUTO_*_SET")); if we
+        // handed back super.getApplicationContext() (the un-wrapped system context),
+        // that check would hit the real context — which returns DENIED for the
+        // signature-level BYDAUTO_*_SET perms our self-signed APK doesn't hold — and
+        // the SDK would refuse the write BEFORE the binder call, exactly the
+        // energy/operation/regen/steering failure. A custom Application subclass
+        // avoids this naturally (its getApplicationContext() returns itself, so a
+        // permission override on it stays in force through any SDK re-normalization);
+        // returning `this` gives our ContextWrapper the same always-in-force property.
         @Override public android.content.Context getApplicationContext() {
-            try { return super.getApplicationContext(); } catch (NullPointerException e) { return this; }
+            return this;
         }
         @Override public String getPackageName() {
             try { return super.getPackageName(); } catch (NullPointerException e) { return APP_PACKAGE_NAME(); }

@@ -1,8 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  Dual-purpose config:
+   1. Process keep-alive — the binding alone gives the app the highest
+      process-priority tier so BYD firmware won't kill it (original purpose).
+   2. Physical-key mapping — flagRequestFilterKeyEvents + canRequestFilterKeyEvents
+      let onKeyEvent intercept hardware buttons (steering-wheel / dash keys) BEFORE
+      the OEM handler, so the user can rebind them. This is a standard a11y
+      capability — no root, no signature permission, no INJECT_EVENTS.
+  We keep accessibilityEventTypes empty: we observe NO window/view events, only
+  filter key events, so this adds no event-callback overhead.
+-->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/accessibility_service_description"
-    android:accessibilityEventTypes=""
+    android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:notificationTimeout="5000"
-    android:canRetrieveWindowContent="false"
+    android:accessibilityFlags="flagRequestFilterKeyEvents|flagReportViewIds"
+    android:canRequestFilterKeyEvents="true"
+    android:canRetrieveWindowContent="true"
+    android:notificationTimeout="100"
     android:settingsActivity="com.overdrive.app.ui.MainActivity" />

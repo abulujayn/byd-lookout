@@ -752,19 +752,29 @@ public class BydDataCollector {
             logger.debug("Multimedia strategy 3 (system context) failed: " + e.getMessage());
         }
 
-        // Strategy 4: Try with getApplicationContext() directly
+        // Strategy 4: Try a DIFFERENT context object than the one already tried.
+        // The daemon's PermissionBypassContext.getApplicationContext() returns the
+        // wrapper itself (so its BYD-permission overrides survive SDK re-normalization),
+        // which means getApplicationContext() == context here and would make this
+        // fallback a no-op. Unwrap to the underlying base context in that case so
+        // Strategy 4 genuinely tries a distinct handle. Compare identity to skip when
+        // there's nothing new to try.
         try {
             android.content.Context appCtx = context.getApplicationContext();
+            if (appCtx == context && context instanceof android.content.ContextWrapper) {
+                android.content.Context base = ((android.content.ContextWrapper) context).getBaseContext();
+                if (base != null) appCtx = base;
+            }
             if (appCtx != null && appCtx != context) {
                 device = BydDeviceHelper.getDevice(className, appCtx);
                 if (device != null) {
-                    logger.info("Multimedia device OK via getApplicationContext()");
+                    logger.info("Multimedia device OK via alternate (app/base) context");
                     availableDevices.add("Multimedia");
                     return device;
                 }
             }
         } catch (Exception e) {
-            logger.debug("Multimedia strategy 4 (app context) failed: " + e.getMessage());
+            logger.debug("Multimedia strategy 4 (app/base context) failed: " + e.getMessage());
         }
 
         unavailableDevices.add("Multimedia");
@@ -4665,9 +4675,18 @@ public class BydDataCollector {
     public boolean setAcFanLevel(int level) {
         try {
             if (level < 1 || level > 7) return false;
-            // SDK method: acDevice.setAcWindLevel(0, level)
+            // Primary: named SDK method acDevice.setAcWindLevel(0, level).
             Object result = BydDeviceHelper.callMethod(acDevice, "setAcWindLevel", 0, level);
-            return result instanceof Integer && ((Integer) result).intValue() == 0;
+            if (result instanceof Integer && ((Integer) result).intValue() == 0) return true;
+
+            // Fallback: on some DiLink 3.0 firmware setAcWindLevel is a no-op
+            // (returns null / non-zero). The generic feature write
+            // set(1000, AC_WIND_LEVEL_SET, level) drives the fan directly and is
+            // verified to work on the Dolphin (wheregoes/byd-apps research).
+            // Only reached when the named path did NOT report success, so the
+            // path that already works on other firmware is left untouched.
+            logger.debug("setAcWindLevel named path returned " + result + "; trying generic feature write");
+            return BydDeviceHelper.sendSetCommand(acDevice, BydFeatureIds.AC_WIND_LEVEL_SET, level);
         } catch (Exception e) {
             logger.debug("setAcFanLevel failed: " + e.getMessage());
             return false;
@@ -5717,6 +5736,234 @@ public class BydDataCollector {
             return BydDeviceHelper.sendSetCommand(engineDevice, BydFeatureIds.ENGINE_DRIFT_MODE_SWITCH_CONFIG, enabled ? 1 : 0);
         } catch (Exception e) {
             logger.debug("setDriftMode failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    // --- Drive / energy modes ---
+    // energy-feedback / steer-assist are written via BYDAutoSettingDevice SDK
+    // setters (HAL device methods, not the CarSettings ContentProvider; SDK
+    // convention: setter returns 0 on success). BYDAutoEnergyDevice exposes both
+    // get{Operation,Energy}Mode (see collectEnergy) AND the matching setters
+    // set{Operation,Energy}Mode(int) — confirmed present in the OEM implementation
+    // and invoked below via invokeOptionalModeSetter, which surfaces a genuinely
+    // absent method at WARN rather than a silent false. The writes are still gated
+    // by the BYD signature-permission wall (the HAL may reject from our UID), so a
+    // non-zero result is treated as failure by isSdkWriteSuccess.
+
+    /**
+     * Drive/operation mode. Values are the SDK OperationMode enum from the docs
+     * (doc/android/hardware/bydauto/energy): ENERGY_OPERATION_ECONOMY = 1,
+     * ENERGY_OPERATION_SPORT = 2 — the ONLY two operation modes. There is no
+     * NORMAL and no SNOW on this axis (SNOW is a separate road-surface value,
+     * ENERGY_ROAD_SURFACE_SNOW = 2, on a different setter). Callers map the words
+     * to these ints in VehicleControlCatalog.driveModeValue(); mirrors the value
+     * read back as operationMode.
+     *
+     * <p>{@code BYDAutoEnergyDevice.setOperationMode(int)} is a real SDK method —
+     * confirmed present in the OEM implementation. Like every SDK write on this
+     * platform it is still gated by the BYD signature-permission wall, so the HAL
+     * may reject the write from our UID (returns non-zero) even though the method
+     * resolves. We invoke via {@link #invokeOptionalModeSetter} so that if a
+     * firmware variant ever drops/renames the method we surface it at WARN rather
+     * than a silent false.
+     */
+    public boolean setOperationMode(int mode) {
+        return invokeOptionalModeSetter(energyDevice, "setOperationMode", mode,
+                "operation mode (ECO/SPORT)");
+    }
+
+    /**
+     * Energy/powertrain mode: EV vs HEV (BYD SDK EnergyMode enum, matches the
+     * value read back as energyMode). Only meaningful on DM/PHEV vehicles.
+     *
+     * <p>{@code BYDAutoEnergyDevice.setEnergyMode(int)} is a real SDK method
+     * (confirmed present in the OEM implementation). Same signature-permission
+     * caveat as {@link #setOperationMode}: resolves, but the HAL may reject the
+     * write from our UID. Invoked defensively via {@link #invokeOptionalModeSetter}.
+     */
+    public boolean setEnergyMode(int mode) {
+        return invokeOptionalModeSetter(energyDevice, "setEnergyMode", mode,
+                "energy/powertrain mode (EV/HEV)");
+    }
+
+    /**
+     * Invoke an SDK setter by name, tolerating a firmware that dropped or renamed
+     * it. {@code set{Operation,Energy}Mode} ARE real BYDAutoEnergyDevice methods
+     * (confirmed in the OEM implementation), but reflecting by name lets a variant
+     * that lacks them fail loudly instead of silently. Probes for the method and:
+     * <ul>
+     *   <li>if present — invokes it and honors the SDK 0=success convention
+     *       (a non-zero return is the HAL rejecting the write, e.g. sigperm);</li>
+     *   <li>if absent — logs at WARN (so an SDK name/shape mismatch surfaces
+     *       loudly in production instead of a silent {@code false}) and returns
+     *       false, letting the command router treat the SDK leg as no-path.</li>
+     * </ul>
+     */
+    private boolean invokeOptionalModeSetter(Object device, String methodName, int value, String label) {
+        if (device == null) {
+            logger.warn(methodName + ": device unavailable — " + label + " cannot be set");
+            return false;
+        }
+        Method m;
+        try {
+            m = device.getClass().getMethod(methodName, int.class);
+        } catch (NoSuchMethodException nsme) {
+            logger.warn(methodName + ": method not present on " + device.getClass().getSimpleName()
+                + " — " + label + " has no local SDK write path on this build; route via cloud/CAN instead");
+            return false;
+        } catch (Exception e) {
+            logger.warn(methodName + ": lookup failed: " + e.getMessage());
+            return false;
+        }
+        try {
+            Object r = m.invoke(device, value);
+            return isSdkWriteSuccess(device, r, methodName);
+        } catch (Exception e) {
+            logger.warn(methodName + "(" + value + ") failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    // Per-device cache of the resolved <FAMILY>_COMMAND_SUCCESS constant value, so
+    // we reflect it once per device class rather than on every write.
+    private static final java.util.concurrent.ConcurrentHashMap<Class<?>, Integer> COMMAND_SUCCESS_CACHE =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final int COMMAND_SUCCESS_UNKNOWN = Integer.MIN_VALUE;
+
+    /**
+     * Judge whether a BYD SDK named-setter result means success.
+     *
+     * <p>The SDK's setter methods return an int result code documented ONLY by
+     * name — {@code <FAMILY>_COMMAND_SUCCESS} (e.g. {@code ENERGY_COMMAND_SUCCESS},
+     * {@code SETTING_COMMAND_SUCCESS}) — whose NUMERIC value is NOT published in the
+     * SDK docs and is NOT guaranteed to be 0. Sibling constants prove non-zero
+     * success values exist on this platform (e.g. {@code CHARGING_SUCCESS=2},
+     * {@code MALFUNCTION_OK=19}). So the old hardcoded {@code r == 0} test could
+     * report FAILURE on a genuine success if the HAL's SUCCESS constant isn't 0 —
+     * which, combined with the wrong enum values, is why drive/energy-mode writes
+     * logged FAILED.
+     *
+     * <p>Resolution order (first that applies):
+     * <ol>
+     *   <li>Reflect the device class's {@code <FAMILY>_COMMAND_SUCCESS} field and
+     *       compare the result to it — correct-by-construction, immune to whatever
+     *       value BYD chose. The family prefix is derived from the device's simple
+     *       class name (BYDAutoEnergyDevice → ENERGY, BYDAutoSettingDevice →
+     *       SETTING).</li>
+     *   <li>If that constant can't be resolved, fall back to {@code code >= 0} —
+     *       the SAME non-inverting convention the proven-working generic write path
+     *       ({@link BydDeviceHelper#sendSetCommand}) uses, whose documented failure
+     *       code is a large negative ({@code -2147482648}). This never inverts a
+     *       real success the way {@code == 0} can.</li>
+     *   <li>A {@code Boolean} result maps true→success. A null/void result is
+     *       treated as success (the call returned without throwing) — matching
+     *       {@code sendSetCommandRaw}'s "non-null result, assume success".</li>
+     * </ol>
+     */
+    private boolean isSdkWriteSuccess(Object device, Object result, String methodName) {
+        if (result instanceof Boolean) return (Boolean) result;
+        if (!(result instanceof Integer)) {
+            // void / null / unexpected type: the invoke didn't throw, so treat as
+            // accepted (mirrors BydDeviceHelper.sendSetCommandRaw's assume-success).
+            return true;
+        }
+        int code = (Integer) result;
+        int success = resolveCommandSuccess(device.getClass());
+        if (success != COMMAND_SUCCESS_UNKNOWN) {
+            return code == success;
+        }
+        // No resolvable SUCCESS constant → use the working generic-path convention.
+        return code >= 0;
+    }
+
+    /** Resolve and cache {@code <FAMILY>_COMMAND_SUCCESS} for a BYD device class,
+     *  or {@link #COMMAND_SUCCESS_UNKNOWN} if none is exposed. */
+    private int resolveCommandSuccess(Class<?> deviceClass) {
+        Integer cached = COMMAND_SUCCESS_CACHE.get(deviceClass);
+        if (cached != null) return cached;
+        int resolved = COMMAND_SUCCESS_UNKNOWN;
+        try {
+            // BYDAutoEnergyDevice → "ENERGY"; BYDAutoSettingDevice → "SETTING".
+            String simple = deviceClass.getSimpleName(); // e.g. BYDAutoEnergyDevice
+            String family = simple.replaceFirst("^BYDAuto", "").replaceFirst("Device$", "").toUpperCase();
+            java.lang.reflect.Field f = deviceClass.getField(family + "_COMMAND_SUCCESS");
+            Object v = f.get(null);
+            if (v instanceof Integer) resolved = (Integer) v;
+        } catch (Throwable ignored) {
+            // No such constant on this build — fall back to >= 0 (handled by caller).
+        }
+        COMMAND_SUCCESS_CACHE.put(deviceClass, resolved);
+        if (resolved != COMMAND_SUCCESS_UNKNOWN) {
+            logger.info("Resolved " + deviceClass.getSimpleName() + " COMMAND_SUCCESS=" + resolved);
+        }
+        return resolved;
+    }
+
+    /** Energy recuperation / regen-braking strength (BYDAutoSettingDevice). */
+    public boolean setEnergyFeedback(int level) {
+        if (settingDevice == null) {
+            logger.warn("setEnergyFeedback: settingDevice unavailable");
+            return false;
+        }
+        // Probe by name (like setSteerAssist) so an SDK rename of
+        // "setEnergyFeedback" surfaces at WARN instead of silently returning
+        // NOT_SUPPORTED for every regen_level command.
+        Method m;
+        try {
+            m = settingDevice.getClass().getMethod("setEnergyFeedback", int.class);
+        } catch (NoSuchMethodException nsme) {
+            logger.warn("setEnergyFeedback: method not present on "
+                + settingDevice.getClass().getSimpleName()
+                + " — regen/energy-recuperation strength unsupported on this OEM build");
+            return false;
+        } catch (Exception e) {
+            logger.warn("setEnergyFeedback lookup failed: " + e.getMessage());
+            return false;
+        }
+        try {
+            Object r = m.invoke(settingDevice, level);
+            return isSdkWriteSuccess(settingDevice, r, "setEnergyFeedback");
+        } catch (Exception e) {
+            logger.warn("setEnergyFeedback(" + level + ") failed: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /** Steering-assist weighting: comfort vs sport (BYDAutoSettingDevice). */
+    public boolean setSteerAssist(int mode) {
+        if (settingDevice == null) return false;
+        // Method name must match the SDK exactly — the earlier target string
+        // "setSteerAssist" (with the trailing 't') resolved to nothing, so every
+        // steering-mode command silently failed as NOT_SUPPORTED. The real
+        // BYDAutoSettingDevice method is `public int setSteerAssis(int value)`
+        // (no trailing 't'). Probe the correct name first and fall back to the
+        // with-'t' spelling in case a future SDK settles on the other stem, so a
+        // genuine rename surfaces at WARN instead of returning false.
+        Method m = null;
+        try {
+            m = settingDevice.getClass().getMethod("setSteerAssis", int.class);
+        } catch (NoSuchMethodException nsme) {
+            try {
+                m = settingDevice.getClass().getMethod("setSteerAssist", int.class);
+            } catch (NoSuchMethodException nsme2) {
+                logger.warn("setSteerAssis: method not present on "
+                    + settingDevice.getClass().getSimpleName()
+                    + " — steering-assist weighting unsupported on this OEM build");
+                return false;
+            } catch (Exception e) {
+                logger.warn("setSteerAssist lookup failed: " + e.getMessage());
+                return false;
+            }
+        } catch (Exception e) {
+            logger.warn("setSteerAssis lookup failed: " + e.getMessage());
+            return false;
+        }
+        try {
+            Object r = m.invoke(settingDevice, mode);
+            return isSdkWriteSuccess(settingDevice, r, "setSteerAssis");
+        } catch (Exception e) {
+            logger.warn("setSteerAssis(" + mode + ") failed: " + e.getMessage());
             return false;
         }
     }

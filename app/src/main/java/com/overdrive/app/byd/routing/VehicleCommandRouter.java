@@ -627,6 +627,47 @@ public final class VehicleCommandRouter {
         }
     }
 
+    /** Drive/operation mode: SDK OperationMode enum — 1=ECONOMY(eco), 2=SPORT.
+     *  Those are the only two operation modes (no NORMAL/SNOW). SDK-only. */
+    public static final class OperationModeCommand extends VehicleCommand {
+        public final int mode;
+        public OperationModeCommand(int mode) { this.mode = mode; }
+        public String name() { return "operation-mode"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setOperationMode(mode); }
+    }
+
+    /** Powertrain mode: EV vs HEV (DM/PHEV only). SDK-only. */
+    public static final class EnergyModeCommand extends VehicleCommand {
+        public final int mode;
+        public EnergyModeCommand(int mode) { this.mode = mode; }
+        public String name() { return "energy-mode"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setEnergyMode(mode); }
+    }
+
+    /** Energy recuperation / regen strength. SDK-only. */
+    public static final class EnergyFeedbackCommand extends VehicleCommand {
+        public final int level;
+        public EnergyFeedbackCommand(int level) { this.level = level; }
+        public String name() { return "energy-feedback"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setEnergyFeedback(level); }
+    }
+
+    /** Steering-assist weighting: comfort vs sport. SDK-only. */
+    public static final class SteerAssistCommand extends VehicleCommand {
+        public final int mode;
+        public SteerAssistCommand(int mode) { this.mode = mode; }
+        public String name() { return "steer-assist"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setSteerAssist(mode); }
+    }
+
     // ── Routing ─────────────────────────────────────────────────────────
 
     public CommandResult execute(VehicleCommand cmd) {

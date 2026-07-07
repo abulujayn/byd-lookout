@@ -10,6 +10,9 @@ public class StringType extends BaseType<String> {
 
     private final Label label;
     private final int maxLength;
+    // Optional i18n key for a cautionary note rendered under the field (e.g. the
+    // shell-command action's "runs unattended" warning). null = no warning.
+    private final String warningKey;
 
     /**
      * A string representation
@@ -19,8 +22,21 @@ public class StringType extends BaseType<String> {
      * @param maxLength The maximum length this string can be (inclusive)
      */
     public StringType(Label label, int maxLength) {
+        this(label, maxLength, null);
+    }
+
+    /**
+     * A string variable with an optional cautionary warning rendered beneath the
+     * input in the automation form (amber box, matching the key-mapping shell UI).
+     *
+     * @param label      An id and display name for this string
+     * @param maxLength  The maximum length this string can be (inclusive)
+     * @param warningKey i18n key for a warning note, or null for none
+     */
+    public StringType(Label label, int maxLength, String warningKey) {
         this.label = label;
         this.maxLength = maxLength;
+        this.warningKey = warningKey;
     }
 
     /**
@@ -74,6 +90,11 @@ public class StringType extends BaseType<String> {
         try {
             json.put("type", TYPE);
             json.put("maxLength", getMaxLength());
+            if (warningKey != null) {
+                // Resolve server-side (same as labels/descriptions) so the
+                // frontend just renders the translated text.
+                json.put("warning", com.overdrive.app.server.Messages.get(warningKey));
+            }
         } catch (Exception e) {
             // JSONObject.put only throws on null key
         }

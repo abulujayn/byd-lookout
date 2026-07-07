@@ -130,7 +130,11 @@ public class Automation {
      */
     public void triggerActions() {
         for (AutomationAction automationAction : getActions()) {
+            // Defense-in-depth: a hand-edited config.json can still yield a null or unknown-type
+            // action element; skip it so it can never NPE the queue drainer or the /test path.
+            if (automationAction == null) continue;
             Action action = Automations.getAction(automationAction.getType());
+            if (action == null) continue;
             action.trigger(automationAction);
         }
     }
@@ -211,7 +215,9 @@ public class Automation {
                 String key = actionJson.getString("type");
                 Action action = Automations.getAction(key);
                 if (action == null) return null;
-                actions.add(action.fromJson(actionJson));
+                AutomationAction automationAction = action.fromJson(actionJson);
+                if (automationAction == null) return null;
+                actions.add(automationAction);
             }
 
             boolean disabled = input.optBoolean("disabled", false);

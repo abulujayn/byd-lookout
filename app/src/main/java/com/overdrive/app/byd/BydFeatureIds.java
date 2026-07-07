@@ -223,6 +223,12 @@ public final class BydFeatureIds {
     public static final int AC_DEFROST_REAR_STATUS = resolveOrFallback("Ac.DEFROST_REAR_STATUS", 1128267825);
     public static final int AC_CYCLE_MODE_SET = resolveOrFallback("Ac.CYCLE_MODE_SET", 501219355);
     public static final int AC_DEFROST_FRONT_STATUS = resolveOrFallback("Ac.DEFROST_FRONT_STATUS", 1128267832);
+    // Wind/fan level SET via the generic set(1000, id, level) path. On some
+    // DiLink 3.0 firmware the named setAcWindLevel() is a no-op; the generic
+    // feature write works (verified in wheregoes/byd-apps research on Dolphin).
+    // 0x1DE0000C sits in the same 0x1DE000xx AC-write family as CYCLE_MODE_SET
+    // (0x1DE0001B) and DEFROST_FRONT_SET (0x1DE00022).
+    public static final int AC_WIND_LEVEL_SET = resolveOrFallback("Ac.WIND_LEVEL_SET", 0x1DE0000C);
 
     // ==================== ADAS ====================
     public static final int ADAS_OMS_DRIVER_DETECTION = resolveOrFallback("Adas.OMS_DRIVER_DETECTION_RESULT", 834666600);

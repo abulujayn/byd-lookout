@@ -422,11 +422,21 @@
             android:foregroundServiceType="location|dataSync"
             android:exported="true" />
 
-        <!-- Daemon Keepalive Service - Keeps app alive and monitors SCREEN_OFF -->
+        <!-- Daemon Keepalive Service - Keeps app alive and monitors SCREEN_OFF.
+             exported=true is REQUIRED: the CameraDaemon (shell uid 2000) respawns
+             the app headlessly via `am start-foreground-service -n
+             com.overdrive.app/.services.DaemonKeepaliveService` in
+             KeymapApiHandler.forceRestartAppForA11y() (the a11y-bind-wedge
+             recovery). AMS rejects a non-exported component launched from a
+             foreign uid, so exported=false would let the watchdog force-stop the
+             app but silently fail to respawn it — the same constraint
+             LocationSidecarService / RoadSenseImuSidecarService document above.
+             The service self-guards in onStartCommand (post-update defer +
+             permission checks), so exporting it carries the same low risk. -->
         <service
             android:name="com.overdrive.app.services.DaemonKeepaliveService"
             android:foregroundServiceType="specialUse|dataSync"
-            android:exported="false" />
+            android:exported="true" />
 
         <!-- RoadSense IMU Sidecar - the ONLY app-side RoadSense component (D-023).
              Acquires -iner accel+gyro at ~100 Hz and batches them to the daemon

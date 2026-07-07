@@ -63,6 +63,9 @@ public final class VehicleControlCatalog {
         public final String category;       // "config"/"diagnostic"/null
         public final boolean sensitive;     // windows/sunroof/locks etc.
         public final String stateKey;       // existing telemetry key for state_topic; null = command-only/optimistic
+        // select-only: Jinja value_template applied on the state topic to map an
+        // enum int (as published by telemetry) onto an option word; null = none.
+        public final String stateValueTemplate;
         // platform extras
         public final double min, max, step;
         public final String unit;
@@ -76,11 +79,19 @@ public final class VehicleControlCatalog {
                       boolean sensitive, String stateKey, double min, double max, double step,
                       String unit, List<String> options, String deviceClass, String onVal, String offVal,
                       CommandFn cmd, AvailableFn avail) {
+            this(key, platform, name, icon, category, sensitive, stateKey, min, max, step,
+                    unit, options, deviceClass, onVal, offVal, cmd, avail, null);
+        }
+
+        ControlEntity(String key, String platform, String name, String icon, String category,
+                      boolean sensitive, String stateKey, double min, double max, double step,
+                      String unit, List<String> options, String deviceClass, String onVal, String offVal,
+                      CommandFn cmd, AvailableFn avail, String stateValueTemplate) {
             this.key = key; this.platform = platform; this.name = name; this.icon = icon;
             this.category = category; this.sensitive = sensitive; this.stateKey = stateKey;
             this.min = min; this.max = max; this.step = step; this.unit = unit; this.options = options;
             this.deviceClass = deviceClass; this.onVal = onVal; this.offVal = offVal;
-            this.cmd = cmd; this.avail = avail;
+            this.cmd = cmd; this.avail = avail; this.stateValueTemplate = stateValueTemplate;
         }
 
         public boolean isAvailable(BydVehicleData snap) {
@@ -158,7 +169,13 @@ public final class VehicleControlCatalog {
                     }
                     case "select": {
                         c.put("command_topic", cmdBase + "/set");
-                        if (stateKey != null) c.put("state_topic", baseTopic + "/" + stateKey);
+                        if (stateKey != null) {
+                            c.put("state_topic", baseTopic + "/" + stateKey);
+                            // Telemetry publishes the enum as a raw int; map it onto the
+                            // option word so the HA select accepts the state. The `else value`
+                            // passthrough leaves an already-word-valued echo untouched.
+                            if (stateValueTemplate != null) c.put("value_template", stateValueTemplate);
+                        }
                         c.put("options", new JSONArray(options));
                         break;
                     }
@@ -210,6 +227,11 @@ public final class VehicleControlCatalog {
         return new ControlEntity(key, "select", name, icon, category, false, stateKey,
                 0, 0, 0, null, options, null, null, null, cmd, null);
     }
+    static ControlEntity select(String key, String name, String icon, String category, String stateKey,
+                                List<String> options, String stateValueTemplate, CommandFn cmd) {
+        return new ControlEntity(key, "select", name, icon, category, false, stateKey,
+                0, 0, 0, null, options, null, null, null, cmd, null, stateValueTemplate);
+    }
     static ControlEntity cover(String key, String name, String icon, String deviceClass, boolean sensitive,
                                String stateKey, CommandFn cmd) {
         return new ControlEntity(key, "cover", name, icon, null, sensitive, stateKey,
@@ -238,6 +260,23 @@ public final class VehicleControlCatalog {
     private static int levelIndex(String payload) {
         int i = LEVEL_4.indexOf(payload.trim().toLowerCase());
         return i >= 0 ? i : pInt(payload, 0);
+    }
+    // BYD operation-mode enum values from the SDK docs
+    // (doc/android/hardware/bydauto/energy/BYDAutoEnergyDevice.html + constant-values):
+    //   ENERGY_OPERATION_ECONOMY = 1, ENERGY_OPERATION_SPORT = 2.
+    // These are the ONLY two operation modes the SDK defines — there is no
+    // NORMAL and no SNOW here (SNOW is a *road-surface* value on a different
+    // axis: ENERGY_ROAD_SURFACE_SNOW = 2). The earlier 0-based list
+    // (eco=0/sport=1/normal=2/snow=3) sent setOperationMode(0) for ECO, which is
+    // not a valid operation-mode value, so the HAL rejected the write
+    // (ENERGY_COMMAND_INVALID) and the mode never changed. Map the words to the
+    // real SDK ints; a raw int passes through.
+    private static final List<String> DRIVE_MODES = java.util.Arrays.asList("eco", "sport");
+    private static int driveModeValue(String payload) {
+        String p = payload.trim().toLowerCase();
+        if ("eco".equals(p) || "economy".equals(p)) return 1;   // ENERGY_OPERATION_ECONOMY
+        if ("sport".equals(p)) return 2;                        // ENERGY_OPERATION_SPORT
+        return pInt(payload, 1);
     }
 
     static {
@@ -350,6 +389,63 @@ public final class VehicleControlCatalog {
                 (sub, payload, snap) -> ControlAction.echo(
                         new VehicleCommandRouter.WirelessChargingCommand(truthy(payload)),
                         "wireless_charging", truthy(payload) ? "1" : "0")));
+
+        // ── Drive / energy modes (BYDAutoEnergyDevice / SettingDevice) ────
+        // select entities: HA renders a dropdown, keymap binds one option, the
+        // automation UI exposes the same option set. Payloads are readable words
+        // mapped to the BYD SDK int enum; pInt() also accepts a raw int.
+        // drive_mode: telemetry publishes operationMode under "op_mode" (not
+        // "operation_mode") as a raw int; bind the state topic there and map the
+        // int→word via value_template so the HA select accepts live telemetry.
+        // The echo emits the option word directly (in-domain).
+        // drive_mode: op_mode telemetry is the raw SDK operation-mode int
+        // (ENERGY_OPERATION_ECONOMY=1, ENERGY_OPERATION_SPORT=2). Echo the word
+        // and map int→word on the state topic using the SAME 1/2 values the SDK
+        // reports, so the live telemetry and the optimistic echo agree.
+        register(select("drive_mode", "Drive Mode", "mdi:car-shift-pattern", null, "op_mode",
+                DRIVE_MODES,
+                "{% set m = value | int(-1) %}{{ 'eco' if m == 1 else 'sport' if m == 2 else value }}",
+                (sub, payload, snap) -> {
+                    int m = driveModeValue(payload);
+                    return ControlAction.echo(new VehicleCommandRouter.OperationModeCommand(m),
+                            "op_mode", m == 2 ? "sport" : "eco");
+                }));
+        // powertrain_mode: energy_mode telemetry is the raw SDK energy-mode int
+        // (ENERGY_MODE_EV=1, ENERGY_MODE_HEV=3; NOTE 0=ENERGY_MODE_STOP, NOT ev).
+        // The old code sent setEnergyMode(0) for EV — which is STOP — so EV never
+        // engaged. Map the words to the real SDK ints and mirror them on the
+        // state topic.
+        final List<String> POWERTRAIN = java.util.Arrays.asList("ev", "hev");
+        register(select("powertrain_mode", "Powertrain Mode", "mdi:engine", null, "energy_mode",
+                POWERTRAIN,
+                "{% set m = value | int(-1) %}{{ 'ev' if m == 1 else 'hev' if m == 3 else value }}",
+                (sub, payload, snap) -> {
+                    int m = "hev".equalsIgnoreCase(payload.trim()) ? 3   // ENERGY_MODE_HEV
+                          : "ev".equalsIgnoreCase(payload.trim()) ? 1    // ENERGY_MODE_EV
+                          : pInt(payload, 1);
+                    return ControlAction.echo(new VehicleCommandRouter.EnergyModeCommand(m),
+                            "energy_mode", m == 3 ? "hev" : "ev");
+                }));
+        // regen_level: SET_DR_ENERGY_FB_STANDARD = 1, SET_DR_ENERGY_FB_LARGE = 2
+        // (there is no 0). Old code sent 0/1 → the HAL rejected 0.
+        register(select("regen_level", "Energy Recuperation", "mdi:battery-charging-medium", null, null,
+                java.util.Arrays.asList("standard", "high"),
+                (sub, payload, snap) -> {
+                    int lvl = "high".equalsIgnoreCase(payload.trim()) ? 2   // SET_DR_ENERGY_FB_LARGE
+                            : "standard".equalsIgnoreCase(payload.trim()) ? 1 // SET_DR_ENERGY_FB_STANDARD
+                            : pInt(payload, 1);
+                    return ControlAction.of(new VehicleCommandRouter.EnergyFeedbackCommand(lvl));
+                }));
+        // steering_mode: SET_DR_ST_ASSIS_COMFORT = 1, SET_DR_ST_ASSIS_SPORT = 2
+        // (there is no 0). Old code sent 0/1 → the HAL rejected 0.
+        register(select("steering_mode", "Steering Assist", "mdi:steering", null, null,
+                java.util.Arrays.asList("comfort", "sport"),
+                (sub, payload, snap) -> {
+                    int m = "sport".equalsIgnoreCase(payload.trim()) ? 2    // SET_DR_ST_ASSIS_SPORT
+                          : "comfort".equalsIgnoreCase(payload.trim()) ? 1  // SET_DR_ST_ASSIS_COMFORT
+                          : pInt(payload, 1);
+                    return ControlAction.of(new VehicleCommandRouter.SteerAssistCommand(m));
+                }));
 
         // ── Tier 3: curated CAN-backed car settings (local carsettings provider) ──
         for (com.overdrive.app.byd.BydCarSettings.CarSetting s : com.overdrive.app.byd.BydCarSettings.registry()) {
