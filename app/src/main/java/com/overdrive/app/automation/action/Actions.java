@@ -1,8 +1,10 @@
 package com.overdrive.app.automation.action;
 
+import com.overdrive.app.automation.type.ColourType;
 import com.overdrive.app.automation.type.EnumType;
 import com.overdrive.app.automation.type.IntType;
 import com.overdrive.app.automation.value.Label;
+import com.overdrive.app.byd.light.LightConstants;
 import com.overdrive.app.server.Messages;
 
 import org.json.JSONArray;
@@ -116,6 +118,13 @@ public class Actions {
                         new Label("position", "automation.action"),
                         new Label("1", "automation.position_1"),
                         new Label("2", "automation.position_2"))));
+        addAction(new ApiAction(
+                new Label("setAmbient", "automation.set_ambient"),
+                "automation.set_ambient_description",
+                "POST",
+                "/api/vehicle/lights",
+                "{\"target\":\"ambientColour\",\"value\":${colour}}",
+                new ColourType(new Label("colour", "automation.colour"), LightConstants.AMBIENT_COLOURS)));
         // Drive / energy modes — same catalog entities the keymap and MQTT use.
         // The Label id must match the VehicleControlCatalog key so
         // VehicleControlAction.trigger resolves it.

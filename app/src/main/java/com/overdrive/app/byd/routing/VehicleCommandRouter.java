@@ -539,6 +539,15 @@ public final class VehicleCommandRouter {
         public boolean executeViaSdk(BydDataCollector c) { return c.setDayTimeLight(drlOn); }
     }
 
+    public static final class AmbientColourCommand extends VehicleCommand {
+        public final int colour;
+        public AmbientColourCommand(int colour) { this.colour = colour; }
+        public String name() { return "ambient"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setAmbientLight(colour); }
+    }
+
     public static final class AdasSpeedLimitWarningCommand extends VehicleCommand {
         public final boolean enabled;
         public AdasSpeedLimitWarningCommand(boolean on) { this.enabled = on; }

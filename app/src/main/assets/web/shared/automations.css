@@ -162,6 +162,7 @@
     flex-wrap: wrap;
     margin-bottom: 5px;
     flex: 1;
+    align-items: center
 }
 /* Each input claims a quarter-row on wide viewports; sibling margins give the
    inter-input spacing (flex gap is ignored on Chrome-58). The negative row
@@ -220,6 +221,33 @@
     font-size: 13px;
     line-height: 1.4;
 }
+.form-grid .row .inputs > .colour {
+    -webkit-appearance: none; appearance: none;
+    height: 35px;
+    border-radius: 3px;
+    background: var(--vc-tile-bg);
+    outline: none;
+    margin: 0 6px;
+    padding: 0;
+    border: none;
+}
+.form-grid .row .inputs > .colour::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 15px; height: 15px;
+    border: 1px solid black;
+    border-radius: 50%;
+    background: var(--color, #00D4AA);
+    cursor: pointer;
+    box-shadow: 0 0 8px rgba(0,212,170,0.4);
+}
+.form-grid .row .inputs > .colour::-moz-range-thumb {
+    width: 15px; height: 15px;
+    border: 1px solid black;
+    border-radius: 50%;
+    background: var(--color, #00D4AA);
+    cursor: pointer;
+    box-shadow: 0 0 8px rgba(0,212,170,0.4);
+}
 .description-tooltip.visible {
     opacity: 1;
 }
@@ -263,7 +291,7 @@
     word-break: break-word;
 }
 /* icon actions / info spacing via sibling margins (flex gap ignored on Chrome-58). */
-#automationList .header > * + * { margin-left: 12px; }
+#automationList .header > * + * { margin-left: 6px; }
 #automationList .info {
     flex: 1;
     min-width: 0;
@@ -274,8 +302,19 @@
 #automationList .actions {
     display: flex;
     flex-shrink: 0;
+    flex-wrap: wrap;
 }
-#automationList .actions > * + * { margin-left: 6px; }
+@media (max-width: 773px) {
+    #automationList .actions {
+        /* Stack 2 buttons on top of each other on small devices */
+        max-width: 84px;
+    }
+}
+#automationList .actions > * {
+    margin-left: 6px;
+    margin-top: 3px;
+    margin-bottom: 3px;
+}
 #automationList .body {
     display: flex;
     align-items: center;

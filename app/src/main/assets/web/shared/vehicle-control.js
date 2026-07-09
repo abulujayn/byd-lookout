@@ -26,7 +26,7 @@ var VC = {
         trunkOpen: false,
         doors: { lf: 1, rf: 1, lr: 1, rr: 1, trunk: -1, hood: -1 },
         windows: { lf: 0, rf: 0, lr: 0, rr: 0, sunroof: 0, sunshade: 0 },
-        lights: { dayTimeLight: false },
+        lights: { dayTimeLight: false, ambientColour: 1, ambientOptions: [] },
         adas: { speedLimitWarning: false },
         setting: { childPresenceDetection: false },
         soc: 0,
@@ -1501,6 +1501,27 @@ var VC = {
                     BYD.i18n.t('vehicle.drl_failed'));
             });
         });
+        var ambientSlider = document.getElementById('ambientColourSlider');
+        if (ambientSlider) {
+            var ambientDebounce = null;
+            ambientSlider.addEventListener('input', function() {
+                var v = parseInt(ambientSlider.value, 10);
+                self.vehicleState.lights.ambientColour = v;
+                self.updateLightsUI();
+                if (ambientDebounce) clearTimeout(ambientDebounce);
+                ambientDebounce = setTimeout(function() {
+                    self.apiPost('/api/vehicle/lights', { target: 'ambientColour', value: v }).then(function(result) {
+                        if (result.success) {
+                            self.updateLightsUI();
+                        }
+                        self.toastFromResult(result,
+                            BYD.i18n.t('vehicle.ambient_set'),
+                            BYD.i18n.t('vehicle.ambient_failed'));
+                    });
+                }, 350);
+            });
+        }
+        this.fetchChargeCap();
 
         // === ADAS CONTROLS ===
         this.bindBtn('btnSLW', function() {
@@ -2384,9 +2405,27 @@ var VC = {
     },
 
     updateLightsUI: function() {
-        var btnDRL = document.getElementById('btnDRL');
-        var on = !!(this.vehicleState.lights && this.vehicleState.lights.dayTimeLight);
-        if (btnDRL) { if (on) btnDRL.classList.add('on'); else btnDRL.classList.remove('on'); }
+        if (this.vehicleState.lights) {
+            var btnDRL = document.getElementById('btnDRL');
+            var on = !!(this.vehicleState.lights.dayTimeLight);
+            if (btnDRL) { if (on) btnDRL.classList.add('on'); else btnDRL.classList.remove('on'); }
+
+            var slider = document.getElementById('ambientColourSlider');
+            if (slider) {
+                var colour = this.vehicleState.lights.ambientColour;
+                if (typeof colour === 'number') {
+                    slider.value = colour;
+                    var options = this.vehicleState.lights.ambientOptions;
+                    if (options && options.length) {
+                        slider.disabled = false;
+                        slider.style.background = `linear-gradient(to right, ${options.join(',')})`;
+                        slider.style.setProperty('--color', options[colour - 1]);
+                    } else {
+                        slider.disabled = true;
+                    }
+                }
+            }
+        }
     },
 
     updateAdasUI: function() {

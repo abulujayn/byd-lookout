@@ -313,7 +313,8 @@ public class BydDataCollector {
             Object unitVal = BydDeviceHelper.callGetter(instrumentDevice, "getMileageUnit");
             if (unitVal instanceof Number) {
                 int unit = ((Number) unitVal).intValue();
-                if (unit == 0) {
+                // getMileageUnit returns 2 for mph on PHEV
+                if (unit == 0 || unit == 2) {
                     // Miles mode
                     distanceToKmFactor = MILES_TO_KM;
                     unitDetected = true;
@@ -2370,6 +2371,12 @@ public class BydDataCollector {
             b.hazard(getLightStatus(8) == 1);
             Object dayTime = BydDeviceHelper.callGetter(lightDevice, "getDayTimeLightState");
             if (dayTime instanceof Number) b.dayTimeLight(((Number) dayTime).intValue() == 1);
+
+            if (settingDevice != null) {
+                // All area does not work. Using front IAL
+                Object ambient = BydDeviceHelper.callGetter(settingDevice, "getIALColor", 1);
+                if (ambient instanceof Number) b.ambientColour(((Number) ambient).intValue());
+            }
         } catch (Exception e) {
             logger.debug("collectLight error: " + e.getMessage());
         }
@@ -4318,6 +4325,15 @@ public class BydDataCollector {
                 return;
             }
 
+            if ((eventId == BydFeatureIds.SET_IAL_FRONT_COLOR || eventId == BydFeatureIds.SET_IAL_BACK_COLOR) && iVal >= 1 && iVal <= 31) {
+                // The event doesn't fire for the all area. Monitor front and back
+                BydVehicleData current = snapshot.get();
+                if (current != null) {
+                    snapshot.set(current.toBuilder().ambientColour(iVal).build());
+                }
+                return;
+            }
+
             // SDK reports 1=off, 2=low, 3=high for seats. Anything else is unknown — ignore.
             if (iVal < 1 || iVal > 3) return;
 
@@ -5470,6 +5486,17 @@ public class BydDataCollector {
             return result instanceof Integer && ((Integer) result).intValue() == 0;
         } catch (Exception e) {
             logger.debug("setDayTimeLight failed: " + e.getMessage());
+        }
+        return false;
+    }
+
+    public boolean setAmbientLight(int colour) {
+        try {
+            if (colour < 1 || colour > 31) return false;
+            Object result = BydDeviceHelper.callMethod(settingDevice, "setIALColor", colour);
+            return result instanceof Integer && ((Integer) result).intValue() == 0;
+        } catch (Exception e) {
+            logger.debug("setAmbientLight failed: " + e.getMessage());
         }
         return false;
     }

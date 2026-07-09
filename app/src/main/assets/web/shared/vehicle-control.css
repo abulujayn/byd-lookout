@@ -697,6 +697,58 @@
     -webkit-flex-shrink: 0; flex-shrink: 0;
 }
 
+/* Ambient lights colour slider */
+.ambient-wrapper {
+    display: flex;
+    flex-flow: column;
+    text-align: center;
+    margin: 0px 10px;
+}
+.ambient-title {
+    font-size: 8px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .3px;
+    color: inherit;
+    margin-bottom: 5px;
+}
+.vc-ambient-slider {
+    -webkit-appearance: none; appearance: none;
+    width: 220px;
+    height: 20px;
+    border-radius: 3px;
+    background: var(--vc-tile-bg);
+    outline: none;
+    margin: 0 6px;
+}
+.vc-ambient-slider:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+}
+.vc-ambient-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 15px; height: 15px;
+    border: 1px solid black;
+    border-radius: 50%;
+    background: var(--color, #00D4AA);
+    cursor: pointer;
+    box-shadow: 0 0 8px rgba(0,212,170,0.4);
+}
+.vc-ambient-slider::-moz-range-thumb {
+    width: 15px; height: 15px;
+    border: 1px solid black;
+    border-radius: 50%;
+    background: var(--color, #00D4AA);
+    cursor: pointer;
+    box-shadow: 0 0 8px rgba(0,212,170,0.4);
+}
+.vc-ambient-slider:disabled::-webkit-slider-thumb {
+    cursor: not-allowed;
+}
+.vc-ambient-slider:disabled::-moz-range-thumb {
+    cursor: not-allowed;
+}
+
 /* Charging panel — Schedule and Charge limit stacked, divider between. */
 .vc-charging-grid {
     display: -webkit-flex; display: flex;

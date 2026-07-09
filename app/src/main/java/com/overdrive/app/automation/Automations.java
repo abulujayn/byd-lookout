@@ -5,6 +5,7 @@ import com.overdrive.app.automation.action.Actions;
 import com.overdrive.app.automation.condition.Conditions;
 import com.overdrive.app.automation.condition.EventCondition;
 import com.overdrive.app.automation.condition.EventData;
+import com.overdrive.app.automation.condition.TimeEvent;
 import com.overdrive.app.automation.type.IntType;
 import com.overdrive.app.automation.type.Type;
 import com.overdrive.app.automation.value.IntValue;
@@ -58,6 +59,9 @@ public class Automations {
     static {
         // Load config from the file at startup
         loadFromFile();
+
+        // Start updating the current time in the state
+        TimeEvent.scheduleTimeEvent();
     }
 
     /**

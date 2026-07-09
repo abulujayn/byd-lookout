@@ -19,6 +19,7 @@
 window.BYD = window.BYD || {};
 
 const triggerIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg>';
+const copyIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
 const editIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
 const deleteIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
 const infoIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>';
@@ -169,6 +170,13 @@ BYD.automations = {
         triggerBtn.addEventListener('click', () => this.triggerAutomation(key));
         automationActions.append(triggerBtn);
 
+        const copyBtn = document.createElement('button');
+        copyBtn.classList.add(token + '-action', 'action', 'icon-btn');
+        copyBtn.title = BYD.i18n.t('automation.copy_automation');
+        copyBtn.innerHTML = copyIcon;
+        copyBtn.addEventListener('click', () => this.showForm(null, automation));
+        automationActions.append(copyBtn);
+
         const editBtn = document.createElement('button');
         editBtn.classList.add(token + '-action', 'action', 'icon-btn');
         editBtn.title = BYD.i18n.t('automation.edit_automation');
@@ -237,9 +245,8 @@ BYD.automations = {
                         const entryVars = entry.variables || {};
                         if (dataVars.length) result += '(';
                         for (const variable of dataVars) {
-                            const rawVal = entryVars[variable.id];
-                            const option = variable.options && variable.options.find(o => o.id === rawVal);
-                            result += variable.label + '=' + ((option && option.label != null) ? option.label : rawVal) + ',';
+                            result += this.automationValueToText(variable, entryVars[variable.id]);
+                            result += ',';
                         }
                         if (dataVars.length) result = result.slice(0, result.length - 1) + ') ';
 
@@ -250,10 +257,8 @@ BYD.automations = {
                             // not under entry.variables. Reading entry.variables[variable.id]
                             // (the old bug) yielded `undefined` for every comparator/value.
                             for (const variable of ['comparator', 'value']) {
-                                const rawVal = entry[variable];
-                                const spec = data[variable];
-                                const option = spec && spec.options && spec.options.find(o => o.id === rawVal);
-                                result += ((option && option.label != null) ? option.label : rawVal) + ' ';
+                                result += this.automationValueToText(data[variable], entry[variable]);
+                                result += ' ';
                             }
                         }
                     }
@@ -266,6 +271,13 @@ BYD.automations = {
             return BYD.i18n.t('automation.parse_error');
         }
         return result;
+    },
+
+    automationValueToText(spec, rawVal) {
+        const option = spec && spec.options && spec.options.find(o => o.id === rawVal);
+        if (option && option.label != null) return option.label;
+        if (spec && spec.type === 'time') return this.timeToString(rawVal);
+        return rawVal;
     },
 
     renderForm() {
@@ -466,6 +478,8 @@ BYD.automations = {
             case 'enum': return this.createEnumInput(data, defaultValue, eventListener);
             case 'string': return this.createStringInput(data, defaultValue, eventListener);
             case 'int': return this.createIntInput(data, defaultValue, eventListener);
+            case 'colour': return this.createColourInput(data, defaultValue, eventListener);
+            case 'time': return this.createTimeInput(data, defaultValue, eventListener);
             default: return this.createFallbackInput(data);
         }
     },
@@ -580,6 +594,71 @@ BYD.automations = {
         input.addEventListener('change', changeEvent);
         changeEvent();
         return input;
+    },
+
+    createColourInput(data, defaultValue, eventListener) {
+        const input = document.createElement('input');
+        input.classList.add('input', 'colour');
+        input.type = 'range';
+        input.placeholder = data.label;
+        const min = 1;
+        const max = (data.colourCodes != null && data.colourCodes.length) ? data.colourCodes.length : 1;
+        input.min = min;
+        input.max = max;
+        if (defaultValue != null && !isNaN(defaultValue)) {
+            input.value = defaultValue
+        } else {
+            input.value = 1;
+        }
+        if (data.colourCodes) input.style.background = `linear-gradient(to right, ${data.colourCodes.join(',')})`;
+        // Add invalid class if the selected value is not within the min and max
+        const changeEvent = () => {
+            const value = parseInt(input.value, 10);
+            if (!isNaN(value) && value >= min && value <= max) {
+                input.classList.toggle('invalid', false);
+                if (data.colourCodes) input.style.setProperty('--color', data.colourCodes[value - 1]);
+                if (eventListener) eventListener(input, value);
+            } else {
+                input.classList.toggle('invalid', true);
+            }
+        };
+        input.addEventListener('input', changeEvent);
+        changeEvent();
+        return input;
+    },
+
+    createTimeInput(data, defaultValue, eventListener) {
+        const input = document.createElement('input');
+        input.classList.add('input', 'time');
+        input.type = 'time';
+        input.placeholder = data.label;
+        if (defaultValue != null && !isNaN(defaultValue)) {
+            input.value = this.timeToString(defaultValue);
+        }
+        // Add invalid class if the selected value is not a valid time
+        const changeEvent = () => {
+            const time = input.value;
+            let value = null;
+            if (time) {
+                const split = time.split(':');
+                value = parseInt(split[0], 10) * 60 + parseInt(split[1], 10);
+            }
+            if (value != null && !isNaN(value) && value >= 0 && value < 60 * 24) {
+                input.classList.toggle('invalid', false);
+                if (eventListener) eventListener(input, value);
+            } else {
+                input.classList.toggle('invalid', true);
+            }
+        };
+        input.addEventListener('input', changeEvent);
+        changeEvent();
+        return input;
+    },
+
+    timeToString(value) {
+        const hours = Math.floor(value / 60);
+        const mins = value % 60;
+        return String(hours).padStart(2, '0') + ':' + String(mins).padStart(2, '0');
     },
 
     _switchTab(id) {

@@ -38,6 +38,10 @@ public class BydEvent {
     public static final EventData SEAT_COOL_PASSENGER = new EventData("seatClimate", Map.of("type", "cool", "area", "passenger"));
     public static final EventData AC = new EventData("ac");
     public static final EventData TEMPERATURE = new EventData("temperature");
+    public static final EventData SPEED_KMPH = new EventData("speed", Map.of("units", "kmph"));
+    public static final EventData SPEED_MPH = new EventData("speed", Map.of("units", "mph"));
+    public static final EventData TIME = new EventData("time");
+    public static final EventData DAY = new EventData("day");
 
     private BydEvent() {}
 
@@ -103,6 +107,10 @@ public class BydEvent {
         boolean poweredOn = data.powerLevel >= 2;
         Automations.update(AC, (poweredOn && data.acStartState == 1) ? "on" : "off");
         if (!Double.isNaN(data.insideTempC)) Automations.update(TEMPERATURE, (int) data.insideTempC);
+        if (!Double.isNaN(data.speedKmh)) {
+            Automations.update(SPEED_KMPH, (int) Math.round(data.speedKmh));
+            Automations.update(SPEED_MPH, (int) Math.round(data.speedKmh * 0.621371));
+        }
     }
 
     /**

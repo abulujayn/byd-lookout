@@ -3,6 +3,7 @@ package com.overdrive.app.server;
 import com.overdrive.app.byd.BydDataCollector;
 import com.overdrive.app.byd.BydVehicleData;
 import com.overdrive.app.byd.cloud.BydCloudConfig;
+import com.overdrive.app.byd.light.LightConstants;
 import com.overdrive.app.byd.routing.VehicleCommandRouter;
 import com.overdrive.app.byd.routing.VehicleCommandRouter.CommandResult;
 import com.overdrive.app.byd.routing.VehicleCommandRouter.VehicleCommand;
@@ -344,6 +345,8 @@ public class VehicleControlApiHandler {
         lights.put("highBeam", data.highBeam);
         lights.put("hazard", data.hazard);
         lights.put("dayTimeLight", data.dayTimeLight);
+        lights.put("ambientOptions", new JSONArray(LightConstants.AMBIENT_COLOURS));
+        lights.put("ambientColour", data.ambientColour);
         response.put("lights", lights);
 
         // ADAS
@@ -720,25 +723,35 @@ public class VehicleControlApiHandler {
     /**
      * Light controls — SDK_ONLY routed.
      * Body: { "target": "dayTimeLight", "enable": true|false }
+     * Body: { "target": "ambientColour", "value": 0-31 }
      */
     private static void handleLights(OutputStream out, String body) throws Exception {
         JSONObject response = new JSONObject();
         try {
             JSONObject req = new JSONObject(body);
             String target = req.optString("target", null);
-            boolean enable = req.optBoolean("enable", true);
-            if (!"dayTimeLight".equals(target)) {
-                response.put("success", false);
-                response.put("error", Messages.get("errors.vehicle_unsupported_target_with_target", target));
-                HttpResponse.sendJson(out, response.toString());
-                return;
+            VehicleCommand cmd;
+            switch (target) {
+                case "dayTimeLight": {
+                    boolean enable = req.optBoolean("enable", true);
+                    cmd = new VehicleCommandRouter.LightsCommand(enable);
+                    break;
+                }
+                case "ambientColour": {
+                    int value = req.optInt("value", 1);
+                    cmd = new VehicleCommandRouter.AmbientColourCommand(value);
+                    break;
+                }
+                default:
+                    response.put("success", false);
+                    response.put("error", Messages.get("errors.vehicle_unsupported_target_with_target", target));
+                    HttpResponse.sendJson(out, response.toString());
+                    return;
             }
-            CommandResult r = VehicleCommandRouter.getInstance()
-                    .execute(new VehicleCommandRouter.LightsCommand(enable));
-            logger.info("Lights: target=dayTimeLight enable=" + enable + " " + r.outcome);
+            CommandResult r = VehicleCommandRouter.getInstance().execute(cmd);
+            logger.info("Lights: target=" + target + " " + r.outcome);
             JSONObject resp = routedResponse(r, "lights");
             resp.put("target", target);
-            resp.put("enable", enable);
             HttpResponse.sendJson(out, resp.toString());
         } catch (Exception e) {
             logger.warn("Light command failed: " + e.getMessage());

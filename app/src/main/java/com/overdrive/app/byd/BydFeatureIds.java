@@ -126,6 +126,8 @@ public final class BydFeatureIds {
     public static final int LIGHT_ATMOSPHERE_CUSTOM_COLOR = resolveOrFallback("Light.ATMOSPHERE_CUSTOM_COLOR", 657457168);
     public static final int LIGHT_ATMOSPHERE_CUSTOM_COLOR_SET = resolveOrFallback("Light.ATMOSPHERE_CUSTOM_COLOR_SET", 1276194864);
     public static final int LIGHT_DAY_RUNNING_LIGHT_AUTO_STATE = resolveOrFallback("Light.LIGHT_DAY_RUNNING_LIGHT_AUTO_STATE", 985661476);
+    public static final int SET_IAL_FRONT_COLOR = resolveOrFallback("Setting.SET_IAL_FRONT_COLOR", 1121976336);
+    public static final int SET_IAL_BACK_COLOR = resolveOrFallback("Setting.SET_IAL_BACK_COLOR", 1121976343);
 
     // ==================== INSTRUMENT ====================
     public static final int INSTRUMENT_DD_MAIN_SAFETYBELT_STATE = resolveOrFallback("Instrument.INSTRUMENT_DD_MAIN_SAFETYBELT_STATE", 692060184);

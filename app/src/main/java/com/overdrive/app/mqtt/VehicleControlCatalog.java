@@ -355,6 +355,12 @@ public final class VehicleControlCatalog {
         register(sw("drl", "Daytime Running Lights", "mdi:car-light-dimmed", null, "light_drl", "1", "0",
                 (sub, payload, snap) -> ControlAction.of(new VehicleCommandRouter.LightsCommand(truthy(payload)))));
 
+        // ── Ambient lights colour — number (real state) ────────────────
+        register(number("ambient_colour", "Ambient Lights Colour", "mdi:format-color-fill", "config",
+                "ambient_colour", 1, 31, 1, "", (sub, payload, snap) -> {
+                    return ControlAction.of(new VehicleCommandRouter.AmbientColourCommand(pInt(payload, 1)));
+                }));
+
         // ── ADAS speed-limit warning — switch (real state) ──────────────
         register(sw("adas_slw", "Speed Limit Warning", "mdi:speedometer-slow", "config", "speed_limit_warning",
                 "1", "0", (sub, payload, snap) ->

@@ -2,6 +2,7 @@ package com.overdrive.app.automation.condition;
 
 import com.overdrive.app.automation.type.EnumType;
 import com.overdrive.app.automation.type.IntType;
+import com.overdrive.app.automation.type.TimeType;
 import com.overdrive.app.automation.value.Label;
 import com.overdrive.app.server.Messages;
 
@@ -110,6 +111,30 @@ public class Conditions {
                 new Label("temperature", "automation.temperature"),
                 "automation.temperature_description",
                 new IntType(new Label("celsius", "automation.celsius"), 0, 100)));
+        addCondition(new EventCondition(
+                new Label("speed", "automation.speed"),
+                "automation.speed_description",
+                new IntType(new Label("speed", "automation.speed"), 0, 200),
+                new EnumType(
+                        new Label("units", "automation.units"),
+                        new Label("kmph", "automation.kmph"),
+                        new Label("mph", "automation.mph"))));
+        addCondition(new EventCondition(
+                new Label("time", "automation.time"),
+                "automation.time_description",
+                new TimeType(new Label("time", "automation.time"))));
+        addCondition(new EventCondition(
+                new Label("day", "automation.day"),
+                "automation.day_description",
+                new EnumType(
+                        new Label("day", "automation.day"),
+                        new Label("monday", "automation.monday"),
+                        new Label("tuesday", "automation.tuesday"),
+                        new Label("wednesday", "automation.wednesday"),
+                        new Label("thursday", "automation.thursday"),
+                        new Label("friday", "automation.friday"),
+                        new Label("saturday", "automation.saturday"),
+                        new Label("sunday", "automation.sunday"))));
     }
 
     /**
