@@ -115,6 +115,21 @@
                             </div>
                         </div>
 
+                        <!-- Arm mode: Lock (arm on door-lock) vs Power (arm on power-off) -->
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-name" data-i18n="surveillance.arm_mode">Arm Mode</div>
+                                <div class="setting-desc" data-i18n="surveillance.arm_mode_desc">When surveillance arms after the car powers off. Both modes honor safe locations and schedules.</div>
+                            </div>
+                            <div class="setting-control">
+                                <div class="btn-group" id="armModeBtns">
+                                    <button class="btn-toggle" data-value="lock" onclick="SurvSettings.setArmMode('lock')" data-i18n="surveillance.arm_lock">On Lock</button>
+                                    <button class="btn-toggle" data-value="power" onclick="SurvSettings.setArmMode('power')" data-i18n="surveillance.arm_power">On Power-Off</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="setting-hint" id="armModeHint" data-i18n="surveillance.arm_hint_lock">Arms when you lock the doors and disarms when you unlock (so it won't record you). If your car can't report lock status, it arms 60s after power-off as a fallback.</div>
+
                         <!-- ACC-OFF mode: Smart (motion + AI events) vs Continuous (plain rolling) -->
                         <div class="setting-row">
                             <div class="setting-info">
@@ -376,6 +391,21 @@
                             </div>
                         </div>
                         <div class="setting-hint" id="discardEmptyMotionHint" data-i18n="surveillance.discard_empty_motion_hint">Good if you get false alerts from shadows or tree-branch movement — these clips are deleted automatically when nothing real was tracked. Caution: in low light or unclear conditions it can occasionally discard a real threat the AI failed to identify. Leave off if you'd rather keep every recording.</div>
+
+                        <!-- Also discard at night (sub-toggle of the above) -->
+                        <div class="setting-row" id="discardEmptyMotionNightRow" style="padding-left:16px;">
+                            <div class="setting-info">
+                                <div class="setting-name" data-i18n="surveillance.discard_empty_motion_night">Also discard at night</div>
+                                <div class="setting-desc" data-i18n="surveillance.discard_empty_motion_night_desc">Extend the filter to dark scenes using motion shape instead of brightness</div>
+                            </div>
+                            <div class="setting-control">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="v2DiscardEmptyMotionNight" onchange="SurvSettings.updateDiscardEmptyMotionAtNight()">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="setting-hint" id="discardEmptyMotionNightHint" data-i18n="surveillance.discard_empty_motion_night_hint">By default the filter only runs in daylight, because in the dark the AI can miss a real person entirely. With this on, night clips are discarded only when the motion looks like wind-blown foliage or a lighting change (headlights, reflections) and never translated across the scene like a person would. Higher chance of dropping a real night-time event than the daytime filter — leave off if in doubt.</div>
 
                         <!-- Camera Controls -->
                         <div class="setting-row" style="border-bottom:none;">
@@ -1361,7 +1391,7 @@
     <script src="../shared/pwa-init.js?v=index1"></script>
     <script src="../shared/core.js"></script>
     <script src="../shared/update-flow.js"></script>
-    <script src="../shared/surveillance.js?v=survqualsplit1"></script>
+    <script src="../shared/surveillance.js?v=nightdiscard1"></script>
     <script src="../shared/safe-locations.js"></script>
     <script src="../shared/roi-schedule.js"></script>
     <script>

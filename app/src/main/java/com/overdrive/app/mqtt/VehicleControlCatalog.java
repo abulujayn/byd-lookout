@@ -355,19 +355,29 @@ public final class VehicleControlCatalog {
         register(sw("drl", "Daytime Running Lights", "mdi:car-light-dimmed", null, "light_drl", "1", "0",
                 (sub, payload, snap) -> ControlAction.of(new VehicleCommandRouter.LightsCommand(truthy(payload)))));
 
-        // ── Ambient lights colour — number (real state) ────────────────
+        // ── Ambient lights colour — number (real state, 1-based palette index) ──
         register(number("ambient_colour", "Ambient Lights Colour", "mdi:format-color-fill", "config",
-                "ambient_colour", 1, 31, 1, "", (sub, payload, snap) -> {
-                    return ControlAction.of(new VehicleCommandRouter.AmbientColourCommand(pInt(payload, 1)));
-                }));
+                "ambient_colour", 1, 31, 1, "", (sub, payload, snap) ->
+                        ControlAction.of(new VehicleCommandRouter.AmbientColourCommand(pInt(payload, 1)))));
 
         // ── ADAS speed-limit warning — switch (real state) ──────────────
         register(sw("adas_slw", "Speed Limit Warning", "mdi:speedometer-slow", "config", "speed_limit_warning",
                 "1", "0", (sub, payload, snap) ->
                         ControlAction.of(new VehicleCommandRouter.AdasSpeedLimitWarningCommand(truthy(payload)))));
 
+        // ── Electronic Stability Program (ESP/ESC) — switch ──────────────
+        // SAFETY control. State published to esp_state (1=on/0=off); the ESP feature
+        // id is a resolveOrFallback guess (unconfirmed on this firmware) — verify via
+        // GET /api/vehicle/adas before relying on it. No "problem" device_class: ESP
+        // ON is the desired/normal state.
+        register(sw("esp_control", "Stability Control (ESP)", "mdi:car-traction-control", "config", "esp_state",
+                "1", "0", (sub, payload, snap) ->
+                        ControlAction.of(new VehicleCommandRouter.AdasEspCommand(truthy(payload)))));
+
         // ── ADAS child presence detection — switch (real state) ──────────────
-        // TODO: stateKey is not a boolean. Is that an issue?
+        // State is published as 1/0 to child_presence_detection (see MqttConnectionManager +
+        // TelemetryFieldCatalog): the raw SDK value 1=on/2=off/3=delay is normalized there, so
+        // state_on="1"/state_off="0" here match the wire value. Command maps on→1, off→2.
         register(sw("adas_cpd", "Child Presence Detection", "mdi:car-child-seat", "config", "child_presence_detection",
                 "1", "0", (sub, payload, snap) ->
                         ControlAction.of(new VehicleCommandRouter.SettingChildPresenceDetectionCommand(truthy(payload) ? 1 : 2))));

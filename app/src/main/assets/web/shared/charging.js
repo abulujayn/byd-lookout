@@ -430,11 +430,17 @@ var CHARGING = {
 
                 var kind = self._typeKind(s);
                 var typeLabel = self._typeLabel(s);
-                // Power chip: live measured power while charging (the stored peak
-                // can be a stale estimate), else the session peak. 1-decimal so a
-                // 6.1 kW charge doesn't round up to a misleading "6 kW" / "7 kW".
-                var chipKw = (s.inProgress === true && s.livePowerKw > 0) ? s.livePowerKw
-                           : (s.peakPower != null && s.peakPower > 0 ? s.peakPower : 0);
+                // Power chip: the session PEAK power — the SAME value _typeKind
+                // classifies on, so the chip number can never contradict the AC
+                // fast/slow (or DC) label. (Previously showed the live instantaneous
+                // draw while charging, which diverged from the peak-based tier: a
+                // 6.5 kW live reading under an 11 kW peak rendered "6.5 kW · AC fast",
+                // and a live spike under a low peak the reverse.) The stale-estimate
+                // concern that motivated the live reading is now handled server-side —
+                // peakPower is overwritten with the real sample-measured max for
+                // in-progress sessions and estimated placeholders no longer seed it.
+                // 1-decimal so a 6.1 kW charge doesn't round to a misleading "6"/"7".
+                var chipKw = (s.peakPower != null && s.peakPower > 0) ? s.peakPower : 0;
                 var peakStr = chipKw > 0 ? chipKw.toFixed(1) + ' kW' : '';
                 var energy = (s.energyAdded && s.energyAdded > 0) ? '+' + s.energyAdded.toFixed(1) + ' kWh' : '--';
                 var socRange = (s.startSoc != null && s.endSoc != null && s.endSoc > 0)
@@ -442,6 +448,8 @@ var CHARGING = {
                     : '';
                 var dur = (s.durationMinutes != null) ? self._fmtDuration(s.durationMinutes) : '';
                 var costStr = (s.cost != null && s.cost > 0) ? self._money(s.cost) : '';
+                // Odometer at charge start (unit-aware), only when captured (>0).
+                var odoStr = (s.startOdometerKm != null && s.startOdometerKm > 0) ? self._dist(s.startOdometerKm) : '';
                 var locStr = self._locationLabel(s);   // place name, else coords, else ''
                 var inProgress = s.inProgress === true;
 
@@ -479,6 +487,7 @@ var CHARGING = {
                         (socRange ? '<span>' + socRange + '</span>' : '') +
                         (timeRange ? '<span>' + self._esc(timeRange) + '</span>' : '') +
                         (dur ? '<span>' + dur + '</span>' : '') +
+                        (odoStr ? '<span>' + self._t('charge.odometer_short', 'ODO') + ' ' + odoStr + '</span>' : '') +
                     '</div>' +
                     '<button class="session-delete-btn" title="' + self._t('charge.delete_session_title', 'Delete session') + '">' +
                         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>' +
@@ -731,6 +740,7 @@ var CHARGING = {
         this._setText('detailAvgPower', (s.avgPower != null && s.avgPower > 0) ? s.avgPower.toFixed(1) + ' kW' : '--');
         this._setText('detailPeakPower', (s.peakPower != null && s.peakPower > 0) ? s.peakPower.toFixed(1) + ' kW' : '--');
         this._setText('detailRangeGained', (s.rangeGained != null && s.rangeGained > 0) ? this._dist(s.rangeGained) : '--');
+        this._setText('detailOdometer', (s.startOdometerKm != null && s.startOdometerKm > 0) ? this._dist(s.startOdometerKm) : '--');
         this._setText('detailCost', (s.cost != null && s.cost > 0) ? this._money(s.cost) : '--');
         this._setText('detailType', this._typeLabel(s));
         this._setText('detailTimeToFull', (s.timeToFullMin != null && s.timeToFullMin > 0)

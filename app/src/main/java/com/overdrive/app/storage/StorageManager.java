@@ -478,8 +478,33 @@ public class StorageManager {
     // throttling is independent.
     private ScheduledExecutorService sdCardWatchdog;
     private static final long SD_WATCHDOG_INTERVAL_SECONDS = 15;
-    private int sdWatchdogConsecutiveFailures = 0;
-    private int usbWatchdogConsecutiveFailures = 0;
+    // volatile: written by the VolumeWatchdog thread AND (on a successful ACC-ON
+    // remount) by the AccOnRemount thread — see remountExternalOnAccOn. Without
+    // volatile the watchdog may never observe the ACC-ON reset (no happens-before
+    // between the two threads), leaving a stale failure streak. These gate only
+    // log verbosity + remount eagerness, so the `++`/reset are not made atomic;
+    // volatile is sufficient for the visibility that matters here.
+    private volatile int sdWatchdogConsecutiveFailures = 0;
+    private volatile int usbWatchdogConsecutiveFailures = 0;
+
+    // Serializes the volume mount/discovery path. ensureVolumeMounted() and
+    // discoverVolumes() fork `sm mount`/`sm list-volumes` and then commit the
+    // (sdCardPath, sdCardAvailable) / (usbPath, usbAvailable) pairs as separate
+    // volatile writes — group-atomic only against a single pass. Multiple
+    // unsynchronized entrants (the 15s VolumeWatchdog, the ACC-OFF force-remount,
+    // the constructor's StorageMountInit thread, ensureStorageReady, and now the
+    // ACC-ON remount) could interleave into a torn commit — e.g. sdCardAvailable
+    // =true with sdCardPath=null, which resolveActive() then treats as
+    // "available but no dir" and silently falls back to internal for the whole
+    // session (the phantom-unmount failure the discoverVolumes staging comment
+    // guards a single pass against, but which staging alone can't stop across two
+    // passes). This lock makes the whole mount/discovery critical section
+    // single-entry. Lock ORDER: mountLock is always acquired OUTSIDE the
+    // per-category cleanup locks — ensureVolumeMounted/discoverVolumes call
+    // updateActiveDirectories() (which takes the cleanup locks) while holding
+    // mountLock, and no cleanup-lock holder ever calls back into the mount path,
+    // so the ordering is one-way and deadlock-free.
+    private final Object mountLock = new Object();
     private static final int SD_WATCHDOG_MAX_VERBOSE_FAILURES = 5;  // Log verbosely for first 5 failures
     private static final int SD_WATCHDOG_QUIET_LOG_INTERVAL = 20;   // Then log every 20th attempt (~5 min)
 
@@ -498,8 +523,15 @@ public class StorageManager {
     // run; only the recorder-disturbing recovery is gated). Reset to false on a
     // successful remount so a card that returns and drops AGAIN recovers each
     // cycle. Per-rail so SD and USB latch independently.
-    private boolean sdFallbackRecoveryDone = false;
-    private boolean usbFallbackRecoveryDone = false;
+    // volatile: written by the VolumeWatchdog thread AND (re-armed to false on a
+    // successful ACC-ON remount) by the AccOnRemount thread. Non-volatile, the
+    // watchdog could keep a cached `true` and SKIP the one-time recorder→internal
+    // fallback recovery when the card drops AGAIN later in the drive — the
+    // recorder would keep writing to the vanished SD path and no segment would
+    // ever finalize (the zero-files-for-the-park failure this latch's re-arm
+    // exists to prevent).
+    private volatile boolean sdFallbackRecoveryDone = false;
+    private volatile boolean usbFallbackRecoveryDone = false;
 
     // Rate-limit for the raw `sm list-volumes` diagnostic dump. The fingerprint
     // line (publicRows=N matchedRows=M) is cheap and stays at logInfo on every
@@ -757,6 +789,16 @@ public class StorageManager {
      * @param force       attempt even if already mounted (for remount cases)
      */
     private boolean ensureVolumeMounted(String targetClass, boolean force) {
+        // Serialize the whole mount/discovery critical section against the
+        // watchdog / ACC-OFF / ACC-ON / constructor entrants (see mountLock).
+        // Reentrant: the body calls discoverVolumes(), whose wrapper re-acquires
+        // the same intrinsic lock — Java monitors are reentrant, so that's safe.
+        synchronized (mountLock) {
+            return ensureVolumeMountedLocked(targetClass, force);
+        }
+    }
+
+    private boolean ensureVolumeMountedLocked(String targetClass, boolean force) {
         boolean isSd = "SD".equals(targetClass);
         String currentPath = isSd ? sdCardPath : usbPath;
         boolean currentAvailable = isSd ? sdCardAvailable : usbAvailable;
@@ -790,8 +832,9 @@ public class StorageManager {
         // discoverVolumes()'s /proc/mounts pass already does the right thing,
         // but the mount path didn't share that knowledge. Run a discovery
         // pass FIRST; if it commits the field for our class, we're done.
+        // Call the ...Locked form directly — we already hold mountLock.
         try {
-            discoverVolumes();
+            discoverVolumesLocked();
             if (isSd && sdCardAvailable && sdCardPath != null
                     && isPathLikelyMounted(sdCardPath)) {
                 logInfo(targetClass + " already mounted via /proc/mounts: " + sdCardPath);
@@ -1008,7 +1051,7 @@ public class StorageManager {
                     Thread.currentThread().interrupt();
                     break;
                 }
-                discoverVolumes();
+                discoverVolumesLocked();  // already hold mountLock
                 if (sdCardAvailable && sdCardPath != null
                         && isPathLikelyMounted(sdCardPath)) {
                     logInfo("Kernel fallback: SD picked up after " + (i + 1) + "s at " + sdCardPath);
@@ -1024,7 +1067,7 @@ public class StorageManager {
         }
 
         // Re-run discovery in case mount succeeded but we missed it
-        discoverVolumes();
+        discoverVolumesLocked();  // already hold mountLock
         return isSd ? sdCardAvailable : usbAvailable;
     }
 
@@ -1609,6 +1652,17 @@ public class StorageManager {
      * removed — they were the source of the SD/USB confusion.
      */
     public void discoverVolumes() {
+        // Serialize against concurrent mount/discovery entrants so the staged→
+        // committed field writes below (foundSd*/foundUsb* → sdCard*/usb*) can't
+        // interleave with another pass into a torn commit. Reentrant: reached both
+        // directly and from inside ensureVolumeMountedLocked (already holding the
+        // lock) — Java intrinsic locks are reentrant, so both paths are safe.
+        synchronized (mountLock) {
+            discoverVolumesLocked();
+        }
+    }
+
+    private void discoverVolumesLocked() {
         // Stage detection in local vars — only commit to fields on success.
         // Previously we nulled sdCardPath / sdCardAvailable at the top, which
         // meant any transient failure mid-detect (sm timeout, isMountWritable
@@ -2002,19 +2056,30 @@ public class StorageManager {
      * Initialize SD card directories if SD card is available.
      */
     private void initSdCardDirectories() {
-        if (!sdCardAvailable || sdCardPath == null) {
-            sdCardRecordingsDir = null;
-            sdCardSurveillanceDir = null;
-            sdCardProximityDir = null;
-            sdCardTripsDir = null;
-            return;
-        }
-        File[] dirs = initVolumeDirectories(sdCardPath, "SD card");
-        if (dirs != null) {
-            sdCardRecordingsDir   = dirs[0];
-            sdCardSurveillanceDir = dirs[1];
-            sdCardProximityDir    = dirs[2];
-            sdCardTripsDir        = dirs[3];
+        // Under mountLock: this reads the (sdCardAvailable, sdCardPath) pair and
+        // derives the sdCard*Dir fields from it. It is called both from inside the
+        // locked mount/discovery path (reentrant — already holds the lock) AND from
+        // unlocked callers (ensureStorageReady, refreshUsb, the constructor, the
+        // watchdog success branch). Without the lock, an unlocked caller could
+        // observe a half-committed (available=true, path=null) pair mid-remount and
+        // null the derived dirs — leaving the recorder pointed at internal even
+        // after the card is back. Serializing here keeps the derived dirs coherent
+        // with the same critical section that commits their source-of-truth pair.
+        synchronized (mountLock) {
+            if (!sdCardAvailable || sdCardPath == null) {
+                sdCardRecordingsDir = null;
+                sdCardSurveillanceDir = null;
+                sdCardProximityDir = null;
+                sdCardTripsDir = null;
+                return;
+            }
+            File[] dirs = initVolumeDirectories(sdCardPath, "SD card");
+            if (dirs != null) {
+                sdCardRecordingsDir   = dirs[0];
+                sdCardSurveillanceDir = dirs[1];
+                sdCardProximityDir    = dirs[2];
+                sdCardTripsDir        = dirs[3];
+            }
         }
     }
 
@@ -2022,19 +2087,24 @@ public class StorageManager {
      * Initialize USB directories if USB drive is available.
      */
     private void initUsbDirectories() {
-        if (!usbAvailable || usbPath == null) {
-            usbRecordingsDir = null;
-            usbSurveillanceDir = null;
-            usbProximityDir = null;
-            usbTripsDir = null;
-            return;
-        }
-        File[] dirs = initVolumeDirectories(usbPath, "USB");
-        if (dirs != null) {
-            usbRecordingsDir   = dirs[0];
-            usbSurveillanceDir = dirs[1];
-            usbProximityDir    = dirs[2];
-            usbTripsDir        = dirs[3];
+        // Under mountLock — same rationale as initSdCardDirectories (keep the
+        // derived usb*Dir fields coherent with the locked (usbAvailable, usbPath)
+        // commit; reentrant for the in-lock callers).
+        synchronized (mountLock) {
+            if (!usbAvailable || usbPath == null) {
+                usbRecordingsDir = null;
+                usbSurveillanceDir = null;
+                usbProximityDir = null;
+                usbTripsDir = null;
+                return;
+            }
+            File[] dirs = initVolumeDirectories(usbPath, "USB");
+            if (dirs != null) {
+                usbRecordingsDir   = dirs[0];
+                usbSurveillanceDir = dirs[1];
+                usbProximityDir    = dirs[2];
+                usbTripsDir        = dirs[3];
+            }
         }
     }
 
@@ -2986,6 +3056,16 @@ public class StorageManager {
         // and saveConfig persistence. configChangeLock is shared with the
         // peer setSurveillance/setTrips methods so cross-category races
         // are also serialized (saveConfig is a single shared file write).
+        //
+        // LOCK ORDER (mountLock → configChangeLock): this method holds
+        // configChangeLock AND calls the mount path (ensureExternalAvailable →
+        // ensureVolumeMounted, which takes mountLock). Meanwhile the mount path's
+        // reclampLimitsToMountedCeilings() takes configChangeLock while holding
+        // mountLock. Acquiring mountLock FIRST here makes the global order one-way
+        // (mountLock → configChangeLock) so those two can't deadlock. Both locks
+        // are reentrant, so the nested ensureVolumeMounted re-acquires mountLock
+        // harmlessly.
+        synchronized (mountLock) {
         synchronized (configChangeLock) {
         if (!ensureExternalAvailable(type, "recordings")) return false;
 
@@ -3139,6 +3219,7 @@ public class StorageManager {
         }
         return true;
         } // end synchronized(configChangeLock) — FIX audit R8 LOW
+        } // end synchronized(mountLock) — lock order mountLock → configChangeLock
     }
 
     /**
@@ -3149,6 +3230,8 @@ public class StorageManager {
     public boolean setSurveillanceStorageType(StorageType type) {
         // FIX (audit R8, LOW): peer setter — share configChangeLock with
         // setRecordingsStorageType / setTripsStorageType.
+        // LOCK ORDER (mountLock → configChangeLock): see setRecordingsStorageType.
+        synchronized (mountLock) {
         synchronized (configChangeLock) {
         if (!ensureExternalAvailable(type, "surveillance")) return false;
 
@@ -3198,6 +3281,7 @@ public class StorageManager {
         }
         return true;
         } // end synchronized(configChangeLock) — FIX audit R8 LOW
+        } // end synchronized(mountLock) — lock order mountLock → configChangeLock
     }
 
     /**
@@ -3209,6 +3293,8 @@ public class StorageManager {
     public boolean setTripsStorageType(StorageType type) {
         // FIX (audit R8, LOW): peer setter — share configChangeLock with
         // setRecordingsStorageType / setSurveillanceStorageType.
+        // LOCK ORDER (mountLock → configChangeLock): see setRecordingsStorageType.
+        synchronized (mountLock) {
         synchronized (configChangeLock) {
         if (!ensureExternalAvailable(type, "trips")) return false;
 
@@ -3247,6 +3333,7 @@ public class StorageManager {
         }
         return true;
         } // end synchronized(configChangeLock) — FIX audit R8 LOW
+        } // end synchronized(mountLock) — lock order mountLock → configChangeLock
     }
 
     /**
@@ -3333,6 +3420,99 @@ public class StorageManager {
         initUsbDirectories();
         updateActiveDirectories();
         logInfo("Volume refresh complete. SD=" + sdCardAvailable + ", USB=" + usbAvailable);
+    }
+
+    /**
+     * ACC-ON active remount of the configured external volume(s).
+     *
+     * <p>BYD unmounts the USB-bridged SD (SCSI major 8) across the ACC-off→on
+     * wake — the reader's power rail follows AP/display wake, so the USB bus
+     * re-enumerates and the card drops for the first several seconds of the
+     * drive (see project_sd_drop_safezone_no_pipeline). The ACC-OFF handler
+     * force-remounts (CameraDaemon ~3708), but historically the ACC-ON handler
+     * did NOT — it left recovery entirely to the free-running 15s VolumeWatchdog,
+     * which needs TWO consecutive failed ticks (the two-strikes anti-flap rule)
+     * before it even attempts a remount, and that remount then races the
+     * documented 4-15s slow-mount tail of a re-powering bridged reader. Net: a
+     * 30s+ window where the card reads "not detected" with the car ON — exactly
+     * the user-reported symptom. This mirrors the ACC-OFF force-remount so the
+     * card is actively driven back at wake instead of waited on.
+     *
+     * <p>Only touches a volume class that a storage type is actually configured
+     * for (raw configured type — the getters return the un-normalized field, so
+     * a card that is currently unmounted still reports SD_CARD here). No-ops
+     * fully when everything is on INTERNAL. force=true so a stale
+     * mounted-but-dead handle is torn down and re-established.
+     *
+     * <p>Resets the two-strikes watchdog counters + one-shot internal-fallback
+     * latches so a successful remount here is treated as a clean session (a
+     * later drop re-runs the watchdog's recovery once more) and the watchdog
+     * doesn't immediately re-log a stale failure streak. Blocking (up to the
+     * per-class mount ceiling) — callers on a latency-sensitive path (the ACC-ON
+     * handler) MUST invoke this off-thread; the ACC-OFF handler already blocks on
+     * the equivalent call so the cost is well-characterised.
+     *
+     * @return true if every configured external class is mounted afterwards.
+     */
+    public boolean remountExternalOnAccOn() {
+        boolean anyOnSd  = surveillanceStorageType == StorageType.SD_CARD ||
+                           recordingsStorageType   == StorageType.SD_CARD ||
+                           tripsStorageType        == StorageType.SD_CARD;
+        boolean anyOnUsb = surveillanceStorageType == StorageType.USB ||
+                           recordingsStorageType   == StorageType.USB ||
+                           tripsStorageType        == StorageType.USB;
+        if (!anyOnSd && !anyOnUsb) {
+            return true;  // all-internal: nothing bridged to re-power
+        }
+
+        boolean ok = true;
+        if (anyOnSd) {
+            // NB: intentionally NO isSdCardPhysicallyPresent() fast-out here. On
+            // the SCSI/USB-bridged readers this fix targets, that probe is
+            // documented UNRELIABLE (it never surfaces under /sys/class/mmc_host,
+            // and sys.byd.isSDExist can read 'false' for a seated bridged card —
+            // see isSdCardPhysicallyPresent's own caveats and
+            // project_sd_drop_safezone_no_pipeline). Gating on it would skip the
+            // remount for exactly the hardware that needs it — self-defeating. The
+            // cost of an unconditional attempt when the slot is genuinely empty is
+            // ~4s of bounded shell forks, once per real ACC-ON edge (CAS-guarded,
+            // not per heartbeat), matching the equally-ungated ACC-OFF branch.
+            logInfo("ACC ON: force-remounting SD card (bridged reader may have dropped across wake)...");
+            boolean sdOk = ensureSdCardMounted(true);
+            if (sdOk) {
+                // Clean session: clear the anti-flap streak + one-shot recovery
+                // latch so the watchdog doesn't re-log a stale failure count and
+                // a later drop re-runs its internal-fallback recovery once more.
+                sdWatchdogConsecutiveFailures = 0;
+                sdFallbackRecoveryDone = false;
+                logInfo("ACC ON: SD card remounted (" + sdCardPath + ")");
+            } else {
+                logWarn("ACC ON: SD remount failed — VolumeWatchdog will keep retrying, using internal until it lands");
+            }
+            ok &= sdOk;
+        }
+        if (anyOnUsb) {
+            logInfo("ACC ON: force-remounting USB drive (bridged reader may have dropped across wake)...");
+            boolean usbOk = ensureUsbMounted(true);
+            if (usbOk) {
+                usbWatchdogConsecutiveFailures = 0;
+                usbFallbackRecoveryDone = false;
+                logInfo("ACC ON: USB drive remounted (" + usbPath + ")");
+            } else {
+                logWarn("ACC ON: USB remount failed — VolumeWatchdog will keep retrying, using internal until it lands");
+            }
+            ok &= usbOk;
+        }
+
+        // Re-arm dirs + recordings index so a freshly-remounted card is visible
+        // to the HTTP server / events UI immediately, not on the next periodic
+        // reconcile. ensureVolumeMounted already calls initXxxDirectories +
+        // updateActiveDirectories on success, but call updateActiveDirectories
+        // once more defensively (idempotent) to cover the failure branch's
+        // fall-back-to-internal path, then poke the index.
+        updateActiveDirectories();
+        notifyRecordingsIndexOfStorageChange("ACC-ON remount");
+        return ok;
     }
     
     // ==================== All Storage Locations (for scanning) ====================

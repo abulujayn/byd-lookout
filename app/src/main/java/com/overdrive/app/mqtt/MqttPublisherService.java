@@ -357,8 +357,19 @@ public class MqttPublisherService implements MqttCallback {
         }
 
         long now = System.currentTimeMillis();
+
+        // Read the vehicle state up front — it drives both the state-transition full-sync AND the
+        // per-state heartbeat ceiling (parked / charging overrides). Cheap in-memory reads; default
+        // to the previous cycle's values if a monitor isn't ready so the interval stays stable.
+        boolean carOn = prevAccOn, charging = prevCharging;
+        try { carOn = com.overdrive.app.monitor.AccMonitor.isAccOn(); } catch (Throwable ignored) {}
+        try { charging = com.overdrive.app.monitor.ChargingDetector.getInstance().isCharging(); } catch (Throwable ignored) {}
+
         long minMs = Math.max(1, config.minIntervalSeconds) * 1000L;
-        long maxMs = Math.max(config.minIntervalSeconds, config.maxIntervalSeconds) * 1000L;
+        // Heartbeat ceiling is state-aware: while charging (or, failing that, while parked) the
+        // config's per-state override replaces maxIntervalSeconds. effectiveMaxIntervalSeconds
+        // floors the result at minIntervalSeconds, so maxMs >= minMs always holds.
+        long maxMs = config.effectiveMaxIntervalSeconds(carOn, charging) * 1000L;
 
         Set<String> changed = differ.changedKeys(snapshot);
         boolean first = differ.lastSendTimeMs() == 0;
@@ -370,9 +381,6 @@ public class MqttPublisherService implements MqttCallback {
         // Full-sync on every state-mode transition (ACC on↔off, charging start↔stop) so the new
         // state survives even if a single change-publish is lost at a network handoff. Cheap:
         // fires only on edges, a few full sends each. Inert until the monitors first report.
-        boolean carOn = prevAccOn, charging = prevCharging;
-        try { carOn = com.overdrive.app.monitor.AccMonitor.isAccOn(); } catch (Throwable ignored) {}
-        try { charging = com.overdrive.app.monitor.ChargingDetector.getInstance().isCharging(); } catch (Throwable ignored) {}
         if (config.flushOnStateChange && stateInit && (carOn != prevAccOn || charging != prevCharging)) {
             stateFlushCycles = 5;
         }

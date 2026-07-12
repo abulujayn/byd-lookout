@@ -118,6 +118,37 @@
                                 <div class="camera-label-overlay" id="cameraLabelOverlay" style="display:none;">
                                     <span id="currentCameraLabel" data-i18n="stream.front_camera">Front Camera</span>
                                 </div>
+
+                                <!-- Deterrent controls — manual horn + light triggers so the
+                                     camera view is an active security tool, not just a passive
+                                     monitor (see issue #118). Both route to cloud-only vehicle
+                                     commands (FINDCAR = horn+lights, FLASHLIGHT = lights only),
+                                     so the whole cluster stays display:none until the cloud
+                                     status probe below confirms the account is configured +
+                                     verified. Each fire is gated behind a themed confirm dialog
+                                     to prevent accidental activation. -->
+                                <div class="deterrent-controls" id="deterrentControls" style="display:none;"
+                                     role="group" data-i18n-attr="aria-label:liveview.deterrent_group_label"
+                                     aria-label="Vehicle deterrent controls">
+                                    <button type="button" class="deterrent-btn deterrent-horn" id="deterrentHornBtn"
+                                            onclick="BYD.stream.fireDeterrent('horn')"
+                                            data-i18n-attr="title:liveview.deterrent_horn;aria-label:liveview.deterrent_horn"
+                                            title="Horn" aria-label="Horn">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+                                        </svg>
+                                        <span class="deterrent-label" data-i18n="liveview.deterrent_horn">Horn</span>
+                                    </button>
+                                    <button type="button" class="deterrent-btn deterrent-flash" id="deterrentFlashBtn"
+                                            onclick="BYD.stream.fireDeterrent('flash')"
+                                            data-i18n-attr="title:liveview.deterrent_flash;aria-label:liveview.deterrent_flash"
+                                            title="Flash" aria-label="Flash">
+                                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                                            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                                        </svg>
+                                        <span class="deterrent-label" data-i18n="liveview.deterrent_flash">Flash</span>
+                                    </button>
+                                </div>
                             </div>
 
                             <!-- Bottom Car Image Selector — flips to a right-rail in landscape -->
@@ -443,6 +474,70 @@
             z-index: 10;
         }
 
+        /* Deterrent controls — bottom-right glass buttons layered over the
+           video stage. Anchored to the video-display-area (not the top bar)
+           so they sit within reach of the thumb over the live feed and never
+           collide with the connection pill / quality select up top or the
+           camera label overlay (top-centre). z-index 15 keeps them above the
+           decoded video (z 10) and idle state, below the top-bar chrome
+           (z 20) so a quality-select dropdown still overlays them.
+
+           Chrome-58 (BYD in-app WebView) notes:
+             - -webkit-backdrop-filter prefix required for the glass blur.
+             - No flex `gap` in this old engine; buttons are spaced with a
+               sibling margin instead.
+             - safe-bottom inset keeps the cluster clear of the gesture bar
+               in fullscreen / notched displays. */
+        .deterrent-controls {
+            position: absolute;
+            right: 16px;
+            bottom: calc(16px + var(--safe-bottom, 0px));
+            display: flex;
+            flex-direction: column;
+            align-items: stretch;
+            z-index: 15;
+        }
+        .deterrent-controls .deterrent-btn + .deterrent-btn { margin-top: 10px; }
+
+        .deterrent-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: flex-start;
+            min-width: 108px;
+            padding: 10px 16px;
+            background: var(--lv-pill-bg);
+            -webkit-backdrop-filter: blur(20px);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--lv-pill-border);
+            border-radius: 14px;
+            color: var(--lv-overlay-text);
+            font-size: 13px;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            cursor: pointer;
+            box-shadow: 0 4px 18px var(--lv-shadow-strong);
+            transition: transform 0.15s ease, background 0.2s ease, border-color 0.2s ease;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .deterrent-btn svg { width: 18px; height: 18px; margin-right: 8px; flex: 0 0 18px; }
+        .deterrent-btn .deterrent-label { line-height: 1; white-space: nowrap; }
+        .deterrent-btn:hover { background: var(--lv-pill-bg-hover); border-color: var(--brand-primary); }
+        .deterrent-btn:active { transform: scale(0.96); }
+
+        /* Horn = amber (attention / alert). Flash = brand teal (lights).
+           Coloured icon + border keep the two actions distinct at a glance;
+           the glass body stays theme-neutral so both read on light + dark. */
+        .deterrent-horn svg { color: #fbbf24; }
+        .deterrent-horn:hover { border-color: #fbbf24; }
+        .deterrent-flash svg { color: var(--brand-primary); }
+
+        /* Pending state while the cloud round-trip is in flight — dim +
+           block re-taps so a double-tap doesn't queue two horn commands. */
+        .deterrent-btn.pending {
+            opacity: 0.55;
+            pointer-events: none;
+        }
+
         /* Bottom Car Selector */
         .car-selector-bottom {
             flex-shrink: 0;
@@ -636,6 +731,12 @@
             .idle-icon { width: 48px; height: 48px; }
             .idle-icon svg { width: 24px; height: 24px; }
             .idle-text { font-size: 12px; }
+            /* Tighter deterrent buttons on phones so the pair doesn't crowd
+               the bottom-right of a small video stage. */
+            .deterrent-controls { right: 12px; bottom: calc(12px + var(--safe-bottom, 0px)); }
+            .deterrent-btn { min-width: 96px; padding: 9px 12px; font-size: 12px; border-radius: 12px; }
+            .deterrent-btn svg { width: 16px; height: 16px; flex: 0 0 16px; margin-right: 6px; }
+            .deterrent-controls .deterrent-btn + .deterrent-btn { margin-top: 8px; }
         }
         
         /* Mini preview position handled by .cameras-mode class */
@@ -1029,6 +1130,66 @@
             if (originalUpdateStatus) originalUpdateStatus.call(this, text, isLive);
         };
         
+        // Manual deterrent trigger (issue #118). `kind` is 'horn' or 'flash':
+        //   horn  → POST /api/vehicle/find-car  (FINDCAR = horn + lights; the
+        //           only horn primitive exposed on this BYD generation — there
+        //           is no lights-independent horn command).
+        //   flash → POST /api/vehicle/flash     (FLASHLIGHT = lights only).
+        // Both are cloud-only, so the cluster is only visible after the cloud
+        // probe unhides it. Each fire is gated behind a themed confirm dialog
+        // (BYD.utils.confirmDialog) to prevent an accidental horn blast, then
+        // the button enters a pending state until the routed response lands so
+        // a double-tap can't queue two commands. The toast reads the
+        // server-resolved `message` (correct locale + which transport fired),
+        // falling back to a local string only when the endpoint returns none.
+        BYD.stream.fireDeterrent = async function(kind) {
+            const isHorn = kind === 'horn';
+            const btnId = isHorn ? 'deterrentHornBtn' : 'deterrentFlashBtn';
+            const btn = document.getElementById(btnId);
+            if (btn && btn.classList.contains('pending')) return;
+
+            const confirmed = await BYD.utils.confirmDialog({
+                title: isHorn ? BYD.i18n.t('liveview.deterrent_horn_confirm_title')
+                              : BYD.i18n.t('liveview.deterrent_flash_confirm_title'),
+                body: isHorn ? BYD.i18n.t('liveview.deterrent_horn_confirm_body')
+                             : BYD.i18n.t('liveview.deterrent_flash_confirm_body'),
+                confirmLabel: BYD.i18n.t('liveview.deterrent_confirm_ok'),
+                cancelLabel: BYD.i18n.t('common.cancel'),
+                danger: isHorn
+            });
+            if (!confirmed) return;
+
+            if (btn) btn.classList.add('pending');
+            const endpoint = isHorn ? '/api/vehicle/find-car' : '/api/vehicle/flash';
+            let result;
+            try {
+                // fetch() (not XHR) — POST bodies are dropped by the BYD WebView's
+                // XHR path; fetch is the reliable transport here.
+                const resp = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: '{}'
+                });
+                result = await resp.json();
+            } catch (e) {
+                result = { success: false };
+            } finally {
+                if (btn) btn.classList.remove('pending');
+            }
+
+            if (BYD.utils && BYD.utils.toast) {
+                const fallbackOk = isHorn ? BYD.i18n.t('liveview.deterrent_horn_sent')
+                                          : BYD.i18n.t('liveview.deterrent_flash_sent');
+                const fallbackErr = BYD.i18n.t('liveview.deterrent_failed');
+                const msg = (result && result.message)
+                    || (result && result.success ? fallbackOk : ((result && result.error) || fallbackErr));
+                const type = (result && result.success) ? 'success'
+                    : (result && (result.outcome === 'auth_required' || result.outcome === 'rate_limited')) ? 'info'
+                    : 'error';
+                BYD.utils.toast(msg, type);
+            }
+        };
+
         BYD.stream.toggleFullscreen = function() {
             const view = document.querySelector('.seamless-camera-view');
             if (!view) return;
@@ -1097,6 +1258,31 @@
             }
         })();
         
+        // Gate the deterrent controls (issue #118) on BYD Cloud availability.
+        // The horn (find-car) and flash commands are CLOUD_ONLY on this BYD
+        // generation — there is no SDK fallback — so if the cloud account
+        // isn't configured + verified the buttons would only ever produce a
+        // "cloud required" toast. Hiding them until the probe confirms cloud
+        // is up keeps the camera view honest: a visible button always works.
+        // One-shot probe on load, mirroring the OEM-dashcam gate below (the
+        // user re-enters the live view after configuring cloud, so a
+        // perpetual poll would just burn cycles). Cluster defaults to
+        // display:none inline, so any failure path leaves it safely hidden.
+        (async function () {
+            try {
+                const res = await fetch('/api/vehicle/cloud-status');
+                const data = await res.json();
+                const cloudReady = !!(data && data.configured && data.verified);
+                const controls = document.getElementById('deterrentControls');
+                if (controls && cloudReady) controls.style.display = '';
+            } catch (e) {
+                // Cloud status unreachable — leave the cluster hidden (its
+                // inline default). Deterrent controls are opt-in on cloud
+                // availability; silent suppression is the safe fallback.
+                console.log('[Init] Deterrent controls gating skipped:', e && e.message);
+            }
+        })();
+
         document.getElementById('miniPreviewContent').innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2"/></svg>';
 
         // Draggable mini-preview chip with snap-to-corner.

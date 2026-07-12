@@ -104,6 +104,8 @@ public class BydVehicleData {
     public final boolean frontFog;
     public final boolean hazard;
     public final boolean dayTimeLight;
+    // Interior ambient (atmosphere) light colour: 1-based index into the fixed
+    // 31-colour palette (LightConstants.AMBIENT_COLOURS). Defaults to 1 until read.
     public final int ambientColour;
 
     // ==================== ADAS ====================
@@ -731,7 +733,7 @@ public class BydVehicleData {
         int tyreSystemState = UNAVAILABLE, tyreTemperatureState = UNAVAILABLE;
         int leftTurnState = UNAVAILABLE, rightTurnState = UNAVAILABLE;
         boolean lowBeam, highBeam, rearFog, frontFog, hazard, dayTimeLight;
-        int ambientColour;
+        int ambientColour = 1;
         boolean speedLimitWarning;
         int childPresenceDetection;
         int acStartState = UNAVAILABLE, acCycleMode = UNAVAILABLE, acWindMode = UNAVAILABLE, acFanLevel = UNAVAILABLE, tempUnit = UNAVAILABLE;

@@ -100,11 +100,10 @@ public class AbrpTelemetryService {
     private long totalUploads;
     private long failedUploads;
     private JSONObject lastTelemetrySnapshot;
-    
-    // Weather temperature cache (fetched from Open-Meteo API using GPS coords)
-    private volatile double cachedWeatherTemp = Double.NaN;
-    private volatile long lastWeatherFetchTime = 0;
-    private static final long WEATHER_CACHE_MS = 10 * 60 * 1000; // 10 minutes
+
+    // Weather temperature now comes from the shared WeatherTemperature helper
+    // (one cache + network path for both ABRP ext_temp and the automation
+    // temperature fallback). See getWeatherTemperature().
 
     public AbrpTelemetryService(AbrpConfig config, SohEstimator sohEstimator) {
         this.config = config;
@@ -707,49 +706,11 @@ public class AbrpTelemetryService {
      * @return temperature in °C, or NaN if unavailable
      */
     private double getWeatherTemperature(double lat, double lon) {
-        long now = System.currentTimeMillis();
-        
-        // Return cached value if fresh
-        if (!Double.isNaN(cachedWeatherTemp) && (now - lastWeatherFetchTime) < WEATHER_CACHE_MS) {
-            return cachedWeatherTemp;
-        }
-        
-        try {
-            String url = String.format(java.util.Locale.US,
-                "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m",
-                lat, lon);
-            
-            Request request = new Request.Builder()
-                .url(url)
-                .header("User-Agent", "OverDrive-ABRP/1.0")
-                .build();
-            
-            // Use short timeout, same proxy logic as ABRP uploads
-            OkHttpClient weatherClient = getProxiedClient().newBuilder()
-                .connectTimeout(3, TimeUnit.SECONDS)
-                .readTimeout(3, TimeUnit.SECONDS)
-                .build();
-            
-            Response response = weatherClient.newCall(request).execute();
-            if (response.isSuccessful() && response.body() != null) {
-                String body = response.body().string();
-                JSONObject json = new JSONObject(body);
-                JSONObject current = json.optJSONObject("current");
-                if (current != null) {
-                    double temp = current.getDouble("temperature_2m");
-                    cachedWeatherTemp = temp;
-                    lastWeatherFetchTime = now;
-                    logger.debug("ext_temp: weather API = " + String.format("%.1f", temp) + "°C");
-                    return temp;
-                }
-            }
-            response.close();
-        } catch (Exception e) {
-            logger.debug("Weather API failed: " + e.getMessage());
-        }
-        
-        // Return stale cache if available, otherwise NaN
-        return cachedWeatherTemp;
+        // Delegate to the shared WeatherTemperature helper so the automation
+        // temperature fallback and ABRP ext_temp share ONE cache + network path.
+        // This runs on ABRP's own upload thread (off the telemetry hot path), so a
+        // synchronous fetch is fine here.
+        return com.overdrive.app.weather.WeatherTemperature.fetchNow(lat, lon);
     }
 
     /**

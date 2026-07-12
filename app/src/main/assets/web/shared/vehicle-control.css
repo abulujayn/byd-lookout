@@ -667,6 +667,30 @@
 .vc-tile.cool.on2 { border-color: #38BDF8; background: rgba(56,189,248,.12); color: #38BDF8; box-shadow: 0 0 12px rgba(56,189,248,.2); }
 .vc-tile.pending { opacity: .4; pointer-events: none; }
 
+/* Seat-memory tap-and-hold: TAP recalls, LONG-PRESS saves. The `.arming` class
+   is added on press and drives a bottom-up fill whose duration matches the JS
+   hold timer (var --vc-hold-ms). If the press completes, `.armed` flashes once. */
+.vc-tile.memory { position: relative; overflow: hidden; }
+.vc-tile.memory::after {
+    content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 0;
+    background: rgba(0,212,170,.18); pointer-events: none;
+    transition: height 0s;
+}
+.vc-tile.memory.arming::after {
+    height: 100%;
+    -webkit-transition: height var(--vc-hold-ms, 650ms) linear;
+    transition: height var(--vc-hold-ms, 650ms) linear;
+}
+.vc-tile.memory.armed { border-color: #00D4AA; color: #00D4AA; box-shadow: 0 0 14px rgba(0,212,170,.35); }
+.vc-tile.memory.armed::after { height: 0; }
+
+/* "Hold to save" helper line under the seat-memory tiles. */
+.vc-hold-hint {
+    -ms-flex-preferred-size: 100%; flex-basis: 100%;
+    margin: 4px 2px 0; font-size: 9px; font-weight: 600; letter-spacing: .3px;
+    text-transform: uppercase; color: var(--vc-text-muted); text-align: center;
+}
+
 /* Small +/- button */
 .vc-mini {
     display: -webkit-inline-flex; display: inline-flex;

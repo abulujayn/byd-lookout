@@ -1,0 +1,336 @@
+/*
+ * Community Automations tab — styles for the browse/publish UI on automations.html.
+ * Uses the shared M3 design tokens (design-tokens.css): --radius-*, --card-gap,
+ * --card-pad, color roles. No hard-coded colors beyond token fallbacks. Chrome-58
+ * safe (no :has(), no container queries, no gap on flex where a fallback is needed).
+ */
+
+/* ── Controls (search / sort / filter chips) ─────────────────────────────── */
+#communityControls {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.community-search-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 14px;
+    border-radius: var(--radius-md, 12px);
+    background: var(--bg-elevated, #1a1a1a);
+    border: 1px solid var(--border-default, #333);
+    color: var(--text-primary, #fff);
+    font-size: 14px;
+    font-family: inherit;
+}
+.community-search-input:focus {
+    outline: none;
+    border-color: var(--primary, #3b82f6);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.community-sort-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.community-sort-label {
+    font-size: 13px;
+    color: var(--text-secondary, #aaa);
+    white-space: nowrap;
+}
+/* Themed select — mirrors .form-grid select (automations.css) so the native
+   popup matches the app dark theme. */
+.community-sort-select {
+    flex: 1;
+    padding: 9px 12px;
+    border-radius: var(--radius-md, 12px);
+    background: var(--bg-elevated, #1a1a1a);
+    border: 1px solid var(--border-default, #333);
+    color: var(--text-primary, #fff);
+    font-size: 14px;
+    font-family: inherit;
+    -webkit-appearance: none;
+    appearance: none;
+}
+.community-sort-select:focus {
+    outline: none;
+    border-color: var(--primary, #3b82f6);
+}
+.community-sort-select option {
+    background: var(--bg-elevated, #1a1a1a);
+    color: var(--text-primary, #fff);
+}
+
+/* Minimum rating / downloads filter selects — two compact columns. */
+.community-filter-row {
+    display: flex;
+    gap: 10px;
+}
+.community-minfilter {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.community-minfilter .community-sort-label { font-size: 12px; }
+
+/* Filter chips — mirror the events.js .filter-chip pattern. */
+.community-filter-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.community-filter-chips .filter-chip {
+    padding: 6px 14px;
+    border-radius: var(--radius-full, 999px);
+    background: var(--bg-elevated, #1a1a1a);
+    border: 1px solid var(--border-default, #333);
+    color: var(--text-secondary, #aaa);
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.community-filter-chips .filter-chip.active {
+    background: var(--primary, #3b82f6);
+    border-color: var(--primary, #3b82f6);
+    color: #fff;
+}
+
+/* ── Browse grid + cards ──────────────────────────────────────────────────── */
+#communityList {
+    display: flex;
+    flex-direction: column;
+    gap: var(--card-gap, 12px);
+}
+
+.community-card {
+    padding: var(--card-pad, 20px);
+}
+.community-card-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+}
+.community-card-titlewrap { min-width: 0; }
+.community-card-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary, #fff);
+    word-break: break-word;
+}
+.community-card-author {
+    font-size: 12px;
+    color: var(--text-secondary, #aaa);
+    margin-top: 2px;
+}
+
+.community-badge {
+    flex-shrink: 0;
+    padding: 3px 10px;
+    border-radius: var(--radius-full, 999px);
+    background: var(--bg-surface, #222);
+    border: 1px solid var(--border-default, #333);
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-secondary, #aaa);
+    text-transform: capitalize;
+}
+
+.community-card-desc {
+    margin-top: 10px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-secondary, #bbb);
+    /* Clamp to 3 lines (WebKit line-clamp works on Chrome 58). */
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.community-card-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 12px;
+}
+.community-meta-chip {
+    font-size: 12px;
+    color: var(--text-secondary, #999);
+}
+
+.community-card-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 14px;
+}
+.community-card-actions .btn { flex: 1; }
+
+/* ── Stars ─────────────────────────────────────────────────────────────────── */
+.community-stars {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+.community-star {
+    display: inline-flex;
+    width: 16px;
+    height: 16px;
+    color: #f5b301; /* amber — same warm accent for filled + outline stars */
+}
+.community-star svg { width: 16px; height: 16px; }
+.community-star-count {
+    margin-left: 6px;
+    font-size: 12px;
+    color: var(--text-secondary, #999);
+}
+.community-stars.interactive .star-btn {
+    background: none;
+    border: none;
+    padding: 2px;
+    cursor: pointer;
+    width: 28px;
+    height: 28px;
+    color: #f5b301;
+}
+.community-stars.interactive .star-btn svg { width: 24px; height: 24px; }
+
+/* ── Pagination (events.js pattern) ───────────────────────────────────────── */
+#communityPagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    margin-top: 20px;
+}
+#communityPagination .pagination-btn {
+    padding: 8px 18px;
+    border-radius: var(--radius-md, 12px);
+    background: var(--bg-elevated, #1a1a1a);
+    border: 1px solid var(--border-default, #333);
+    color: var(--text-primary, #fff);
+    font-size: 14px;
+    cursor: pointer;
+}
+#communityPagination .pagination-btn:disabled { opacity: 0.4; cursor: default; }
+#communityPagination .pagination-info {
+    font-size: 13px;
+    color: var(--text-secondary, #aaa);
+}
+
+/* ── Loading / empty ──────────────────────────────────────────────────────── */
+.community-loading {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-secondary, #888);
+    font-size: 14px;
+}
+
+/* ── Detail + publish modals ──────────────────────────────────────────────── */
+.community-detail-card,
+.community-publish-card {
+    max-width: 560px;
+    width: 92vw;
+    max-height: 86vh;
+    overflow-y: auto;
+}
+.community-detail-author {
+    font-size: 13px;
+    color: var(--text-secondary, #aaa);
+    margin-bottom: 8px;
+}
+.community-detail-desc {
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-secondary, #bbb);
+    margin: 0 0 12px 0;
+}
+.community-rule-preview {
+    background: var(--bg-surface, #1c1c1c);
+    border: 1px solid var(--border-default, #333);
+    border-radius: var(--radius-md, 12px);
+    padding: 12px 14px;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-primary, #eee);
+    margin-bottom: 12px;
+    word-break: break-word;
+}
+
+.community-compat {
+    padding: 8px 12px;
+    border-radius: var(--radius-md, 12px);
+    font-size: 13px;
+    margin-bottom: 12px;
+}
+.community-compat.ok {
+    background: rgba(34, 197, 94, 0.1);
+    border: 1px solid rgba(34, 197, 94, 0.4);
+    color: #22c55e;
+}
+.community-compat.warn {
+    background: rgba(245, 158, 11, 0.1);
+    border: 1px solid rgba(245, 158, 11, 0.4);
+    color: #f59e0b;
+}
+
+.community-rate-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+.community-rate-label {
+    font-size: 13px;
+    color: var(--text-secondary, #aaa);
+}
+
+.community-detail-actions {
+    flex-wrap: wrap;
+}
+
+/* Publish form fields */
+.community-publish-form {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin: 12px 0;
+}
+.community-publish-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.community-publish-row .label {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary, #aaa);
+}
+.community-publish-input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 10px 12px;
+    border-radius: var(--radius-md, 12px);
+    background: var(--bg-elevated, #1a1a1a);
+    border: 1px solid var(--border-default, #333);
+    color: var(--text-primary, #fff);
+    font-size: 14px;
+    font-family: inherit;
+}
+textarea.community-publish-input {
+    min-height: 72px;
+    resize: vertical;
+}
+.community-publish-input:focus {
+    outline: none;
+    border-color: var(--primary, #3b82f6);
+}
+
+/* Publish button on the local automation cards inherits .icon-btn from
+   automations.css; nudge its icon color to the primary accent to hint "share". */
+.community-publish-btn { color: var(--primary, #3b82f6); }
+.community-publish-btn:hover { border-color: var(--primary, #3b82f6); }

@@ -1374,6 +1374,15 @@ const TRIPS = {
         const socCapsule = recovered
             ? ''
             : '<span class="trip-capsule"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="7" width="12" height="10" rx="1"/><path d="M18 10h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-2"/></svg> ' + socStart + '→' + socEnd + '%</span>';
+        // Odometer capsule: absolute start→end readings (unit-aware). Gated on
+        // both being present (>0) — recovered trips and HALs that don't report
+        // the odometer leave these at 0, so the capsule is dropped rather than
+        // showing a bogus "0→0 km". Gauge icon distinguishes it from distance.
+        const odoStart = trip.odometerStartKm || trip.odometer_start_km || 0;
+        const odoEnd = trip.odometerEndKm || trip.odometer_end_km || 0;
+        const odoCapsule = (odoStart > 0 && odoEnd > 0)
+            ? '<span class="trip-capsule"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="14" r="7"/><path d="M12 14l3-3"/><path d="M12 3v2"/></svg> ' + BYD.units.dist(odoStart) + '→' + BYD.units.dist(odoEnd) + '</span>'
+            : '';
         // Score badge: a recovered trip has no driving score, so show a neutral
         // "recovered" glyph instead of a misleading red 0.
         const scoreBadge = recovered
@@ -1397,6 +1406,7 @@ const TRIPS = {
                 '<span class="trip-capsule"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ' + dur + '</span>' +
                 energyCapsule +
                 socCapsule +
+                odoCapsule +
                 fuelStr +
                 (elevStr ? '<span class="trip-capsule" style="color:#0EA5E9;">' + elevStr + '</span>' : '') +
                 (!recovered && costStr ? '<span class="trip-capsule" style="color:var(--warning);"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1v22M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg> ' + costStr + '</span>' : '') +
@@ -1941,6 +1951,24 @@ const TRIPS = {
             this.setEl('detailMaxSpeed', BYD.units.speedVal(trip.maxSpeedKmh || trip.max_speed_kmh || 0).toFixed(2));
             this.setEl('detailSocStart', recovered ? '--' : (trip.socStart || trip.soc_start || 0).toFixed(2) + '%');
             this.setEl('detailSocEnd', recovered ? '--' : (trip.socEnd || trip.soc_end || 0).toFixed(2) + '%');
+
+            // Odometer tiles — absolute start/end readings, unit-aware. Only
+            // shown when both are present (>0); recovered trips and HALs that
+            // don't report the odometer leave these at 0, so the tiles hide
+            // rather than show "--"/"0" (mirrors the PHEV fuel-tile gating).
+            const detailOdoStart = trip.odometerStartKm || trip.odometer_start_km || 0;
+            const detailOdoEnd = trip.odometerEndKm || trip.odometer_end_km || 0;
+            const odoStartTile = document.getElementById('detailOdoStartTile');
+            const odoEndTile = document.getElementById('detailOdoEndTile');
+            if (detailOdoStart > 0 && detailOdoEnd > 0) {
+                this.setEl('detailOdoStart', BYD.units.dist(detailOdoStart));
+                this.setEl('detailOdoEnd', BYD.units.dist(detailOdoEnd));
+                if (odoStartTile) odoStartTile.style.display = '';
+                if (odoEndTile) odoEndTile.style.display = '';
+            } else {
+                if (odoStartTile) odoStartTile.style.display = 'none';
+                if (odoEndTile) odoEndTile.style.display = 'none';
+            }
 
             // PHEV fuel tiles — only show when both start and end readings
             // are present. Mirrors how Start SoC tile is unconditional but

@@ -174,6 +174,8 @@ BYD.automations = {
         copyBtn.classList.add(token + '-action', 'action', 'icon-btn');
         copyBtn.title = BYD.i18n.t('automation.copy_automation');
         copyBtn.innerHTML = copyIcon;
+        // Open the form pre-filled from this automation but with no editingId, so
+        // Save creates a NEW automation (a duplicate) rather than overwriting.
         copyBtn.addEventListener('click', () => this.showForm(null, automation));
         automationActions.append(copyBtn);
 
@@ -245,8 +247,7 @@ BYD.automations = {
                         const entryVars = entry.variables || {};
                         if (dataVars.length) result += '(';
                         for (const variable of dataVars) {
-                            result += this.automationValueToText(variable, entryVars[variable.id]);
-                            result += ',';
+                            result += variable.label + '=' + this.automationValueToText(variable, entryVars[variable.id]) + ',';
                         }
                         if (dataVars.length) result = result.slice(0, result.length - 1) + ') ';
 
@@ -257,8 +258,7 @@ BYD.automations = {
                             // not under entry.variables. Reading entry.variables[variable.id]
                             // (the old bug) yielded `undefined` for every comparator/value.
                             for (const variable of ['comparator', 'value']) {
-                                result += this.automationValueToText(data[variable], entry[variable]);
-                                result += ' ';
+                                result += this.automationValueToText(data[variable], entry[variable]) + ' ';
                             }
                         }
                     }
@@ -271,13 +271,6 @@ BYD.automations = {
             return BYD.i18n.t('automation.parse_error');
         }
         return result;
-    },
-
-    automationValueToText(spec, rawVal) {
-        const option = spec && spec.options && spec.options.find(o => o.id === rawVal);
-        if (option && option.label != null) return option.label;
-        if (spec && spec.type === 'time') return this.timeToString(rawVal);
-        return rawVal;
     },
 
     renderForm() {
@@ -480,6 +473,7 @@ BYD.automations = {
             case 'int': return this.createIntInput(data, defaultValue, eventListener);
             case 'colour': return this.createColourInput(data, defaultValue, eventListener);
             case 'time': return this.createTimeInput(data, defaultValue, eventListener);
+            case 'app': return this.createAppInput(data, defaultValue, eventListener);
             default: return this.createFallbackInput(data);
         }
     },
@@ -606,11 +600,11 @@ BYD.automations = {
         input.min = min;
         input.max = max;
         if (defaultValue != null && !isNaN(defaultValue)) {
-            input.value = defaultValue
+            input.value = defaultValue;
         } else {
             input.value = 1;
         }
-        if (data.colourCodes) input.style.background = `linear-gradient(to right, ${data.colourCodes.join(',')})`;
+        if (data.colourCodes) input.style.background = 'linear-gradient(to right, ' + data.colourCodes.join(',') + ')';
         // Add invalid class if the selected value is not within the min and max
         const changeEvent = () => {
             const value = parseInt(input.value, 10);
@@ -659,6 +653,101 @@ BYD.automations = {
         const hours = Math.floor(value / 60);
         const mins = value % 60;
         return String(hours).padStart(2, '0') + ':' + String(mins).padStart(2, '0');
+    },
+
+    automationValueToText(spec, rawVal) {
+        const option = spec && spec.options && spec.options.find(o => o.id === rawVal);
+        if (option && option.label != null) return option.label;
+        if (spec && spec.type === 'time' && rawVal != null && !isNaN(rawVal)) return this.timeToString(rawVal);
+        if (spec && spec.type === 'app' && rawVal != null) {
+            // Prefer the friendly label if the app list is already cached; else the package name.
+            const app = (this._appList || []).find(a => a.package === rawVal);
+            return this._escVal((app && app.label) ? app.label : rawVal);
+        }
+        // rawVal is a user/community-supplied automation VALUE that buildAutomationText
+        // interpolates into an innerHTML string. Escape it so a shared automation whose
+        // variable value contains markup can't inject script when its rule prose renders
+        // (community detail preview AND the local card, which renders imported automations
+        // too). The schema option.label + computed time string above are trusted.
+        return this._escVal(rawVal);
+    },
+
+    // Escape a dynamic value for safe innerHTML interpolation. Prefers BYD.core._esc;
+    // falls back to a local textContent escape so a missing core can't leave it raw.
+    _escVal(v) {
+        if (v == null) return v;
+        if (window.BYD && BYD.core && BYD.core._esc) return BYD.core._esc(String(v));
+        const d = document.createElement('div');
+        d.textContent = String(v);
+        return d.innerHTML;
+    },
+
+    // Installed-app dropdown, populated live from GET /api/apps/list. The value
+    // stored is the package name; the label shown is the app's display name.
+    // Unlike enum, options are NOT in the schema (apps differ per device).
+    createAppInput(data, defaultValue, eventListener) {
+        const selector = document.createElement('select');
+        selector.classList.add('input', 'enum', 'app');
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = data.label;
+        placeholder.disabled = true;
+        placeholder.selected = true;
+        placeholder.hidden = true;
+        selector.append(placeholder);
+
+        const fill = (apps) => {
+            // Drop any previously-added app options (keep the placeholder at index 0).
+            while (selector.options.length > 1) selector.remove(1);
+            for (const app of apps) {
+                const opt = document.createElement('option');
+                opt.value = app.package;
+                opt.textContent = app.label || app.package;
+                selector.append(opt);
+            }
+            // If the stored package isn't in the list (uninstalled since), add it so
+            // the binding still shows what it points at rather than silently blanking.
+            if (defaultValue && !apps.some(a => a.package === defaultValue)) {
+                const opt = document.createElement('option');
+                opt.value = defaultValue;
+                opt.textContent = defaultValue;
+                selector.append(opt);
+            }
+            if (defaultValue) selector.value = defaultValue;
+            changeEvent();
+            // The list resolves asynchronously — AFTER showForm() already ran
+            // _syncSaveDisabled() while this field was still the placeholder-only
+            // (invalid) state. Re-sync now that a valid default may have cleared
+            // .invalid, or Save stays stuck disabled (pointer-events:none) until
+            // the user touches another field.
+            this._syncSaveDisabled();
+        };
+
+        const changeEvent = () => {
+            const ok = !!selector.value;
+            selector.classList.toggle('invalid', !ok);
+            if (ok && eventListener) eventListener(selector, selector.value);
+        };
+        selector.addEventListener('change', changeEvent);
+
+        // Async-load the app list once; reuse the cache on subsequent renders.
+        this.loadAppList().then(fill).catch(() => { changeEvent(); this._syncSaveDisabled(); });
+        changeEvent();
+        return selector;
+    },
+
+    // Fetch + cache the installed-app list. Resolves to [{package, label}].
+    loadAppList() {
+        if (this._appList) return Promise.resolve(this._appList);
+        if (this._appListPromise) return this._appListPromise;
+        this._appListPromise = fetch('/api/apps/list')
+            .then(r => r.json())
+            .then(j => {
+                this._appList = (j && j.success && Array.isArray(j.apps)) ? j.apps : [];
+                return this._appList;
+            })
+            .catch(e => { this._appList = []; return this._appList; });
+        return this._appListPromise;
     },
 
     _switchTab(id) {
@@ -738,7 +827,19 @@ BYD.automations = {
     },
 
     async deleteAutomation(key) {
-        if (!confirm(BYD.i18n.t('confirm.delete'))) return;
+        // Themed confirm (BYD.utils.confirmDialog) instead of the native confirm() —
+        // matches the app look/feel and avoids the browser dialog leaking the
+        // loopback origin. Falls back to native confirm only if utils isn't loaded.
+        const ok = (window.BYD && BYD.utils && BYD.utils.confirmDialog)
+            ? await BYD.utils.confirmDialog({
+                title: BYD.i18n.t('confirm.delete'),
+                body: BYD.i18n.t('automation.confirm_delete_body'),
+                confirmLabel: BYD.i18n.t('common.delete'),
+                cancelLabel: BYD.i18n.t('common.cancel'),
+                danger: true
+              })
+            : confirm(BYD.i18n.t('confirm.delete'));
+        if (!ok) return;
         try {
             const resp = await fetch('/api/automations/automation/' + encodeURIComponent(key), { method: 'DELETE' });
             const result = await resp.json();

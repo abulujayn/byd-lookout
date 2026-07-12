@@ -195,11 +195,16 @@ public class MqttConnectionStore {
             if (updates.has("allowControl")) existing.allowControl = updates.optBoolean("allowControl");
             if (updates.has("heartbeatSendAll")) existing.heartbeatSendAll = updates.optBoolean("heartbeatSendAll");
             if (updates.has("flushOnStateChange")) existing.flushOnStateChange = updates.optBoolean("flushOnStateChange");
+            if (updates.has("parkedIntervalSeconds")) existing.parkedIntervalSeconds = updates.optInt("parkedIntervalSeconds");
+            if (updates.has("chargingIntervalSeconds")) existing.chargingIntervalSeconds = updates.optInt("chargingIntervalSeconds");
             // Keep the window coherent after a partial update.
             if (existing.minIntervalSeconds < 1) existing.minIntervalSeconds = 1;
             if (existing.maxIntervalSeconds < existing.minIntervalSeconds) {
                 existing.maxIntervalSeconds = existing.minIntervalSeconds;
             }
+            // Per-state overrides: 0 = unset (use max). Clamp negatives to unset.
+            if (existing.parkedIntervalSeconds < 0) existing.parkedIntervalSeconds = 0;
+            if (existing.chargingIntervalSeconds < 0) existing.chargingIntervalSeconds = 0;
 
             save();
             logger.info("Updated MQTT connection: " + existing);

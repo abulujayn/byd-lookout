@@ -35,6 +35,16 @@ public class MqttConnectionConfig {
     public int maxIntervalSeconds;       // Heartbeat ceiling: always publish at least this often
     public boolean changeOnly;           // If true, only publish when a backing value changed
 
+    // Per-state heartbeat overrides. When > 0, they replace maxIntervalSeconds (the heartbeat
+    // ceiling) while the vehicle is in that state, so telemetry can slow right down when the car
+    // is parked (ACC off) — cutting data usage during the ACC-OFF network blackout — and speed up
+    // again while charging. 0 = unset = fall back to maxIntervalSeconds. Change-detection still
+    // publishes sooner than the ceiling whenever a value actually moves; these only stretch/shrink
+    // the "nothing changed" heartbeat cadence per state. Charging takes precedence over parked when
+    // both apply (a plugged-in car is parked but the user usually wants livelier charging stats).
+    public int parkedIntervalSeconds;    // Heartbeat ceiling while ACC is off (0 = use max)
+    public int chargingIntervalSeconds;  // Heartbeat ceiling while charging (0 = use max)
+
     // Full-resync options. Both re-publish EVERY discoverable key, not just changed ones,
     // so state lost to a connection drop (e.g. a gear→P transition dropped at a WiFi↔cellular
     // handoff) gets corrected — a state-based send profile (full snapshot at transitions).
@@ -70,6 +80,8 @@ public class MqttConnectionConfig {
     private static final boolean DEFAULT_ALLOW_CONTROL = false;
     private static final boolean DEFAULT_HEARTBEAT_SEND_ALL = false;
     private static final boolean DEFAULT_FLUSH_ON_STATE_CHANGE = true;
+    private static final int DEFAULT_PARKED_INTERVAL = 0;    // 0 = unset → use maxIntervalSeconds
+    private static final int DEFAULT_CHARGING_INTERVAL = 0;  // 0 = unset → use maxIntervalSeconds
 
     /**
      * Create a new connection config with defaults.
@@ -97,6 +109,24 @@ public class MqttConnectionConfig {
         this.allowControl = DEFAULT_ALLOW_CONTROL;
         this.heartbeatSendAll = DEFAULT_HEARTBEAT_SEND_ALL;
         this.flushOnStateChange = DEFAULT_FLUSH_ON_STATE_CHANGE;
+        this.parkedIntervalSeconds = DEFAULT_PARKED_INTERVAL;
+        this.chargingIntervalSeconds = DEFAULT_CHARGING_INTERVAL;
+    }
+
+    /**
+     * Effective heartbeat ceiling (seconds) for the given vehicle state. Charging wins over parked
+     * when both are true. A per-state override only applies when it is set (&gt; 0); otherwise the
+     * base {@link #maxIntervalSeconds} is used. The result is floored at {@link #minIntervalSeconds}
+     * so a mis-set override can never publish faster than the rate floor.
+     */
+    public int effectiveMaxIntervalSeconds(boolean accOn, boolean charging) {
+        int ceiling = maxIntervalSeconds;
+        if (charging && chargingIntervalSeconds > 0) {
+            ceiling = chargingIntervalSeconds;
+        } else if (!accOn && parkedIntervalSeconds > 0) {
+            ceiling = parkedIntervalSeconds;
+        }
+        return Math.max(minIntervalSeconds, ceiling);
     }
 
     /** True when this connection should accept inbound control commands and discover control entities. */
@@ -213,6 +243,8 @@ public class MqttConnectionConfig {
             json.put("allowControl", allowControl);
             json.put("heartbeatSendAll", heartbeatSendAll);
             json.put("flushOnStateChange", flushOnStateChange);
+            json.put("parkedIntervalSeconds", parkedIntervalSeconds);
+            json.put("chargingIntervalSeconds", chargingIntervalSeconds);
         } catch (Exception ignored) {}
         return json;
     }
@@ -258,10 +290,15 @@ public class MqttConnectionConfig {
         config.allowControl = json.optBoolean("allowControl", DEFAULT_ALLOW_CONTROL);
         config.heartbeatSendAll = json.optBoolean("heartbeatSendAll", DEFAULT_HEARTBEAT_SEND_ALL);
         config.flushOnStateChange = json.optBoolean("flushOnStateChange", DEFAULT_FLUSH_ON_STATE_CHANGE);
+        config.parkedIntervalSeconds = json.optInt("parkedIntervalSeconds", DEFAULT_PARKED_INTERVAL);
+        config.chargingIntervalSeconds = json.optInt("chargingIntervalSeconds", DEFAULT_CHARGING_INTERVAL);
         if (config.minIntervalSeconds < 1) config.minIntervalSeconds = 1;
         if (config.maxIntervalSeconds < config.minIntervalSeconds) {
             config.maxIntervalSeconds = config.minIntervalSeconds;
         }
+        // Per-state overrides: 0 = unset (use max). Negatives are meaningless, clamp to unset.
+        if (config.parkedIntervalSeconds < 0) config.parkedIntervalSeconds = 0;
+        if (config.chargingIntervalSeconds < 0) config.chargingIntervalSeconds = 0;
         return config;
     }
 
@@ -274,6 +311,8 @@ public class MqttConnectionConfig {
                 ", topic='" + topic + '\'' +
                 ", enabled=" + enabled +
                 ", interval=[" + minIntervalSeconds + "-" + maxIntervalSeconds + "]s" +
+                ", parkedInterval=" + parkedIntervalSeconds + "s" +
+                ", chargingInterval=" + chargingIntervalSeconds + "s" +
                 ", changeOnly=" + changeOnly +
                 ", ha=" + homeAssistantDiscovery +
                 ", ssl=" + isSsl() +

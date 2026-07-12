@@ -477,6 +477,20 @@ object UnifiedConfigManager {
         // no AI. Branched at SurveillanceEngineGpu.enable(). Default smart so
         // behaviour matches the prior single-mode build.
         if (!surveillance.has("accOffMode")) surveillance.put("accOffMode", "smart")
+        // Arm mode: WHEN surveillance arms after the car powers off.
+        //   "lock"  — arm when the doors lock, disarm when they unlock (avoids
+        //             recording the owner). Because most trims here can't read
+        //             lock state reliably (cloud rarely fires lock events, OTA
+        //             exposes only the LF door, the legacy device path returns
+        //             INVALID on every field firmware), lock mode ALSO force-arms
+        //             at DOOR_LOCK_ARM_TIMEOUT_MS (60s) when lock state stayed
+        //             unreadable — otherwise it would never arm on those trims.
+        //   "power" — arm immediately on ACC-off, disarm on ACC-on. No lock gate.
+        //             Deterministic; works on every trim.
+        // Branched in CameraDaemon's ACC-off dispatch + door-lock gate. Both modes
+        // still honor the safe-zone and schedule suppression gates. Default "lock"
+        // to preserve the owner-privacy behaviour of the prior single-mode build.
+        if (!surveillance.has("armMode")) surveillance.put("armMode", "lock")
         // Keep ONLY the USB/data rail powered after ACC OFF (e.g. to charge a phone
         // while parked). DEFAULT TRUE so out-of-box behaviour is unchanged; user
         // opt-out (Surveillance → General) lets just that rail sleep on the next
@@ -2372,7 +2386,19 @@ object UnifiedConfigManager {
     fun setSurveillanceEnabled(enabled: Boolean): Boolean {
         return updateValues("surveillance", mapOf("surveillanceEnabled" to enabled))
     }
-    
+
+    /**
+     * Surveillance arm mode: "lock" (arm on door-lock, disarm on unlock, with a
+     * 60s fallback when lock state is unreadable) or "power" (arm immediately on
+     * ACC-off, disarm on ACC-on). Any unrecognized value falls back to "lock".
+     * Read by CameraDaemon's ACC-off dispatch and door-lock gate.
+     */
+    @JvmStatic
+    fun getSurveillanceArmMode(): String {
+        val mode = getSurveillance().optString("armMode", "lock")
+        return if (mode == "power") "power" else "lock"
+    }
+
     // ==================== LISTENERS ====================
     
     @JvmStatic

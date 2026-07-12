@@ -879,6 +879,7 @@ public class MqttConnectionManager {
                 payload.put("light_front_fog", vd.frontFog ? 1 : 0);
                 payload.put("light_hazard", vd.hazard ? 1 : 0);
                 payload.put("light_drl", vd.dayTimeLight ? 1 : 0);
+                payload.put("ambient_colour", vd.ambientColour);
 
                 // Climate
                 if (vd.acStartState != BydVehicleData.UNAVAILABLE) payload.put("ac_on", vd.acStartState);
@@ -931,6 +932,12 @@ public class MqttConnectionManager {
                     payload.put("radar_distances", a);
                 }
                 payload.put("speed_limit_warning", vd.speedLimitWarning ? 1 : 0);
+                // Child Presence Detection: SDK reports 1=on, 2=off, 3=delay. Publish 1/0 for the
+                // adas_cpd switch state_topic, treating delay(3) as on to match the REST read-back
+                // (VehicleControlApiHandler: childPresenceDetection != 2). Only publish a known state
+                // (1-3); 0/UNAVAILABLE means never polled, so leave it absent (HA shows unavailable).
+                if (vd.childPresenceDetection >= 1 && vd.childPresenceDetection <= 3)
+                    payload.put("child_presence_detection", vd.childPresenceDetection != 2 ? 1 : 0);
 
                 // Air quality (negative readings are sensor errors)
                 if (vd.pm25Inside != BydVehicleData.UNAVAILABLE && vd.pm25Inside >= 0 && vd.pm25Inside <= 1000)

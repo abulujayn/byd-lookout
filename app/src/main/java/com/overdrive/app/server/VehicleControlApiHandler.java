@@ -113,6 +113,13 @@ public class VehicleControlApiHandler {
             return true;
         }
 
+        // GET /api/vehicle/adas — read-only ADAS state (currently ESP), for
+        // on-device verification of the ESP feature id before trusting the toggle.
+        if (cleanPath.equals("/api/vehicle/adas") && method.equals("GET")) {
+            handleAdasState(out);
+            return true;
+        }
+
         // POST /api/vehicle/adas
         if (cleanPath.equals("/api/vehicle/adas") && method.equals("POST")) {
             handleAdas(out, body);
@@ -345,8 +352,8 @@ public class VehicleControlApiHandler {
         lights.put("highBeam", data.highBeam);
         lights.put("hazard", data.hazard);
         lights.put("dayTimeLight", data.dayTimeLight);
-        lights.put("ambientOptions", new JSONArray(LightConstants.AMBIENT_COLOURS));
         lights.put("ambientColour", data.ambientColour);
+        lights.put("ambientOptions", new JSONArray(LightConstants.AMBIENT_COLOURS));
         response.put("lights", lights);
 
         // ADAS
@@ -356,8 +363,11 @@ public class VehicleControlApiHandler {
 
         // Setting
         JSONObject setting = new JSONObject();
-        // Conside the delay setting to be on
-        setting.put("childPresenceDetection", data.childPresenceDetection != 2);
+        // SDK value: 1=on, 2=off, 3=delay. Treat on(1) and delay(3) as enabled; anything else —
+        // off(2) or the unpopulated default 0 on vehicles that don't report CPD — reads as off, so
+        // the UI toggle doesn't show "on" for an unknown state.
+        setting.put("childPresenceDetection",
+                data.childPresenceDetection == 1 || data.childPresenceDetection == 3);
         response.put("setting", setting);
 
         // Seats — heating/cooling levels for driver/passenger ([0-2], 0=off)
@@ -681,10 +691,14 @@ public class VehicleControlApiHandler {
      * the FULL state of driver+passenger seats. The JS keeps that state and sends
      * it on every seat command.
      *
-     * Body: { "action": "heating"|"ventilation"|"position",
+     * Body: { "action": "heating"|"ventilation"|"position"|"save",
      *         "position": 1-4, "level": 0-3,
      *         "driverHeat": 0-2, "driverVent": 0-2,
      *         "passengerHeat": 0-2, "passengerVent": 0-2 }
+     *
+     * <p>"position" recalls a stored driver-seat memory slot (1-2); "save" stores
+     * the seat's current physical position into that slot. Both are driver-only,
+     * SDK-only (no BYD cloud equivalent for seat memory).
      */
     private static void handleSeat(OutputStream out, String body) throws Exception {
         JSONObject response = new JSONObject();
@@ -701,7 +715,9 @@ public class VehicleControlApiHandler {
             if ("ventilation".equals(action)) {
                 cmd = new VehicleCommandRouter.SeatVentCommand(position, level, dh, dv, ph, pv);
             } else if ("position".equals(action)) {
-                cmd = new VehicleCommandRouter.SeatMemoryCommand(position);
+                cmd = new VehicleCommandRouter.SeatMemoryCommand(position, false);
+            } else if ("save".equals(action)) {
+                cmd = new VehicleCommandRouter.SeatMemoryCommand(position, true);
             } else {
                 cmd = new VehicleCommandRouter.SeatHeatCommand(position, level, dh, dv, ph, pv);
             }
@@ -723,7 +739,7 @@ public class VehicleControlApiHandler {
     /**
      * Light controls — SDK_ONLY routed.
      * Body: { "target": "dayTimeLight", "enable": true|false }
-     * Body: { "target": "ambientColour", "value": 0-31 }
+     * Body: { "target": "ambientColour", "value": 1-31 }
      */
     private static void handleLights(OutputStream out, String body) throws Exception {
         JSONObject response = new JSONObject();
@@ -731,22 +747,17 @@ public class VehicleControlApiHandler {
             JSONObject req = new JSONObject(body);
             String target = req.optString("target", null);
             VehicleCommand cmd;
-            switch (target) {
-                case "dayTimeLight": {
-                    boolean enable = req.optBoolean("enable", true);
-                    cmd = new VehicleCommandRouter.LightsCommand(enable);
-                    break;
-                }
-                case "ambientColour": {
-                    int value = req.optInt("value", 1);
-                    cmd = new VehicleCommandRouter.AmbientColourCommand(value);
-                    break;
-                }
-                default:
-                    response.put("success", false);
-                    response.put("error", Messages.get("errors.vehicle_unsupported_target_with_target", target));
-                    HttpResponse.sendJson(out, response.toString());
-                    return;
+            if ("dayTimeLight".equals(target)) {
+                boolean enable = req.optBoolean("enable", true);
+                cmd = new VehicleCommandRouter.LightsCommand(enable);
+            } else if ("ambientColour".equals(target)) {
+                int value = req.optInt("value", 1);
+                cmd = new VehicleCommandRouter.AmbientColourCommand(value);
+            } else {
+                response.put("success", false);
+                response.put("error", Messages.get("errors.vehicle_unsupported_target_with_target", target));
+                HttpResponse.sendJson(out, response.toString());
+                return;
             }
             CommandResult r = VehicleCommandRouter.getInstance().execute(cmd);
             logger.info("Lights: target=" + target + " " + r.outcome);
@@ -763,7 +774,9 @@ public class VehicleControlApiHandler {
 
     /**
      * ADAS controls — SDK_ONLY routed.
-     * Body: { "target": "speedLimitWarning", "enable": true|false }
+     * Body: { "target": "speedLimitWarning"|"esp", "enable": true|false }
+     * ESP (Electronic Stability Program) is a SAFETY control; enable=false disables
+     * stability control. Many vehicles re-enable it at the next ignition cycle.
      */
     private static void handleAdas(OutputStream out, String body) throws Exception {
         JSONObject response = new JSONObject();
@@ -771,21 +784,50 @@ public class VehicleControlApiHandler {
             JSONObject req = new JSONObject(body);
             String target = req.optString("target", null);
             boolean enable = req.optBoolean("enable", true);
-            if (!"speedLimitWarning".equals(target)) {
+            VehicleCommand cmd;
+            if ("speedLimitWarning".equals(target)) {
+                cmd = new VehicleCommandRouter.AdasSpeedLimitWarningCommand(enable);
+            } else if ("esp".equals(target)) {
+                cmd = new VehicleCommandRouter.AdasEspCommand(enable);
+            } else {
                 response.put("success", false);
                 response.put("error", Messages.get("errors.vehicle_unsupported_target_with_target", target));
                 HttpResponse.sendJson(out, response.toString());
                 return;
             }
-            CommandResult r = VehicleCommandRouter.getInstance()
-                    .execute(new VehicleCommandRouter.AdasSpeedLimitWarningCommand(enable));
-            logger.info("Adas: target=speedLimitWarning enable=" + enable + " " + r.outcome);
+            CommandResult r = VehicleCommandRouter.getInstance().execute(cmd);
+            logger.info("Adas: target=" + target + " enable=" + enable + " " + r.outcome);
             JSONObject resp = routedResponse(r, "adas");
             resp.put("target", target);
             resp.put("enable", enable);
             HttpResponse.sendJson(out, resp.toString());
         } catch (Exception e) {
             logger.warn("Adas command failed: " + e.getMessage());
+            response.put("success", false);
+            response.put("error", e.getMessage());
+            HttpResponse.sendJson(out, response.toString());
+        }
+    }
+
+    /**
+     * Read-only ADAS state — currently the raw ESP/ESC readback, so the (guessed)
+     * ESP feature id can be verified on-car before the toggle is trusted. Returns
+     * the raw SDK int plus a best-effort parsed on/off (1=on, 0=off; -1=unavailable).
+     */
+    private static void handleAdasState(OutputStream out) throws Exception {
+        JSONObject response = new JSONObject();
+        try {
+            int espRaw = BydDataCollector.getInstance().getEspState();
+            response.put("success", espRaw >= 0);
+            JSONObject esp = new JSONObject();
+            esp.put("raw", espRaw);
+            if (espRaw == 1) esp.put("on", true);
+            else if (espRaw == 0) esp.put("on", false);
+            // any other value (incl. -1) → "on" omitted: unavailable / unknown encoding
+            response.put("esp", esp);
+            HttpResponse.sendJson(out, response.toString());
+        } catch (Exception e) {
+            logger.warn("Adas state read failed: " + e.getMessage());
             response.put("success", false);
             response.put("error", e.getMessage());
             HttpResponse.sendJson(out, response.toString());

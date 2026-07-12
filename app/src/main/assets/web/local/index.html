@@ -834,7 +834,7 @@
 
                 if (status.battery && status.battery.voltage) setText('dash12v', status.battery.voltage.toFixed(1) + 'V');
                 if (status.soc && status.soc.percent !== undefined) {
-                    var socText = Math.round(status.soc.percent) + '%';
+                    var socText = status.soc.percent.toFixed(1) + '%';
                     setText('dashSoc', socText);
                     setText('dashHeroSoc', socText);
                 } else {
@@ -880,7 +880,7 @@
                     setText('dashChargeState', BYD.i18n.t(stateKey) || fallbackState);
 
                     if (c.socPercent !== undefined && c.socPercent !== null) {
-                        setText('dashChargeSoc', Math.round(c.socPercent) + '%');
+                        setText('dashChargeSoc', c.socPercent.toFixed(1) + '%');
                     }
                     // Don't show the estimated/placeholder kW (nav bar suppresses
                     // it too) — it read a fabricated ~7 kW vs the real 6.1.

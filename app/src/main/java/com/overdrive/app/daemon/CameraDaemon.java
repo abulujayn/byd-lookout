@@ -145,6 +145,18 @@ public class CameraDaemon {
     // Surveillance is only armed after doors are locked (reduces false triggers from owner exiting).
     private static volatile boolean doorLockListenerArmed = false;
 
+    // Lock-mode fallback signal: set true the moment ANY lock source delivers a
+    // DEFINITE lock/unlock reading (applyLockEvent is only ever called with a
+    // real value — INVALID/unknown reads never reach it). The 60s force-arm uses
+    // this to distinguish two cases on an unlocked car:
+    //   - reading was UNREADABLE the whole window  → force-arm (fallback for the
+    //     common BYD trims whose lock sensors return INVALID ACC-off), and
+    //   - reading was READABLE and said UNLOCKED    → stay disarmed (lock mode
+    //     honors unlock; arming here would fight the unlock poll and cause the
+    //     arm-then-disarm flap).
+    // Reset at gate entry and on ACC-ON cleanup.
+    private static volatile boolean sawValidLockReading = false;
+
     // Three parallel lock-event sources, all active simultaneously while the
     // gate is open. Cloud is fragile in the field (rarely fires lock events
     // even when MQTT is healthy), so device-SDK and polling exist as
@@ -268,6 +280,15 @@ public class CameraDaemon {
         new java.util.concurrent.atomic.AtomicBoolean(false);
     private static final long CONTEXT_WATCHDOG_POLL_INTERVAL_MS = 2_000L;
     private static final long CONTEXT_WATCHDOG_MAX_DURATION_MS = 60_000L;
+
+    // CAS guard so at most one ACC-ON external-remount thread is alive at a time.
+    // The remount blocks up to the per-class mount ceiling (~15s), so a rapid ACC
+    // OFF→ON→OFF→ON flap (stop-start, cranking) — each genuine ON edge passing the
+    // onAccStateChanged dedup — would otherwise spawn a fresh thread per edge and
+    // pile up overlapping `sm mount`s. One in flight is enough; a drop that
+    // happens while it runs is caught by the free-running VolumeWatchdog anyway.
+    private static final java.util.concurrent.atomic.AtomicBoolean accOnRemountInFlight =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
     
     /** Get the shared app context (for use by other components in this process). */
     public static android.content.Context getAppContext() { return sharedAppContext; }
@@ -408,8 +429,22 @@ public class CameraDaemon {
         } catch (Exception e) {
             log("ACC ON: VehicleDataMonitor re-init failed: " + e.getMessage());
         }
+
+        // Re-drive the notifications subsystem. If the boot-time init lost the
+        // sharedAppContext race, the CategoryRegistry couldn't load and
+        // initNotifications() returned in degraded mode WITHOUT latching
+        // notificationsInitialized — so HistorySink was never subscribed,
+        // NotificationStore never opened, and /api/notifications/log 503s
+        // (empty Log tab) for the whole session. Now that the context is valid,
+        // re-run it: the internal `if (notificationsInitialized) return` makes
+        // this a cheap no-op when the boot init already succeeded.
+        try {
+            initNotifications();
+        } catch (Exception e) {
+            log("ACC ON: notifications re-init failed: " + e.getMessage());
+        }
     }
-    
+
     // Build stamp printed at startup so logs identify the running build.
     // BUMP THIS on every code change you intend to deploy + verify.
     private static final String BUILD_TAG = "20260603-coldstart-recfix-1";
@@ -565,11 +600,40 @@ public class CameraDaemon {
         // runs here, and every v1 emit source (surveillance, proximity, tyre)
         // lives here too. Init on a background thread because reading APK
         // assets can take a moment and we don't want to delay HTTP startup.
+        //
+        // RETRY until it takes: initNotifications() reads the CategoryRegistry
+        // from APK assets via sharedAppContext. On a cold boot that context can
+        // still be null here (system_server warm-up), and a single attempt then
+        // returns in degraded mode — leaving HistorySink unsubscribed and the
+        // NotificationStore closed for the WHOLE session (empty Log tab, 503 on
+        // /api/notifications/log), while Telegram (separate process) keeps
+        // working and hides the failure. This bounded poll re-attempts until
+        // notificationsInitialized latches true (the method's own guard makes
+        // each post-success call a no-op) or the ceiling is hit — decoupled
+        // from the ACC/rmm-scoped context watchdog so a parked car that never
+        // toggles ACC still self-heals.
         new Thread(() -> {
-            try {
-                initNotifications();
-            } catch (Exception e) {
-                log("Notifications init failed: " + e.getMessage());
+            final long deadline = System.currentTimeMillis() + 300_000L; // 5 min
+            long delayMs = 2_000L;
+            while (true) {
+                try {
+                    initNotifications();
+                } catch (Exception e) {
+                    log("Notifications init failed: " + e.getMessage());
+                }
+                if (notificationsInitialized || System.currentTimeMillis() >= deadline) {
+                    if (!notificationsInitialized) {
+                        log("Notifications init gave up after 5 min — context never became ready");
+                    }
+                    break;
+                }
+                try {
+                    Thread.sleep(delayMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+                delayMs = Math.min(delayMs * 2, 30_000L); // 2s→4s→…→30s cap
             }
         }, "NotificationsInit").start();
 
@@ -3036,6 +3100,11 @@ public class CameraDaemon {
      */
     private static void registerDoorLockListenerAndArmOnLock() {
         doorLockListenerArmed = false;
+        // Reset the fallback signal for this ACC-off cycle. Flipped true by
+        // applyLockEvent() the first time any source delivers a definite
+        // lock/unlock reading; the 60s force-arm only fires when it stayed false
+        // (lock state was never readable on this trim).
+        sawValidLockReading = false;
 
         // Two parallel lock-event sources, in priority order:
         //
@@ -3072,15 +3141,22 @@ public class CameraDaemon {
         Boolean cloudInitial = currentCloudLockState();
         if (cloudInitial != null) applyLockEvent(cloudInitial, "cloud-initial");
 
-        // Force-arm deadline: by DOOR_LOCK_ARM_TIMEOUT_MS (60s) after ACC-OFF,
-        // surveillance MUST be armed REGARDLESS of lock/unlock state. The first 60s is
-        // a grace window where the owner may still be settling (locking, grabbing
-        // things, re-entering) — during it a lock arms early and an unlock disarms.
-        // At the deadline we arm UNCONDITIONALLY: this is authoritative, not a flag
-        // check. We call enableSurveillance() directly (idempotent — a no-op if the
-        // pipeline is already running) and set doorLockListenerArmed=true, so even if
-        // an unlock inside the window had disarmed us, we end up armed at 60s. This
-        // closes the gap where an unlock left surveillance off past the 60s grace.
+        // Force-arm deadline (lock-mode FALLBACK for trims that can't read lock
+        // state): DOOR_LOCK_ARM_TIMEOUT_MS (60s) after ACC-OFF, if lock state was
+        // NEVER readable during the window (sawValidLockReading == false), arm
+        // anyway. Most BYD trims here return INVALID for the door-lock sensors
+        // ACC-off (cloud rarely fires lock events, OTA exposes only the LF door,
+        // the legacy device path returns INVALID on every field firmware) — without
+        // this fallback, lock mode would never arm on those cars.
+        //
+        // CRITICAL: this fires ONLY when lock state stayed unreadable. If a source
+        // DID deliver a definite reading (sawValidLockReading == true) and it said
+        // UNLOCKED, lock mode intentionally stays disarmed — force-arming there
+        // would (a) violate lock mode's contract (arm only when locked) and (b)
+        // fight the 5s unlock poll, producing the ~5s arm-then-disarm flap that was
+        // the original "not arming while unlocked" bug. Users who want arming on an
+        // unlocked car should select power mode.
+        //
         // Still gated on ACC — if ACC came back ON in the meantime we must not arm.
         new Thread(() -> {
             try {
@@ -3123,6 +3199,17 @@ public class CameraDaemon {
                     log("LOCK GATE TIMEOUT: ACC turned ON before force-arm — not arming");
                     return;
                 }
+                // FALLBACK GUARD: only force-arm when lock state was never readable.
+                // If a source delivered a definite reading, it wasn't LOCKED (else
+                // doorLockListenerArmed would be true and we'd have exited above), so
+                // it was UNLOCKED — and lock mode honors that. Staying disarmed here
+                // is what prevents the arm-then-disarm flap against the unlock poll.
+                if (sawValidLockReading) {
+                    log("LOCK GATE TIMEOUT: lock state was readable and not locked "
+                        + "(owner left it unlocked) — lock mode stays disarmed; "
+                        + "use power arm mode to arm an unlocked car");
+                    return;
+                }
                 // SCHEDULE re-check: the upstream ACC-OFF gate (see :3582) only
                 // starts this 60s timer when we parked INSIDE the schedule window,
                 // but the window can END during the grace period. enableSurveillance()
@@ -3146,7 +3233,8 @@ public class CameraDaemon {
                     log("LOCK GATE TIMEOUT: schedule check error (proceeding): " + e.getMessage());
                 }
                 log("LOCK GATE TIMEOUT: " + (DOOR_LOCK_ARM_TIMEOUT_MS / 1000)
-                    + "s elapsed — force-arming surveillance regardless of lock state");
+                    + "s elapsed and lock state never readable on this trim — "
+                    + "force-arming surveillance (lock-mode fallback)");
                 doorLockListenerArmed = true;
                 safeZoneSuppressed = false;  // cleared if/when enableSurveillance() actually starts
                 enableSurveillance();
@@ -3188,6 +3276,12 @@ public class CameraDaemon {
                 + " but ACC is ON — ignoring");
             return;
         }
+        // A definite reading arrived (this method is only ever called with a real
+        // LOCKED/UNLOCKED value — INVALID/unknown reads are filtered upstream in
+        // the poll and cloud sources). Record it so the 60s force-arm fallback
+        // knows lock state is READABLE on this trim and must NOT override a
+        // genuine unlock.
+        sawValidLockReading = true;
         if (locked) {
             if (doorLockListenerArmed) return;
             log("LOCK GATE [" + source + "]: LOCKED — arming surveillance");
@@ -3479,6 +3573,7 @@ public class CameraDaemon {
      */
     private static void cleanupDoorLockGate() {
         doorLockListenerArmed = false;
+        sawValidLockReading = false;
 
         // Detach all three lock-event sources
         if (cloudLockListener != null) {
@@ -3774,13 +3869,50 @@ public class CameraDaemon {
                     // AVC keep-alive for sentry — same 60s poke we use during ACC-ON
                     // and streaming/recording-mode. See enableSurveillance() for why.
                     startAvcKeepAliveIfNeeded();
-                    // Door lock gate: surveillance is armed only after doors are locked.
-                    // This prevents false motion events from the owner exiting the car.
-                    // Three parallel sources fire concurrently (cloud MQTT, device-SDK
-                    // typed listener, 5s polling); arm timeout at 60s; ACC-ON disarm
-                    // watchdog runs in parallel as reverse fallback.
-                    log("Pipeline started in sentry mode — waiting for door lock to arm surveillance");
-                    registerDoorLockListenerAndArmOnLock();
+                    // Arm mode decides WHEN we arm after ACC-off:
+                    //   "power" — arm immediately, no lock gate. Disarm is handled
+                    //             by the ACC-ON path (cleanupDoorLockGate +
+                    //             gpuPipeline.onAccOn). Deterministic on every trim.
+                    //   "lock"  — arm on door-lock, disarm on unlock, with a 60s
+                    //             fallback force-arm when lock state is unreadable
+                    //             (see registerDoorLockListenerAndArmOnLock).
+                    // Both paths still honor safe-zone + schedule suppression via
+                    // enableSurveillance() and the gates above.
+                    String armMode = com.overdrive.app.config.UnifiedConfigManager
+                        .getSurveillanceArmMode();
+                    if ("power".equals(armMode)) {
+                        log("Pipeline started in sentry mode — arm mode=power, arming immediately");
+                        // Mark armed and enable now. doorLockListenerArmed is the
+                        // runtime "surveillance is live" truth consumed by the
+                        // mode-switch re-arm path; set it so power mode participates
+                        // in that logic identically to a lock-gate arm.
+                        doorLockListenerArmed = true;
+                        enableSurveillance();
+                        // Consistency guard: enableSurveillance() can decline to
+                        // start (ACC flipped ON, or safe-zone suppression). If the
+                        // pipeline isn't actually running, revert the flag so it
+                        // doesn't lie about being armed.
+                        if (com.overdrive.app.monitor.AccMonitor.isAccOn()
+                                || safeZoneSuppressed
+                                || gpuPipeline == null || !gpuPipeline.isRunning()) {
+                            log("Arm mode=power: pipeline not running after enable "
+                                + "(safeZone=" + safeZoneSuppressed + ") — reverting armed flag");
+                            doorLockListenerArmed = false;
+                        }
+                        // Still need the ACC-ON disarm watchdog as the reverse
+                        // fallback (ACC turns ON without an IPC reaching us).
+                        startAccOnDisarmWatchdog();
+                    } else {
+                        // Door lock gate: surveillance is armed after doors lock,
+                        // disarmed on unlock, force-armed at 60s if lock state is
+                        // unreadable. Prevents false motion events from the owner
+                        // exiting the car while still arming on trims that can't
+                        // report lock state. Sources fire concurrently (cloud MQTT,
+                        // 5s OTA poll); ACC-ON disarm watchdog runs as reverse
+                        // fallback.
+                        log("Pipeline started in sentry mode — arm mode=lock, waiting for door lock to arm surveillance");
+                        registerDoorLockListenerAndArmOnLock();
+                    }
 
                     // SOTA: Periodic schedule checker — monitors time window transitions
                     // during active sentry. If the schedule window ends, surveillance stops.
@@ -3831,6 +3963,49 @@ public class CameraDaemon {
             // recordings until the user cycled ACC OFF→ON. The watchdog is
             // started at daemon boot in main() and runs for the daemon's
             // lifetime as long as any storage type is set to SD.
+
+            // Active force-remount of the configured external volume at wake.
+            // The USB-bridged SD (SCSI major 8) loses power across the ACC-off→on
+            // transition — the reader rail follows AP/display wake, so the bus
+            // re-enumerates and the card drops for the first several seconds of
+            // the drive. The ACC-OFF branch above force-remounts; without the
+            // symmetric call here, ACC-ON recovery fell entirely to the 15s
+            // VolumeWatchdog, which needs TWO consecutive failed ticks before it
+            // even tries a remount and then races the 4-15s slow-mount tail of the
+            // re-powering reader → a 30s+ window where the card reads "not
+            // detected" with the car ON. remountExternalOnAccOn() drives it back
+            // at wake and resets the two-strikes counters. Run OFF this thread:
+            // it blocks up to the per-class mount ceiling (the ACC-OFF branch
+            // blocks on the same call, but the ACC-ON handler has latency-
+            // sensitive camera-handoff work below that must not wait on vold).
+            // No-ops fully when all storage is INTERNAL. CAS-guarded so a rapid
+            // ACC flap can't pile up overlapping remount threads (each blocks
+            // ~15s); one in flight is enough, and the VolumeWatchdog covers any
+            // drop that lands while it runs.
+            if (accOnRemountInFlight.compareAndSet(false, true)) {
+                boolean spawned = false;
+                try {
+                    new Thread(() -> {
+                        try {
+                            com.overdrive.app.storage.StorageManager.getInstance()
+                                .remountExternalOnAccOn();
+                        } catch (Throwable t) {
+                            log("ACC ON: external remount failed: " + t.getMessage());
+                        } finally {
+                            accOnRemountInFlight.set(false);
+                        }
+                    }, "AccOnRemount").start();
+                    spawned = true;
+                } finally {
+                    // If Thread construction/start() threw (OOM / thread-limit)
+                    // the runnable's finally never runs — clear the guard here so
+                    // a failed spawn can't wedge the flag true and permanently
+                    // suppress every future ACC-ON remount for the daemon's life.
+                    if (!spawned) accOnRemountInFlight.set(false);
+                }
+            } else {
+                log("ACC ON: external remount already in flight — skipping duplicate");
+            }
 
             // Stop schedule checker (only runs during ACC OFF sentry mode)
             stopScheduleChecker();
@@ -4964,7 +5139,16 @@ public class CameraDaemon {
             }
         }
         if (registry == null) {
-            log("Notification registry unavailable; subsystem will boot in degraded mode.");
+            // sharedAppContext wasn't populated yet (boot-time race — see the
+            // context watchdog) or the asset read threw. Do NOT latch
+            // notificationsInitialized: leaving it false lets a later caller
+            // re-drive this once the context comes up. Without a re-drive the
+            // whole subsystem — HistorySink, NotificationStore, and the
+            // /api/notifications/log route — stays dark for the entire daemon
+            // session (503 → empty Log tab), while Telegram (separate process,
+            // its own IPC) keeps working, masking the failure. The context
+            // watchdog's reinitContextDependentComponents() retries this.
+            log("Notification registry unavailable; will retry when app context is ready.");
             return;
         }
 
@@ -4997,10 +5181,12 @@ public class CameraDaemon {
             log("NotificationStore init failed (log tab will be empty): " + e.getMessage());
         }
 
-        // Subscribe HistorySink FIRST so it receives the NotificationBus
-        // pre-subscribe buffer flush (the bus replays boot-window events only to
-        // the first sink) — a door-open / charging-fault during startup then
-        // still lands in the persisted log.
+        // Wire every sink BEFORE sealing the bus so any boot-window event
+        // buffered by NotificationBus is flushed to ALL of them at seal — not
+        // just the first to subscribe. A door-open / charging-fault during the
+        // startup window then reaches the persisted log AND Web Push AND
+        // Telegram. Subscribe order is cosmetic now (seal-time flush hits every
+        // subscribed sink); HistorySink stays first only for readability.
         com.overdrive.app.notifications.NotificationBus.get()
                 .subscribe(new com.overdrive.app.notifications.sinks.HistorySink(notifStore, registry));
         com.overdrive.app.notifications.NotificationBus.get()
@@ -5014,6 +5200,15 @@ public class CameraDaemon {
         // directly via TelegramNotifier) so there is no double-send.
         com.overdrive.app.notifications.NotificationBus.get()
                 .subscribe(new com.overdrive.app.notifications.sinks.TelegramSink());
+
+        // All sinks are now wired. Seal the bus: flush the buffered
+        // boot-window events to every subscribed sink (once each) and switch to
+        // live-only dispatch. Without this seal, publish() would buffer forever.
+        // The steps between the subscribes above and the latch below cannot
+        // throw (NotificationApiHandler.init is field assignment), so the
+        // NotificationsInit retry loop can never partially re-enter and
+        // double-subscribe the sinks.
+        com.overdrive.app.notifications.NotificationBus.get().sealPreSubscribeBuffer();
 
         com.overdrive.app.server.NotificationApiHandler.init(registry, subStore, keyStore);
 

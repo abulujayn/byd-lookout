@@ -1639,21 +1639,24 @@ public class SohEstimator {
         // hold this same lock), so without acquiring here a cross-thread reader
         // could see torn or stale values — e.g. currentSoh from before init
         // while capacityAhSoh has already been written by the auto-detect path.
-        double frameSoh, curSoh, capAh, calSoh;
-        boolean capAhDisabled;
+        double frameSoh, curSoh, calSoh;
         synchronized (autoDetectLock) {
             frameSoh = getFrameAnchorSohLocked();
             curSoh = currentSoh;
-            capAh = capacityAhSoh;
-            capAhDisabled = capacityAhDisabled;
             calSoh = calibrationSoh;
         }
 
+        // Keep this chain in sync with the displaySoh logic in getStatus().
+        // PHEV: frame_anchor (retained but currently never fed) > calibration
+        //   > 100% default (currentSoh). A real charge-session calibration is
+        //   the ONLY PHEV signal below 100% — the capacity-Ah anchor is retired
+        //   (getBatteryCapacity is a static nameplate on DM-i, not a coulomb
+        //   count, and reported phantom degradation on healthy packs).
+        // BEV: live (currentSoh) > calibration > unavailable — unchanged.
         if (phev && frameSoh > 0) return frameSoh;
-        if (phev && capAh > 0 && !capAhDisabled) return capAh;
+        if (phev && calSoh > 0) return calSoh;
         if (curSoh > 0) return curSoh;
         if (calSoh > 0) return calSoh;
-        if (capAh > 0 && !capAhDisabled) return capAh;
         return -1;
     }
 
@@ -1769,13 +1772,15 @@ public class SohEstimator {
             calibration.put("timestampMs", calibrationTimestampMs);
             status.put("calibration", calibration);
 
-            // Capacity-Ah anchor (PHEV-only). Always present in the response
-            // so the UI can show "—" when not available; consumers shouldn't
-            // need to know which sources are emitted per-drivetrain.
+            // Capacity-Ah anchor — RETIRED as a SOH source (getBatteryCapacity is
+            // a static nameplate on DM-i, not a coulomb count). Key kept in the
+            // response for shape stability, but soh is always -1 / disabled=true so
+            // no consumer or debugger sees a stale persisted anchor value (e.g. a
+            // 76% left on disk from before retirement) next to a 100% headline.
             org.json.JSONObject capAh = new org.json.JSONObject();
-            capAh.put("soh", capacityAhSoh > 0 ? Math.round(capacityAhSoh * 10) / 10.0 : -1);
-            capAh.put("timestampMs", capacityAhTimestampMs);
-            capAh.put("disabled", capacityAhDisabled);
+            capAh.put("soh", -1);
+            capAh.put("timestampMs", 0);
+            capAh.put("disabled", true);
             status.put("capacityAh", capAh);
 
             // Frame anchor (PHEV-only). Empirically captures the BMS's view
@@ -1805,21 +1810,16 @@ public class SohEstimator {
 
             // Display fallback chain.
             //
-            // BEV: live > calibration > unavailable. capacity_ah and
-            // frame_anchor are never computed for BEV (both early-return on
-            // !isPhev).
+            // BEV: live > calibration > unavailable. frame_anchor is never
+            // computed for BEV (early-returns on !isPhev).
             //
-            // PHEV: frame_anchor > capacity_ah > live > calibration > unavailable.
-            // The frame anchor is the most accurate PHEV source because it's
-            // anchored at the BMS's own "100% SOC" boundary — independent of
-            // the per-tick noise in remainKwh / SOC and independent of the
-            // nameplate-vs-usable frame question that breaks the live formula.
-            // capacity_ah is the second choice (independent of SOC range too,
-            // but subject to nameplate-stuck and SOC-coupling failure modes).
-            // live is only the headline source on BEV; on PHEV it's the
-            // last-resort before falling back to calibration. We only prefer
-            // a source when it has a real value AND hasn't been disabled by
-            // its specific guard.
+            // PHEV: frame_anchor > calibration > live(=100% default) > unavailable.
+            // The capacity-Ah anchor has been retired as a PHEV SOH source (see
+            // the displaySoh block below and SocHistoryDatabase feed site). The
+            // frame anchor is retained in the chain but is currently never fed
+            // (no live caller of observePeakAtFullCharge), so in practice PHEV
+            // resolves to calibration when a real charge session exists, else the
+            // honest 100% seeded default.
             boolean phev = false;
             try {
                 com.overdrive.app.byd.BydDataCollector col =
@@ -1827,32 +1827,32 @@ public class SohEstimator {
                 if (col != null && col.isInitialized()) phev = col.isPhevPublic();
             } catch (Throwable ignored) {}
 
+            // Keep this in sync with getDisplaySoh().
+            // PHEV: frame_anchor (retained, currently never fed) > calibration
+            //   > 100% default (currentSoh, seeded and never lowered by the
+            //   gated-off live formula). The capacity-Ah anchor is retired: on
+            //   DM-i firmware getBatteryCapacity() is a STATIC nameplate Ah, not
+            //   a live coulomb count, so it reported phantom degradation (e.g.
+            //   76% on a healthy ~7k-km pack) and no cell-count fix can make a
+            //   constant track health. A real ≥25% charge-session calibration is
+            //   the only trusted PHEV signal below 100%.
+            // BEV: live > calibration > unavailable — unchanged.
             double displaySoh;
             String displaySource;
             boolean preferFrameAnchor = phev && frameSoh > 0;
-            boolean preferCapacityAh = phev && capacityAhSoh > 0 && !capacityAhDisabled;
+            boolean preferCalibration = phev && calibrationSoh > 0;
             if (preferFrameAnchor) {
                 displaySoh = frameSoh;
                 displaySource = "frame_anchor";
-            } else if (preferCapacityAh) {
-                displaySoh = capacityAhSoh;
-                displaySource = "capacity_ah";
+            } else if (preferCalibration) {
+                displaySoh = calibrationSoh;
+                displaySource = "calibration";
             } else if (currentSoh > 0) {
                 displaySoh = currentSoh;
                 displaySource = "live";
             } else if (calibrationSoh > 0) {
                 displaySoh = calibrationSoh;
                 displaySource = "calibration";
-            } else if (capacityAhSoh > 0 && !capacityAhDisabled) {
-                // Final-fallback path is reached on BEV (when neither live nor
-                // calibration is set yet) AND on PHEV when the primary
-                // preferCapacityAh branch above didn't fire. Gate on !disabled
-                // here too — otherwise a once-good anchor that later got
-                // latched off by the nameplate / SOC-coupled detector would
-                // still surface as the displayed SOH after a restart, with
-                // displaySource="capacity_ah" misleading the UI.
-                displaySoh = capacityAhSoh;
-                displaySource = "capacity_ah";
             } else {
                 displaySoh = -1;
                 displaySource = "unavailable";

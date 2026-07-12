@@ -52,6 +52,7 @@ BYD.surveillance = {
         motionHeatmap: false,
         filterDebugLog: false,
         discardEmptyBrightMotionEvents: false,
+        discardEmptyMotionAtNight: false,
         // Per-quadrant sensitivity / zone overrides. Keys: Q0=front, Q1=right,
         // Q2=rear, Q3=left. Absent key = inherit global. The "Side-cam Boost"
         // UI writes to Q1 + Q3.
@@ -70,6 +71,10 @@ BYD.surveillance = {
         // (plain rolling 4-cam recording, no motion, no AI). Backward-compat:
         // installs that pre-date this key see the smart default.
         accOffMode: 'smart',
+        // Arm mode: 'lock' (arm on door-lock, disarm on unlock, 60s fallback when
+        // lock state is unreadable, default) | 'power' (arm immediately on
+        // power-off, disarm on power-on). Both honor safe locations + schedules.
+        armMode: 'lock',
         // Keep ONLY the USB/data rail powered after ACC OFF (e.g. to charge a phone
         // while parked). Default true (unchanged out-of-box behaviour); turning it
         // off lets just that rail sleep on the next ACC-OFF cycle to save the 12V
@@ -1450,6 +1455,71 @@ BYD.surveillance = {
           });
     },
 
+    setArmMode(mode) {
+        if (mode !== 'lock' && mode !== 'power') return;
+        const prev = this.config.armMode || 'lock';
+        if (prev === mode) return;
+
+        this.config.armMode = mode;
+        // Reflect button state immediately so the click feels responsive
+        // before the network round-trip resolves.
+        document.querySelectorAll('#armModeBtns .btn-toggle').forEach(btn =>
+            btn.classList.toggle('active', btn.dataset.value === mode));
+        this.applyArmModeUI();
+
+        const self = this;
+        fetch('/api/surveillance/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ armMode: mode })
+        }).then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+          .then(() => {
+              if (self.savedConfig) self.savedConfig.armMode = mode;
+              self.markChanged();
+              if (BYD.utils && BYD.utils.toast) {
+                  const k = mode === 'power'
+                      ? 'surveillance.arm_saved_power'
+                      : 'surveillance.arm_saved_lock';
+                  const fallback = mode === 'power'
+                      ? 'Arms on power-off'
+                      : 'Arms on door lock';
+                  const localized = BYD.i18n && BYD.i18n.t ? BYD.i18n.t(k) : null;
+                  BYD.utils.toast(localized || fallback, 'success');
+              }
+          })
+          .catch(() => {
+              // Revert in-memory + UI on failure so the displayed state
+              // matches the server.
+              self.config.armMode = prev;
+              document.querySelectorAll('#armModeBtns .btn-toggle').forEach(btn =>
+                  btn.classList.toggle('active', btn.dataset.value === prev));
+              self.applyArmModeUI();
+              if (BYD.utils && BYD.utils.toast) {
+                  const localized = BYD.i18n && BYD.i18n.t
+                      ? BYD.i18n.t('surveillance.arm_save_failed') : null;
+                  BYD.utils.toast(localized || 'Could not save arm mode', 'error');
+              }
+          });
+    },
+
+    /**
+     * Update the arm-mode hint paragraph based on the current armMode.
+     * Called from setArmMode() and the load path (updateV2UI). Cosmetic only.
+     */
+    applyArmModeUI() {
+        const mode = this.config.armMode || 'lock';
+        const hintKey = mode === 'power'
+            ? 'surveillance.arm_hint_power'
+            : 'surveillance.arm_hint_lock';
+        const hintEl = document.getElementById('armModeHint');
+        if (hintEl) {
+            hintEl.setAttribute('data-i18n', hintKey);
+            hintEl.textContent = (BYD.i18n && BYD.i18n.t)
+                ? (BYD.i18n.t(hintKey) || hintEl.textContent)
+                : hintEl.textContent;
+        }
+    },
+
     /**
      * Update the hint paragraph + dim/restore detection-related cards based
      * on the current accOffMode. Called from setAccOffMode() and from the
@@ -1812,7 +1882,24 @@ BYD.surveillance = {
     updateDiscardEmptyMotion() {
         var el = document.getElementById('v2DiscardEmptyMotion');
         this.config.discardEmptyBrightMotionEvents = (el && el.checked) || false;
+        // The night sub-toggle only makes sense while the primary discard is on;
+        // disable + visually gray it out when the parent is off.
+        this._syncNightDiscardEnabled();
         this.markChanged();
+    },
+
+    updateDiscardEmptyMotionAtNight() {
+        var el = document.getElementById('v2DiscardEmptyMotionNight');
+        this.config.discardEmptyMotionAtNight = (el && el.checked) || false;
+        this.markChanged();
+    },
+
+    _syncNightDiscardEnabled() {
+        var parentOn = !!this.config.discardEmptyBrightMotionEvents;
+        var row = document.getElementById('discardEmptyMotionNightRow');
+        var nightEl = document.getElementById('v2DiscardEmptyMotionNight');
+        if (nightEl) nightEl.disabled = !parentOn;
+        if (row) row.style.opacity = parentOn ? '1' : '0.45';
     },
     
     _deselectPresetIfCustom() {
@@ -2364,6 +2451,14 @@ BYD.surveillance = {
             btn.classList.toggle('active', btn.dataset.value === accOffMode));
         this.applyAccOffModeUI();
 
+        // Arm mode — reflect the loaded value on the toggle group and refresh
+        // its hint. Default to 'lock' if the server omitted the field (older
+        // daemon build).
+        const armMode = this.config.armMode || 'lock';
+        document.querySelectorAll('#armModeBtns .btn-toggle').forEach(btn =>
+            btn.classList.toggle('active', btn.dataset.value === armMode));
+        this.applyArmModeUI();
+
         // Keep USB powered while parked — default true when the server omits the
         // field (older daemon build) so the switch shows the real out-of-box default.
         const keepUsb = document.getElementById('survKeepUsbPower');
@@ -2524,6 +2619,9 @@ BYD.surveillance = {
         // toggles above can stay plain).
         setToggle(document.getElementById('v2DiscardEmptyMotion'),
                   !!this.config.discardEmptyBrightMotionEvents);
+        setToggle(document.getElementById('v2DiscardEmptyMotionNight'),
+                  !!this.config.discardEmptyMotionAtNight);
+        this._syncNightDiscardEnabled();
 
         // Telegram start-ping opt-in
         setToggle(document.getElementById('v2TelegramSendStartPing'),
@@ -2597,7 +2695,7 @@ BYD.surveillance = {
             // Folded in from the (removed) Advanced tab — these motion-
             // detection diagnostics belong with detection.
             'motionHeatmap', 'filterDebugLog',
-            'discardEmptyBrightMotionEvents'
+            'discardEmptyBrightMotionEvents', 'discardEmptyMotionAtNight'
         ],
         recording: [
             // Backend reads these EXACT names — preRecordSeconds (no "ing").

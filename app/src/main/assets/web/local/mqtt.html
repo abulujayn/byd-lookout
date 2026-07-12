@@ -270,6 +270,21 @@
                                 <label><span data-i18n="mqtt.field_max_interval">Max interval — heartbeat</span>: <span id="formMaxLabel" style="font-family:'JetBrains Mono',monospace;color:var(--text-primary);">5m</span></label>
                                 <input type="range" class="slider" id="formMaxInterval" min="30" max="3600" step="30" value="300" oninput="MQTT.onSlider()">
                             </div>
+                            <!-- Per-state heartbeat overrides (issue #132). Optional: when set, they
+                                 replace the heartbeat interval above while the car is parked / charging.
+                                 Left at 0 (Off) they inherit the max interval, so existing connections
+                                 behave exactly as before. Parked lets telemetry slow right down to save
+                                 data during the ACC-off network blackout; charging can keep stats lively. -->
+                            <div class="form-group" style="grid-column: span 2;">
+                                <label><span data-i18n="mqtt.field_parked_interval">Parked heartbeat (ACC off)</span>: <span id="formParkedLabel" style="font-family:'JetBrains Mono',monospace;color:var(--text-primary);">Off</span></label>
+                                <input type="range" class="slider" id="formParkedInterval" min="0" max="3600" step="30" value="0" oninput="MQTT.onSlider()">
+                                <div style="font-size:12px;color:var(--text-muted);margin-top:2px;" data-i18n="mqtt.field_parked_interval_desc">Heartbeat cadence while the car is parked. Off = use the max interval. Higher = fewer publishes, less data.</div>
+                            </div>
+                            <div class="form-group" style="grid-column: span 2;">
+                                <label><span data-i18n="mqtt.field_charging_interval">Charging heartbeat</span>: <span id="formChargingLabel" style="font-family:'JetBrains Mono',monospace;color:var(--text-primary);">Off</span></label>
+                                <input type="range" class="slider" id="formChargingInterval" min="0" max="3600" step="30" value="0" oninput="MQTT.onSlider()">
+                                <div style="font-size:12px;color:var(--text-muted);margin-top:2px;" data-i18n="mqtt.field_charging_interval_desc">Heartbeat cadence while charging. Off = use the max interval. Takes precedence over the parked cadence.</div>
+                            </div>
                         </div>
 
                         <!-- Toggle Options -->
@@ -383,7 +398,7 @@
     <script src="../shared/auth.js"></script>
     <script src="../shared/core.js"></script>
     <script src="../shared/update-flow.js"></script>
-    <script src="../shared/mqtt.js"></script>
+    <script src="../shared/mqtt.js?v=2"></script>
     <script>
         function toggleSidebar() {
             document.getElementById('sidebar').classList.toggle('open');

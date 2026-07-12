@@ -14,6 +14,12 @@ public class TripRecord {
     public long startTime;             // Epoch ms
     public long endTime;               // Epoch ms
     public double distanceKm;          // Odometer delta
+    // Raw vehicle odometer (km) snapshotted at trip start/end. distanceKm is
+    // their delta; these are the absolute readings for display. 0 = the
+    // odometer was unavailable at that edge (recovered trips, or a HAL that
+    // didn't report it) — the UI treats 0 as "--".
+    public double odometerStartKm;
+    public double odometerEndKm;
     public int durationSeconds;
     public double avgSpeedKmh;
     public int maxSpeedKmh;
@@ -143,6 +149,8 @@ public class TripRecord {
             json.put("startTime", startTime);
             json.put("endTime", endTime);
             json.put("distanceKm", distanceKm);
+            json.put("odometerStartKm", odometerStartKm);
+            json.put("odometerEndKm", odometerEndKm);
             json.put("durationSeconds", durationSeconds);
             json.put("avgSpeedKmh", avgSpeedKmh);
             json.put("maxSpeedKmh", maxSpeedKmh);
@@ -200,6 +208,8 @@ public class TripRecord {
             json.put("startTime", startTime);
             json.put("endTime", endTime);
             json.put("distanceKm", distanceKm);
+            json.put("odometerStartKm", odometerStartKm);
+            json.put("odometerEndKm", odometerEndKm);
             json.put("durationSeconds", durationSeconds);
             json.put("avgSpeedKmh", avgSpeedKmh);
             json.put("maxSpeedKmh", maxSpeedKmh);

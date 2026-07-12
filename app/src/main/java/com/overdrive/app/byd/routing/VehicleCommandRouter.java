@@ -521,13 +521,25 @@ public final class VehicleCommandRouter {
         public boolean executeViaSdk(BydDataCollector c) { return c.setSeatVentilation(position, level); }
     }
 
+    /**
+     * Driver-seat memory: recall (move to a stored slot) or save (store the current
+     * position into a slot). Both slots are 1-2. SDK-only — the driver-seat memory
+     * ids live on the setting HAL and have no BYD cloud remote-control equivalent.
+     * {@code save=false} recalls (setSeatMemoryPosition / WAKE id); {@code save=true}
+     * stores (setSeatMemorySave / SET id).
+     */
     public static final class SeatMemoryCommand extends VehicleCommand {
         public final int position;
-        public SeatMemoryCommand(int p) { this.position = p; }
-        public String name() { return "seat-memory"; }
+        public final boolean save;
+        /** Recall a stored slot (backwards-compatible constructor). */
+        public SeatMemoryCommand(int p) { this(p, false); }
+        public SeatMemoryCommand(int p, boolean save) { this.position = p; this.save = save; }
+        public String name() { return save ? "seat-memory-save" : "seat-memory-recall"; }
         public Capability sdkCapability() { return Capability.REQUIRED; }
         public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
-        public boolean executeViaSdk(BydDataCollector c) { return c.setSeatMemoryPosition(position); }
+        public boolean executeViaSdk(BydDataCollector c) {
+            return save ? c.setSeatMemorySave(position) : c.setSeatMemoryPosition(position);
+        }
     }
 
     public static final class LightsCommand extends VehicleCommand {
@@ -555,6 +567,22 @@ public final class VehicleCommandRouter {
         public Capability sdkCapability() { return Capability.REQUIRED; }
         public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
         public boolean executeViaSdk(BydDataCollector c) { return c.setSpeedLimitWarning(enabled); }
+    }
+
+    /**
+     * Electronic Stability Program (ESP / ESC) on/off. SDK-only — the ESP feature
+     * id lives on the setting HAL (family-consistent with DOW/RCW) and has no BYD
+     * cloud remote-control equivalent. SAFETY control: enabled=true restores
+     * stability control, false disables it. On many vehicles the HAL/ECU re-enables
+     * ESP at the next ignition cycle regardless of this write.
+     */
+    public static final class AdasEspCommand extends VehicleCommand {
+        public final boolean enabled;
+        public AdasEspCommand(boolean on) { this.enabled = on; }
+        public String name() { return "adas-esp"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setEspState(enabled); }
     }
 
     public static final class SettingChildPresenceDetectionCommand extends VehicleCommand {

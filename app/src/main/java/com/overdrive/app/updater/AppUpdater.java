@@ -1373,6 +1373,10 @@ public class AppUpdater {
         if (!safePriorTs.isEmpty()) {
             script.append("  echo '").append(safePriorTs).append("' > ")
                   .append(timestampFileForChannel(safeChannel)).append("\n");
+            // World-readable so the app process (UID 10xxx) reads the same
+            // restored baseline the daemon (UID 2000) just wrote — matches the
+            // saveLastUpdateTimestamp / VERSION_FILE chmod contract.
+            script.append("  chmod 644 ").append(timestampFileForChannel(safeChannel)).append(" 2>/dev/null\n");
         } else {
             script.append("  rm -f ").append(timestampFileForChannel(safeChannel)).append("\n");
         }
@@ -1900,7 +1904,7 @@ public class AppUpdater {
             final String src = UPDATE_TIMESTAMP_FILE;
             final String dst = timestampFileForChannel(channel);
             runShell("[ -f " + src + " ] && [ ! -f " + dst + " ] && cp " + src + " " + dst
-                            + " 2>/dev/null; echo done",
+                            + " && chmod 644 " + dst + " 2>/dev/null; echo done",
                     new com.overdrive.app.launcher.AdbDaemonLauncher.LaunchCallback() {
                         @Override public void onLog(String m) {}
                         @Override public void onLaunched() {}
@@ -1941,27 +1945,42 @@ public class AppUpdater {
     private String getLastUpdateTimestamp(String channel) {
         String prefKey = prefKeyForChannel(channel);
         String tsFile = timestampFileForChannel(channel);
-        // Try SharedPreferences first (fast)
-        String ts = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getString(prefKey, "");
-        if (!ts.isEmpty()) return ts;
 
-        // Fall back to filesystem (survives app reinstall)
+        // FILE-FIRST — the world-readable /data/local/tmp file is the single
+        // cross-UID source of truth, exactly like persistedGithubVersion() does
+        // for the display label. The daemon (UID 2000) owns the install and
+        // advances this baseline; the app process (UID 10xxx) runs its OWN
+        // MainActivity update check with its OWN per-UID SharedPreferences.
+        //
+        // The old order (SP-first, file only when SP empty) meant that after a
+        // daemon-side install the app's stale-but-non-empty SP won, the freshly
+        // advanced file was never consulted, apkUpdated stayed true, and the
+        // popup re-offered the just-installed version on every check — forever.
+        // Every path that writes SP also writes the file (first-run seed +
+        // install both save both), so the file is always at least as current as
+        // any per-UID SP. Read it first and reconcile SP from it.
         try {
             File f = new File(tsFile);
             if (f.exists()) {
                 java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(f));
-                ts = r.readLine();
+                String ts = r.readLine();
                 r.close();
                 if (ts != null && !ts.isEmpty()) {
-                    // Sync back to SharedPreferences
+                    // Reconcile this process's SP cache so a same-process
+                    // repeat read is fast and the two never diverge.
                     context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                             .edit().putString(prefKey, ts).apply();
                     return ts;
                 }
             }
         } catch (Exception ignored) {}
-        return "";
+
+        // File absent/unreadable — fall back to this process's SP cache. This
+        // covers the pre-first-install state and any ROM where the app UID
+        // can't read the file; in both cases SP-only degrades to per-UID
+        // detection, which is still correct within a single process.
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString(prefKey, "");
     }
 
 
@@ -1981,7 +2000,17 @@ public class AppUpdater {
         String safeTs = isoSafe(timestamp);
         if (safeTs.isEmpty()) return; // don't write a malformed/empty baseline file
         try {
-            runShell("echo '" + safeTs + "' > " + tsFile,
+            // chmod 644 so the OTHER UID can read it cross-process. The daemon
+            // (UID 2000) owns the install and advances this baseline, but the
+            // app process (UID 10xxx) runs its own MainActivity update check
+            // and reads this file as the shared source of truth (see
+            // getLastUpdateTimestamp). Without the chmod the daemon's write
+            // lands mode 0600 (unreadable by the app UID), so the app keeps
+            // reading its own stale per-UID SharedPreferences baseline and
+            // re-offers the just-installed version forever. Mirrors the
+            // VERSION_FILE writes, which chmod 644 for the same reason.
+            runShell("echo '" + safeTs + "' > " + tsFile
+                            + "; chmod 644 " + tsFile + " 2>/dev/null",
                     new com.overdrive.app.launcher.AdbDaemonLauncher.LaunchCallback() {
                 @Override public void onLog(String m) {}
                 @Override public void onLaunched() {}

@@ -221,7 +221,12 @@ public class TripDatabase {
                 "electric_cost REAL DEFAULT 0," +
                 "ice_seconds INTEGER DEFAULT 0," +
                 "fuel_con_start REAL DEFAULT -1," +
-                "fuel_con_end REAL DEFAULT -1" +
+                "fuel_con_end REAL DEFAULT -1," +
+                // Absolute vehicle odometer (km) at trip start/end. distance_km
+                // is their delta; these are the readings shown on the trip UI.
+                // 0 = odometer was unavailable at that edge (recovered/legacy row).
+                "odometer_start_km REAL DEFAULT 0," +
+                "odometer_end_km REAL DEFAULT 0" +
                 ")"
             );
 
@@ -271,6 +276,16 @@ public class TripDatabase {
                 stmt.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS fuel_con_end REAL DEFAULT -1");
             } catch (Exception e) {
                 logger.debug("trips fuel-accumulator column migration: " + e.getMessage());
+            }
+
+            // Migration: absolute odometer snapshots at trip start/end. Old rows
+            // read these as 0 (sentinel "unavailable"), which the UI renders as
+            // "--" — no regression, and distance_km (the delta) is unaffected.
+            try {
+                stmt.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS odometer_start_km REAL DEFAULT 0");
+                stmt.execute("ALTER TABLE trips ADD COLUMN IF NOT EXISTS odometer_end_km REAL DEFAULT 0");
+            } catch (Exception e) {
+                logger.debug("trips odometer column migration: " + e.getMessage());
             }
 
             // Routes table for O(1) similar-trip lookups
@@ -415,8 +430,9 @@ public class TripDatabase {
                 "anticipation_score, smoothness_score, speed_discipline_score, " +
                 "efficiency_score, consistency_score, micro_moments_json, telemetry_file_path, route_id, " +
                 "is_phev, fuel_pct_start, fuel_pct_end, litres_used, fuel_price_per_l, fuel_cost, " +
-                "electric_cost, ice_seconds, fuel_con_start, fuel_con_end, size_bytes, sidecar_size_bytes) " +
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                "electric_cost, ice_seconds, fuel_con_start, fuel_con_end, size_bytes, sidecar_size_bytes, " +
+                "odometer_start_km, odometer_end_km) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
 
         try (PreparedStatement pstmt = connection.prepareStatement(sql, Statement.RETURN_GENERATED_KEYS)) {
             setTripParams(pstmt, trip);
@@ -424,6 +440,8 @@ public class TripDatabase {
             setTripFuelParams(pstmt, trip, 34);
             pstmt.setLong(44, trip.sizeBytes);
             pstmt.setLong(45, trip.sidecarSizeBytes);
+            pstmt.setDouble(46, trip.odometerStartKm);
+            pstmt.setDouble(47, trip.odometerEndKm);
             pstmt.executeUpdate();
 
             try (ResultSet keys = pstmt.getGeneratedKeys()) {
@@ -458,7 +476,7 @@ public class TripDatabase {
                 "route_id=?, " +
                 "is_phev=?, fuel_pct_start=?, fuel_pct_end=?, litres_used=?, fuel_price_per_l=?, " +
                 "fuel_cost=?, electric_cost=?, ice_seconds=?, fuel_con_start=?, fuel_con_end=?, " +
-                "size_bytes=?, sidecar_size_bytes=? " +
+                "size_bytes=?, sidecar_size_bytes=?, odometer_start_km=?, odometer_end_km=? " +
                 "WHERE id=?";
 
         try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
@@ -467,7 +485,9 @@ public class TripDatabase {
             setTripFuelParams(pstmt, trip, 34);
             pstmt.setLong(44, trip.sizeBytes);
             pstmt.setLong(45, trip.sidecarSizeBytes);
-            pstmt.setLong(46, trip.id);
+            pstmt.setDouble(46, trip.odometerStartKm);
+            pstmt.setDouble(47, trip.odometerEndKm);
+            pstmt.setLong(48, trip.id);
             pstmt.executeUpdate();
             logger.debug("Updated trip id=" + trip.id);
         } catch (Exception e) {
@@ -1821,6 +1841,8 @@ public class TripDatabase {
             o.put("iceSeconds", t.iceSeconds());
             o.put("fuelConStart", t.fuelConStart);
             o.put("fuelConEnd", t.fuelConEnd);
+            o.put("odometerStartKm", t.odometerStartKm);
+            o.put("odometerEndKm", t.odometerEndKm);
         } catch (Exception e) {
             logger.warn("tripToJson failed for trip start=" + t.startTime + ": " + e.getMessage());
         }
@@ -1875,6 +1897,8 @@ public class TripDatabase {
         t.iceSecondsAtomic.set(o.optInt("iceSeconds", 0));
         t.fuelConStart = o.optDouble("fuelConStart", -1);
         t.fuelConEnd = o.optDouble("fuelConEnd", -1);
+        t.odometerStartKm = o.optDouble("odometerStartKm", 0);
+        t.odometerEndKm = o.optDouble("odometerEndKm", 0);
         return t;
     }
 
@@ -2090,6 +2114,9 @@ public class TripDatabase {
         // "not yet backfilled" — see runBackfillIfNeeded().
         try { trip.sizeBytes        = rs.getLong("size_bytes"); }         catch (Exception e) { trip.sizeBytes = 0; }
         try { trip.sidecarSizeBytes = rs.getLong("sidecar_size_bytes"); } catch (Exception e) { trip.sidecarSizeBytes = 0; }
+        // Absolute odometer snapshots (0 = unavailable at that edge → UI shows "--").
+        try { trip.odometerStartKm = rs.getDouble("odometer_start_km"); } catch (Exception e) { trip.odometerStartKm = 0; }
+        try { trip.odometerEndKm   = rs.getDouble("odometer_end_km"); }   catch (Exception e) { trip.odometerEndKm = 0; }
         return trip;
     }
 

@@ -55,30 +55,48 @@ public final class PushSink implements NotificationBus.Sink {
 
     @Override
     public void onNotification(NotificationEvent event) {
+        // Source asked us to skip Web Push for this event (e.g. surveillance
+        // motion below its per-tier push toggle). The event still flows to the
+        // OTHER sinks — HistorySink persists it to the Log, LogSink logs it,
+        // TelegramSink forwards it — so suppression is push-only, not a drop.
+        if (event.isPushSuppressed()) return;
         // Cheapest possible early-out: zero phones registered means no push
         // work, ever. Don't touch the registry, don't allocate, don't spin
         // up the executor.
         List<PushSubscription> all = subs.all();
         if (all.isEmpty()) return;
 
+        // An unregistered category must NOT silently vanish. This path is hit by
+        // the /api/push test endpoint (user-supplied category) and would be hit
+        // by any future publisher whose category isn't yet in the registry JSON.
+        // Fall back to safe defaults (generic click URL, no quiet-hours bypass)
+        // so the push still delivers — the worst outcome here is "delivered with
+        // a home-page click target", far better than "nothing arrives". Muting/
+        // severity/quiet-hours below still apply, gated on the event's own
+        // category string (prefix-mute still works for unregistered subtrees).
         CategoryRegistry.Entry meta = registry.get(event.category);
+        final String fallbackClickUrl;
+        final boolean categoryBypassesQuiet;
         if (meta == null) {
-            logger.warn("dropping unregistered category: " + event.category);
-            return;
+            logger.warn("unregistered category (delivering with defaults): " + event.category);
+            fallbackClickUrl = "/";
+            categoryBypassesQuiet = false;
+        } else {
+            fallbackClickUrl = meta.defaultClickUrl;
+            // Categories may opt out of the quiet-hours block at the registry
+            // level (e.g. charging complete — the whole point is to wake the
+            // user so they unplug). CRITICAL severity also bypasses, as before.
+            categoryBypassesQuiet = meta.bypassQuietHours;
         }
-        // Resolve the click URL: event override > registry default. We only
-        // allocate a wrapped event when an override is actually needed.
+        // Resolve the click URL: event override > registry default (> "/"). We
+        // only allocate a wrapped event when an override is actually needed.
         final NotificationEvent enriched = event.clickUrl != null
                 ? event
                 : new NotificationEvent(event.category, event.severity, event.title, event.body,
-                        event.tag, meta.defaultClickUrl, event.data);
+                        event.tag, fallbackClickUrl, event.data);
 
         long now = System.currentTimeMillis();
         ExecutorService exec = null; // lazy
-        // Categories may opt out of the quiet-hours block at the registry level
-        // (e.g. charging complete — the whole point is to wake the user so they
-        // unplug). CRITICAL severity also bypasses, as before.
-        boolean categoryBypassesQuiet = meta.bypassQuietHours;
         for (PushSubscription sub : all) {
             if (sub.isMuted(event.category)) continue;
             if (event.severity.ordinal() < sub.minSeverity.ordinal()) continue;

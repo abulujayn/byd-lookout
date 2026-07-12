@@ -108,7 +108,7 @@
         .km-adv-warn svg { width: 18px; height: 18px; flex: none; color: #ffb300; margin-top: 1px; }
         /* Uniform width for every dropdown in the Add form so the right-hand
            control column lines up regardless of the longest option's text. */
-        #kmKnownButton, #kmPressType, #kmActionKind, #kmCuratedAction, #kmPayload {
+        #kmKnownButton, #kmPressType, #kmActionKind, #kmCuratedAction, #kmPayload, #kmOpenApp {
             width: 190px;
             max-width: 55vw;
         }
@@ -292,6 +292,7 @@
                             <div class="setting-control">
                                 <select id="kmActionKind" class="select-control" onchange="KM.onKindChange()">
                                     <option value="curated" data-i18n="keymap.kind_curated">Vehicle action</option>
+                                    <option value="openApp" data-i18n="keymap.kind_open_app">Open app</option>
                                     <option value="shell" id="kmShellOption" data-i18n="keymap.kind_shell">Advanced: shell</option>
                                 </select>
                             </div>
@@ -311,6 +312,17 @@
                                 <div class="setting-info"><div class="setting-name" data-i18n="keymap.value">Value</div></div>
                                 <div class="setting-control">
                                     <select id="kmPayload" class="select-control"></select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Open app: pick an installed app to launch. The list is
+                             fetched live from /api/apps/list (daemon PackageManager). -->
+                        <div id="kmOpenAppWrap" style="display:none;">
+                            <div class="setting-row" style="border-bottom:none;">
+                                <div class="setting-info"><div class="setting-name" data-i18n="keymap.app">App</div></div>
+                                <div class="setting-control">
+                                    <select id="kmOpenApp" class="select-control"></select>
                                 </div>
                             </div>
                         </div>
@@ -359,7 +371,7 @@
     <script src="../shared/auth.js"></script>
     <script src="../shared/pwa-init.js?v=index1"></script>
     <script src="../shared/core.js"></script>
-    <script src="../shared/key-mapping.js?v=7"></script>
+    <script src="../shared/key-mapping.js?v=11"></script>
     <script>
         function toggleSidebar() {
             document.getElementById('sidebar').classList.toggle('open');

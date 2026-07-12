@@ -1779,6 +1779,8 @@
                             <div class="detail-stat"><div class="detail-stat-value" id="detailMaxSpeed">--</div><div class="detail-stat-label" id="detailMaxSpeedLabel" data-i18n="trip.detail.max_kmh">Max km/h</div></div>
                             <div class="detail-stat"><div class="detail-stat-value" id="detailSocStart">--</div><div class="detail-stat-label" data-i18n="trip.detail.start_soc">Start SoC</div></div>
                             <div class="detail-stat"><div class="detail-stat-value" id="detailSocEnd">--</div><div class="detail-stat-label" data-i18n="trip.detail.end_soc">End SoC</div></div>
+                            <div class="detail-stat" id="detailOdoStartTile" style="display:none;"><div class="detail-stat-value" id="detailOdoStart">--</div><div class="detail-stat-label" data-i18n="trip.detail.start_odo">Start Odometer</div></div>
+                            <div class="detail-stat" id="detailOdoEndTile" style="display:none;"><div class="detail-stat-value" id="detailOdoEnd">--</div><div class="detail-stat-label" data-i18n="trip.detail.end_odo">End Odometer</div></div>
                             <div class="detail-stat phev-only" id="detailFuelStartTile" style="display:none;"><div class="detail-stat-value" id="detailFuelStart" style="color:var(--warning);">--</div><div class="detail-stat-label" data-i18n="trip.detail.start_fuel">Start Fuel</div></div>
                             <div class="detail-stat phev-only" id="detailFuelEndTile" style="display:none;"><div class="detail-stat-value" id="detailFuelEnd" style="color:var(--warning);">--</div><div class="detail-stat-label" data-i18n="trip.detail.end_fuel">End Fuel</div></div>
                             <div class="detail-stat phev-only" id="detailLitresUsedTile" style="display:none;"><div class="detail-stat-value" id="detailLitresUsed" style="color:var(--warning);">--</div><div class="detail-stat-label" data-i18n="trip.detail.litres_used">Petrol Used</div></div>
@@ -2008,7 +2010,7 @@
     <script src="../shared/pwa-init.js?v=index1"></script>
     <script src="../shared/core.js"></script>
     <script src="../shared/update-flow.js"></script>
-    <script src="../shared/trips.js?v=recovered1"></script>
+    <script src="../shared/trips.js?v=odo1"></script>
     <script>
         function toggleSidebar() {
             document.getElementById('sidebar').classList.toggle('open');

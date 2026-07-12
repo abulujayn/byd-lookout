@@ -60,7 +60,8 @@ public class Automations {
         // Load config from the file at startup
         loadFromFile();
 
-        // Start updating the current time in the state
+        // Start publishing the current time-of-day / day-of-week into the state so
+        // time and day conditions can be evaluated.
         TimeEvent.scheduleTimeEvent();
     }
 

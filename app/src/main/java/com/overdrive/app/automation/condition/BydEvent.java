@@ -38,8 +38,12 @@ public class BydEvent {
     public static final EventData SEAT_COOL_PASSENGER = new EventData("seatClimate", Map.of("type", "cool", "area", "passenger"));
     public static final EventData AC = new EventData("ac");
     public static final EventData TEMPERATURE = new EventData("temperature");
+    // The same "speed" event is stored twice under different units so a condition can
+    // pick either without any runtime unit conversion — the km/h value is the canonical
+    // BydVehicleData.speedKmh, the mph value is derived once here.
     public static final EventData SPEED_KMPH = new EventData("speed", Map.of("units", "kmph"));
     public static final EventData SPEED_MPH = new EventData("speed", Map.of("units", "mph"));
+    // Pushed once a minute by TimeEvent (not from a vehicle-data snapshot).
     public static final EventData TIME = new EventData("time");
     public static final EventData DAY = new EventData("day");
 
@@ -106,10 +110,67 @@ public class BydEvent {
         }
         boolean poweredOn = data.powerLevel >= 2;
         Automations.update(AC, (poweredOn && data.acStartState == 1) ? "on" : "off");
-        if (!Double.isNaN(data.insideTempC)) Automations.update(TEMPERATURE, (int) data.insideTempC);
+        // Temperature: prefer the cabin sensor (car on), fall back to the outside
+        // cluster sensor, then to the Open-Meteo weather API by last-known GPS so a
+        // parked/powered-off car (cabin sensor unavailable) still reports a
+        // temperature. The weather read is CACHED + refreshed on a background
+        // thread — never a network call on this telemetry-poll thread. See
+        // WeatherTemperature for the ACC-off-blackout-tolerant fetch model.
+        updateTemperature(data);
+        // speedKmh is canonical km/h (already scaled by distanceToKmFactor at ingestion),
+        // so the mph value is a straight km→mi conversion. Guard NaN (unreadable speed).
         if (!Double.isNaN(data.speedKmh)) {
             Automations.update(SPEED_KMPH, (int) Math.round(data.speedKmh));
             Automations.update(SPEED_MPH, (int) Math.round(data.speedKmh * 0.621371));
+        }
+    }
+
+    /**
+     * Publish the temperature event, choosing the source by power state so a
+     * powered-off car reports AMBIENT (outside/weather) rather than a stale cabin
+     * reading, which is what "temperature while parked" means to a user.
+     *
+     * <p>Powered ON (powerLevel &gt;= ON): the live cabin sensor (insideTempC) is the
+     * primary source — cabin climate is what an occupant-facing automation wants —
+     * with outside/weather as fallback if the cabin sensor is unavailable.
+     *
+     * <p>Powered OFF: prefer the outside cluster sensor (outsideTempC), then the
+     * Open-Meteo weather API by last-known GPS. The cabin sensor is intentionally
+     * SKIPPED here: {@code insideTempC} is carried forward on every snapshot build
+     * (BydVehicleData.toBuilder) and never reset to NaN, so a drove-then-parked
+     * value would otherwise pin the event to a stale cabin reading and starve the
+     * weather fallback the user asked for.
+     *
+     * <p>The weather value is served from cache and refreshed on a background
+     * thread (WeatherTemperature), so this never blocks the telemetry poll. When
+     * no source yields a value we publish nothing — the event keeps its last value
+     * (no spurious "dropped to 0" transition). All sources use Math.round for a
+     * consistent integer so a source switch never adds a phantom 1° step.
+     */
+    private static void updateTemperature(BydVehicleData data) {
+        boolean poweredOn = data.powerLevel >= BodyworkConstants.POWER_LEVEL_ON;
+
+        if (poweredOn && !Double.isNaN(data.insideTempC)) {
+            Automations.update(TEMPERATURE, (int) Math.round(data.insideTempC));
+            return;
+        }
+        if (!Double.isNaN(data.outsideTempC)) {
+            Automations.update(TEMPERATURE, (int) Math.round(data.outsideTempC));
+            return;
+        }
+        // Powered on but no cabin sensor, or powered off with no outside sensor:
+        // fall back to weather by last-known GPS.
+        try {
+            com.overdrive.app.monitor.GpsMonitor gps = com.overdrive.app.monitor.GpsMonitor.getInstance();
+            if (gps != null && gps.hasLocation()) {
+                double lat = gps.getLatitude(), lon = gps.getLongitude();
+                // Non-blocking: refresh in the background, publish whatever's cached now.
+                com.overdrive.app.weather.WeatherTemperature.refreshAsync(lat, lon);
+                double wt = com.overdrive.app.weather.WeatherTemperature.getCached();
+                if (!Double.isNaN(wt)) Automations.update(TEMPERATURE, (int) Math.round(wt));
+            }
+        } catch (Throwable ignored) {
+            // Weather is a best-effort fallback; never let it disrupt the telemetry loop.
         }
     }
 

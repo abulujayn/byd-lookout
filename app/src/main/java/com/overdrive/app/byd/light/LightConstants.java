@@ -1,10 +1,11 @@
 package com.overdrive.app.byd.light;
 
-public class LightConstants {
+public final class LightConstants {
     private LightConstants() {}
 
-    // Ambient light colour codes
-    public static String[] AMBIENT_COLOURS = new String[]{
+    // Interior ambient (atmosphere) light colour palette. The vehicle stores the
+    // selected colour as a 1-based index into this fixed 31-entry list.
+    public static final String[] AMBIENT_COLOURS = new String[]{
             "#CF39FF",
             "#8C1FFA",
             "#0024E9",

@@ -106,6 +106,11 @@ public class SocHistoryDatabase {
     private volatile double chargingPowerSum = 0;
     private volatile int chargingPowerCount = 0;
     private volatile int chargingStartRange = -1;
+    // Vehicle odometer (km) snapshotted at charge START. -1 = not yet captured;
+    // like chargingStartRange it's backfilled on a later mid-session tick if the
+    // HAL wasn't reporting mileage at the exact start instant (common during
+    // ACC-off parked charging), and preserved across a daemon-restart resume.
+    private volatile int chargingStartOdometer = -1;
     private volatile int chargingGunState = -1;
     // Latched estimated time-to-full (minutes). The BYD rest-time field is only
     // meaningful WHILE charging — at session end it reads ~0 / stale. We capture
@@ -312,7 +317,11 @@ public class SocHistoryDatabase {
                 // v4: elecRangeKm at session start. Persisted so a session
                 // RESUMED after a daemon restart can still compute range_gained
                 // against its true origin (was lost before — resume reset it).
-                "start_range_km INTEGER DEFAULT -1"
+                "start_range_km INTEGER DEFAULT -1",
+                // v5: vehicle odometer (km) at session start. Snapshotted once
+                // at the charge edge (backfilled on a later tick if unavailable
+                // at start). Shown on the charging card/detail. -1 = unknown.
+                "start_odometer_km INTEGER DEFAULT -1"
             };
             for (String col : newChargingCols) {
                 try {
@@ -607,39 +616,18 @@ public class SocHistoryDatabase {
                         }
                     }
 
-                    // PHEV-only secondary anchor from the BMS Ah counter.
-                    // The live `remainKwh / SOC` formula is noisy on small
-                    // PHEV packs (1-decimal kWh resolution over 9-18 kWh →
-                    // ±1.5% noise per tick that median-of-10 can't fully
-                    // suppress). Capacity-Ah comes from the BMS's coulomb
-                    // count and is independent of SOC range — feeds the
-                    // capacityAhSoh anchor without disturbing currentSoh.
-                    try {
-                        com.overdrive.app.byd.BydDataCollector col = com.overdrive.app.byd.BydDataCollector.getInstance();
-                        if (col != null && col.isInitialized() && col.isPhevPublic()) {
-                            com.overdrive.app.byd.BydVehicleData vd = col.getData();
-                            if (vd != null && !Double.isNaN(vd.capacityAh) && vd.capacityAh > 0) {
-                                // The capacity-Ah anchor works in the GROSS frame: the
-                                // BMS Ah is a physical coulomb count, and cellCount /
-                                // factory-Ah must match the nameplate pack. The nominal
-                                // field is gross on every drivetrain now (PHEV energy is
-                                // corrected to gross at the HAL read boundary), so the
-                                // model's gross nameplate and the nominal field agree;
-                                // we still prefer the explicit model gross and fall back
-                                // to the nominal field when no model is selected.
-                                double grossKwh = com.overdrive.app.server.ModelsApiHandler
-                                        .grossNameplateKwhForSelectedModel();
-                                double cellLookupKwh = grossKwh > 0
-                                        ? grossKwh : sohEst.getNominalCapacityKwh();
-                                int cells = com.overdrive.app.abrp.SohEstimator
-                                        .cellCountForCapacity(cellLookupKwh);
-                                if (cells > 0) {
-                                    sohEst.updateFromCapacityAh(
-                                            vd.capacityAh, cells, true, soc, grossKwh);
-                                }
-                            }
-                        }
-                    } catch (Exception ignored) { /* anchor is best-effort */ }
+                    // PHEV SOH is intentionally NOT driven by the BMS capacity-Ah
+                    // anchor. On DM-i firmware getBatteryCapacity() returns the
+                    // STATIC factory nameplate Ah (observed constant across SOC
+                    // swings), not a live coulomb count — feeding it made a healthy
+                    // pack read phantom degradation (field capture: reported 54 "Ah"
+                    // vs a derived ~71 Ah nominal → 76% SOH on a ~7k-km car). Because
+                    // the value never moves, no cell-count correction can turn it into
+                    // a real health signal. A real ≥25% charge-session calibration is
+                    // the only trusted PHEV degradation signal; until one lands,
+                    // getDisplaySoh() reports the honest 100% default. BEV is
+                    // unaffected — it never fed this anchor (updateFromCapacityAh
+                    // early-returns on !isPhev).
                 }
             } catch (Exception e) {
                 logger.debug("SOH update failed: " + e.getMessage());
@@ -924,6 +912,7 @@ public class SocHistoryDatabase {
                 chargingPowerSum = power > 0 ? power : 0;
                 chargingPowerCount = power > 0 ? 1 : 0;
                 chargingStartRange = snapshotRangeKm();
+                chargingStartOdometer = snapshotOdometerKm();  // -1 if HAL not reporting yet → backfilled mid-session
                 chargingGunState = snapshotGunState();
                 chargingTimeToFullMin = snapshotTimeToFullMin();  // first live reading
                 // Snapshot where the charge began (0/0 if no GPS fix yet).
@@ -932,8 +921,8 @@ public class SocHistoryDatabase {
                 chargingStartLng = loc[1];
 
                 String sql = "INSERT INTO " + TABLE_CHARGING +
-                    " (start_time, start_soc, peak_power_kw, avg_power_kw, gun_state, start_lat, start_lng, start_range_km) " +
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?);";
+                    " (start_time, start_soc, peak_power_kw, avg_power_kw, gun_state, start_lat, start_lng, start_range_km, start_odometer_km) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);";
 
                 try (PreparedStatement pstmt = connection.prepareStatement(sql)) {
                     pstmt.setLong(1, now);
@@ -944,6 +933,7 @@ public class SocHistoryDatabase {
                     pstmt.setDouble(6, chargingStartLat);
                     pstmt.setDouble(7, chargingStartLng);
                     pstmt.setInt(8, chargingStartRange);
+                    pstmt.setInt(9, chargingStartOdometer);
                     pstmt.executeUpdate();
                 }
 
@@ -979,15 +969,27 @@ public class SocHistoryDatabase {
                     int r = snapshotRangeKm();
                     if (r >= 0) { chargingStartRange = r; backfillRange = true; }
                 }
+                // Backfill the start odometer for the same reason: the cached
+                // mileage is often UNAVAILABLE (-1) at the ACC-off charge edge and
+                // only appears once the vehicle wakes. Capturing the first valid
+                // reading and persisting it means the odometer survives a daemon
+                // restart (resume re-reads it from this column, not the live HAL).
+                boolean backfillOdo = false;
+                if (chargingStartOdometer < 0) {
+                    int o = snapshotOdometerKm();
+                    if (o >= 0) { chargingStartOdometer = o; backfillOdo = true; }
+                }
                 try (PreparedStatement pstmt = connection.prepareStatement(
                         "UPDATE " + TABLE_CHARGING +
                         " SET peak_power_kw = ?, avg_power_kw = ?" +
                         (backfillRange ? ", start_range_km = ?" : "") +
+                        (backfillOdo ? ", start_odometer_km = ?" : "") +
                         " WHERE start_time = ? AND end_time IS NULL;")) {
                     pstmt.setDouble(1, chargingPeakPower);
                     pstmt.setDouble(2, avgSoFar);
                     int idx = 3;
                     if (backfillRange) pstmt.setInt(idx++, chargingStartRange);
+                    if (backfillOdo) pstmt.setInt(idx++, chargingStartOdometer);
                     pstmt.setLong(idx, chargingStartTime);
                     pstmt.executeUpdate();
                 }
@@ -1320,11 +1322,11 @@ public class SocHistoryDatabase {
             }
 
             // Read canonical row fields for rehydration.
-            double canonPeak = 0; int canonGun = -1, canonStartRange = -1;
+            double canonPeak = 0; int canonGun = -1, canonStartRange = -1, canonStartOdo = -1;
             double canonLat = 0, canonLng = 0;
             double canonEnergy = 0, canonCost = 0; int canonIsDc = -1, canonRange = 0; long canonEnd = 0;
             try (PreparedStatement r = connection.prepareStatement(
-                    "SELECT end_time, peak_power_kw, gun_state, start_range_km, start_lat, start_lng, " +
+                    "SELECT end_time, peak_power_kw, gun_state, start_range_km, start_odometer_km, start_lat, start_lng, " +
                     "energy_added_kwh, session_cost, is_dc, range_gained_km FROM " +
                     TABLE_CHARGING + " WHERE start_time = ?;")) {
                 r.setLong(1, canonStart);
@@ -1334,6 +1336,7 @@ public class SocHistoryDatabase {
                         double pk = rs.getDouble("peak_power_kw"); canonPeak = rs.wasNull() ? 0 : pk;
                         canonGun = rs.getInt("gun_state");
                         canonStartRange = rs.getInt("start_range_km");
+                        canonStartOdo = rs.getInt("start_odometer_km");
                         canonLat = rs.getDouble("start_lat");
                         canonLng = rs.getDouble("start_lng");
                         double e = rs.getDouble("energy_added_kwh"); canonEnergy = rs.wasNull() ? 0 : e;
@@ -1365,6 +1368,9 @@ public class SocHistoryDatabase {
             // If it was never captured (-1), leave it -1 so the next mid-session
             // tick backfills the first valid reading.
             chargingStartRange = canonStartRange;
+            // Same as range: keep the ORIGINAL start odometer; if it was never
+            // captured (-1) leave it -1 so the next mid-session tick backfills it.
+            chargingStartOdometer = canonStartOdo;
             chargingStartLat = canonLat;
             chargingStartLng = canonLng;
             chargingTimeToFullMin = snapshotTimeToFullMin();
@@ -1587,6 +1593,28 @@ public class SocHistoryDatabase {
         try {
             DrivingRangeData r = VehicleDataMonitor.getInstance().getDrivingRange();
             if (r != null && r.elecRangeKm > 0) return r.elecRangeKm;
+        } catch (Exception ignored) {}
+        return -1;
+    }
+
+    /**
+     * Current vehicle odometer (km), or -1 if unavailable. Reads the cached
+     * {@code totalMileageKm} maintained by BydDataCollector's snapshot (already
+     * miles→km normalised) — the same collector-access idiom {@link
+     * #rangeGainedFromEnergy} uses. Cached rather than a live reflection call so
+     * it still returns a value during ACC-off parked charging, where a fresh HAL
+     * read is often unavailable. UNAVAILABLE sentinel maps to -1.
+     */
+    private int snapshotOdometerKm() {
+        try {
+            com.overdrive.app.byd.BydDataCollector col = com.overdrive.app.byd.BydDataCollector.getInstance();
+            if (col != null && col.isInitialized()) {
+                com.overdrive.app.byd.BydVehicleData vd = col.getData();
+                if (vd != null && vd.totalMileageKm != com.overdrive.app.byd.BydVehicleData.UNAVAILABLE
+                        && vd.totalMileageKm > 0) {
+                    return vd.totalMileageKm;
+                }
+            }
         } catch (Exception ignored) {}
         return -1;
     }
@@ -2054,7 +2082,7 @@ public class SocHistoryDatabase {
     private static final String CHARGING_V2_COLS =
         "id, start_time, end_time, start_soc, end_soc, energy_added_kwh, peak_power_kw, avg_power_kw, " +
         "range_gained_km, gun_state, is_dc, electricity_rate, currency, session_cost, time_to_full_min, " +
-        "hv_temp_high, hv_temp_low, hv_temp_avg, start_lat, start_lng, place_label";
+        "hv_temp_high, hv_temp_low, hv_temp_avg, start_lat, start_lng, place_label, start_odometer_km";
 
     private JSONObject chargingRowToJson(ResultSet rs) throws Exception {
         JSONObject o = new JSONObject();
@@ -2102,6 +2130,9 @@ public class SocHistoryDatabase {
         o.put("lng", hasLoc ? lng : JSONObject.NULL);
         String place = rs.getString("place_label");
         o.put("placeLabel", (place != null && !place.isEmpty()) ? place : JSONObject.NULL);
+        // Odometer at charge start (km). -1 sentinel → null so the UI shows "--".
+        int odo = rs.getInt("start_odometer_km");
+        o.put("startOdometerKm", odo > -1 ? odo : JSONObject.NULL);
 
         // ---- Live enrichment for the OPEN (in-progress) session ----
         // The end_soc / energy / range / cost / ttf / temp columns are only
@@ -2457,6 +2488,7 @@ public class SocHistoryDatabase {
             chargingPowerSum = 0;
             chargingPowerCount = 0;
             chargingStartRange = -1;
+            chargingStartOdometer = -1;
             chargingGunState = -1;
             chargingTimeToFullMin = -1;
             return total;

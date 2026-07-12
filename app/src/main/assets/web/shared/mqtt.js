@@ -156,6 +156,7 @@ const MQTT = {
                 <div style="font-size:12px;color:var(--text-muted);display:flex;gap:16px;flex-wrap:wrap;">
                     <span>${BYD.i18n.t('mqtt.label_qos')}: ${conn.qos}</span>
                     <span>${BYD.i18n.t('mqtt.label_interval')}: ${this.fmtInterval(conn.minIntervalSeconds || conn.publishIntervalSeconds || 5)}–${this.fmtInterval(conn.maxIntervalSeconds || 300)}${conn.changeOnly !== false ? ' (' + BYD.i18n.t('mqtt.change_short') + ')' : ''}</span>
+                    ${(conn.parkedIntervalSeconds > 0 || conn.chargingIntervalSeconds > 0) ? '<span>' + BYD.i18n.t('mqtt.label_state_interval') + ': ' + (conn.parkedIntervalSeconds > 0 ? BYD.i18n.t('mqtt.state_parked_short') + ' ' + this.fmtInterval(conn.parkedIntervalSeconds) : '') + (conn.parkedIntervalSeconds > 0 && conn.chargingIntervalSeconds > 0 ? ' · ' : '') + (conn.chargingIntervalSeconds > 0 ? BYD.i18n.t('mqtt.state_charging_short') + ' ' + this.fmtInterval(conn.chargingIntervalSeconds) : '') + '</span>' : ''}
                     <span>${BYD.i18n.t('mqtt.label_retain')}: ${conn.retainMessages ? BYD.i18n.t('common.yes') : BYD.i18n.t('common.no')}</span>
                     ${conn.homeAssistantDiscovery ? '<span>' + BYD.i18n.t('mqtt.ha_short') + (conn.allowControl ? ' + ' + BYD.i18n.t('mqtt.control_short') : '') + '</span>' : ''}
                     <span>${BYD.i18n.t('mqtt.label_proxy')}: ${s.proxyActive ? BYD.i18n.t('common.yes') : BYD.i18n.t('common.no')}</span>
@@ -196,6 +197,8 @@ const MQTT = {
         document.getElementById('formQos').value = '0';
         document.getElementById('formMinInterval').value = '5';
         document.getElementById('formMaxInterval').value = '300';
+        var pk0 = document.getElementById('formParkedInterval'); if (pk0) pk0.value = '0';
+        var ch0 = document.getElementById('formChargingInterval'); if (ch0) ch0.value = '0';
         document.getElementById('formChangeOnly').checked = true;
         document.getElementById('formHaDiscovery').checked = false;
         document.getElementById('formDiscoveryPrefix').value = 'homeassistant';
@@ -229,6 +232,8 @@ const MQTT = {
         document.getElementById('formQos').value = conn.qos || 0;
         document.getElementById('formMinInterval').value = conn.minIntervalSeconds || conn.publishIntervalSeconds || 5;
         document.getElementById('formMaxInterval').value = conn.maxIntervalSeconds || 300;
+        var pkE = document.getElementById('formParkedInterval'); if (pkE) pkE.value = conn.parkedIntervalSeconds || 0;
+        var chE = document.getElementById('formChargingInterval'); if (chE) chE.value = conn.chargingIntervalSeconds || 0;
         document.getElementById('formChangeOnly').checked = conn.changeOnly !== false;
         document.getElementById('formHaDiscovery').checked = conn.homeAssistantDiscovery || false;
         document.getElementById('formDiscoveryPrefix').value = conn.discoveryPrefix || 'homeassistant';
@@ -266,6 +271,14 @@ const MQTT = {
         var mxl = document.getElementById('formMaxLabel');
         if (mn && mnl) mnl.textContent = this.fmtInterval(mn.value);
         if (mx && mxl) mxl.textContent = this.fmtInterval(mx.value);
+        // Per-state overrides show "Off" at 0 (inherit the max interval) rather than "0s".
+        var pk = document.getElementById('formParkedInterval');
+        var pkl = document.getElementById('formParkedLabel');
+        var ch = document.getElementById('formChargingInterval');
+        var chl = document.getElementById('formChargingLabel');
+        var offLabel = BYD.i18n.t('mqtt.interval_off');
+        if (pk && pkl) pkl.textContent = (parseInt(pk.value) || 0) === 0 ? offLabel : this.fmtInterval(pk.value);
+        if (ch && chl) chl.textContent = (parseInt(ch.value) || 0) === 0 ? offLabel : this.fmtInterval(ch.value);
     },
 
     // Show the discovery-prefix field and the vehicle-control toggle only when
@@ -295,6 +308,8 @@ const MQTT = {
             qos: parseInt(document.getElementById('formQos').value) || 0,
             minIntervalSeconds: parseInt(document.getElementById('formMinInterval').value) || 5,
             maxIntervalSeconds: parseInt(document.getElementById('formMaxInterval').value) || 300,
+            parkedIntervalSeconds: (function(){ var e=document.getElementById('formParkedInterval'); return e ? (parseInt(e.value) || 0) : 0; })(),
+            chargingIntervalSeconds: (function(){ var e=document.getElementById('formChargingInterval'); return e ? (parseInt(e.value) || 0) : 0; })(),
             changeOnly: document.getElementById('formChangeOnly').checked,
             homeAssistantDiscovery: document.getElementById('formHaDiscovery').checked,
             discoveryPrefix: (document.getElementById('formDiscoveryPrefix').value || 'homeassistant').trim(),

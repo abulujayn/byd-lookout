@@ -313,8 +313,7 @@ public class BydDataCollector {
             Object unitVal = BydDeviceHelper.callGetter(instrumentDevice, "getMileageUnit");
             if (unitVal instanceof Number) {
                 int unit = ((Number) unitVal).intValue();
-                // getMileageUnit returns 2 for mph on PHEV
-                if (unit == 0 || unit == 2) {
+                if (unit == 0) {
                     // Miles mode
                     distanceToKmFactor = MILES_TO_KM;
                     unitDetected = true;
@@ -367,6 +366,28 @@ public class BydDataCollector {
      */
     public double getDistanceToKmFactor() {
         return distanceToKmFactor;
+    }
+
+    /**
+     * Speed-unit factor for INTERPRETING a raw {@code getCurrentSpeed()} reading
+     * (recording overlay + trip telemetry path). The raw reading's unit is fixed
+     * by the CLUSTER hardware ({@code getMileageUnit}), NOT the app's km/mi display
+     * preference — so this returns the HARDWARE factor ({@link #speedHwFactor}) when
+     * hardware detection succeeded, mirroring {@link #readCurrentSpeedKmh()}.
+     *
+     * <p>Using {@link #distanceToKmFactor} here (as the telemetry path historically
+     * did) is a bug: {@link #setDistanceUnitOverride} drives it from the user's
+     * DISPLAY preference, which is ambiguous about the raw unit. When the display
+     * preference diverges from the cluster's real unit (e.g. km cluster, user picks
+     * mi), the raw reading gets scaled by ~1.6× before the overlay re-derives the
+     * display value — showing a confidently-wrong speed.
+     *
+     * <p>Falls back to {@link #distanceToKmFactor} ONLY when hardware detection never
+     * succeeded ({@code !hwUnitDetected}) — best-effort on trims where
+     * {@code getMileageUnit} is unavailable; behavior there is unchanged.
+     */
+    public double getSpeedToKmhFactor() {
+        return hwUnitDetected ? speedHwFactor : distanceToKmFactor;
     }
 
     /**
@@ -927,6 +948,19 @@ public class BydDataCollector {
         // Extended data consumed by ABRP/MQTT/trips
         collectStatisticExtended(b);   // SOH, driving time, key battery
         collectInstrumentExtended(b);  // cabin temp, trip data, consumption
+        // AC device: insideTempC + acStartState/fan. Normally a "display-only,
+        // listener-driven" device, but its listener (onDisplayCallback) is a
+        // deliberate no-op, so without polling here insideTempC/acStartState were
+        // read exactly once at init (collectAllFull) and then carried forward
+        // unchanged on every toBuilder() poll. That froze the cabin-temp value:
+        // the "temperature" and "ac" automation events (BydEvent.update) never saw
+        // a transition, so a temperature-threshold automation could never fire, and
+        // the climate API / MQTT inside_temp showed the boot-time value forever.
+        // Poll it every cycle (ACC on AND off — cabin temp matters most when parked,
+        // e.g. child/pet temperature alerts). ~6 cheap HAL getters, self-guarded and
+        // wrapped in try/catch. Runs before mergeCloudData so the cloud temp
+        // fallback (Double.isNaN(insideTempC)) still fills in on a HAL read miss.
+        collectAc(b);
         // Charging rest time (time-to-full) HAL fallback. The primary feature-ID
         // read lives in collectInstrument() above, but many trims/firmware leave
         // those instrument IDs at 255/not-available while charging — so the
@@ -2371,12 +2405,6 @@ public class BydDataCollector {
             b.hazard(getLightStatus(8) == 1);
             Object dayTime = BydDeviceHelper.callGetter(lightDevice, "getDayTimeLightState");
             if (dayTime instanceof Number) b.dayTimeLight(((Number) dayTime).intValue() == 1);
-
-            if (settingDevice != null) {
-                // All area does not work. Using front IAL
-                Object ambient = BydDeviceHelper.callGetter(settingDevice, "getIALColor", 1);
-                if (ambient instanceof Number) b.ambientColour(((Number) ambient).intValue());
-            }
         } catch (Exception e) {
             logger.debug("collectLight error: " + e.getMessage());
         }
@@ -2422,6 +2450,13 @@ public class BydDataCollector {
             int childPresenceDetection = BydDeviceHelper.callGetSingle(settingDevice, BydFeatureIds.SETTING_CPD_SWITCH_STATUS);
             if (childPresenceDetection >= 0) {
                 b.childPresenceDetection(childPresenceDetection);
+            }
+            // Interior ambient colour. The "all area" query does not report reliably;
+            // read the FRONT (area 1) colour as the representative value. 1-based index.
+            Object ambient = BydDeviceHelper.callGetter(settingDevice, "getIALColor", 1);
+            if (ambient instanceof Number) {
+                int c = ((Number) ambient).intValue();
+                if (c >= 1 && c <= 31) b.ambientColour(c);
             }
         } catch (Exception e) {
             logger.debug("collectSettings error: " + e.getMessage());
@@ -2707,6 +2742,76 @@ public class BydDataCollector {
     private volatile int lastTyreSystemState = Integer.MIN_VALUE;
     private volatile int lastTyreTemperatureState = Integer.MIN_VALUE;
 
+    // --- Tyre alarm notification state machine (per corner FL,FR,RL,RR) ---
+    // The push notification is LATCHED so a persisting alarm notifies exactly
+    // ONCE and re-arms only after the corner reads normal again. This replaces
+    // the old 0->non-zero edge check, which (a) never fired for a tyre already
+    // low at daemon start, (b) turned a -1 signal dropout into a bogus
+    // "-1 kPa Overpressure" alert, and (c) missed a real alarm that arrived
+    // right after a dropout. All access is guarded by tyreAlarmLock because the
+    // poll thread and the async onTyreCallback binder thread both drive it.
+    //
+    // The latch stores the NOTIFIED severity level (0=none, 1=WARN, 2=CRITICAL).
+    // We re-notify ONLY on strict escalation (level rises above the latched
+    // level, e.g. slow->fast leak, or low->deflated pressure); a same-or-lower
+    // reading never re-fires. So a persisting alarm produces at most one push
+    // per severity step, and re-arms (latch back to 0) after the corner reads
+    // normal for TYRE_ALARM_REARM_STREAK consecutive valid polls.
+    private final int[] tyrePressureLatchedLevel = new int[4];
+    // Monotone-threshold debounce: consecutive confirmed reads at or above each
+    // severity. warnStreak counts level>=1 reads, critStreak counts level>=2.
+    // A severity fires only once ITS OWN streak meets the required count — so a
+    // lone transient deflation spike bumps critStreak to 1 (no CRITICAL) while
+    // warnStreak stays continuous (WARN still holds), and a tyre flapping right
+    // at the CRITICAL boundary still fires WARN (level>=1 is continuous) without
+    // firing a flappy CRITICAL. Escalation earns its own confirming reads
+    // instead of inheriting the lower level's count.
+    private final int[] tyrePressureWarnStreak = new int[4];
+    private final int[] tyrePressureCritStreak = new int[4];
+    private final int[] tyrePressureNormalStreak = new int[4];
+    // Per corner: has the firmware pressureState enum EVER reported non-zero?
+    // This tells us the enum channel is actually live on this firmware. On the
+    // stuck-at-0 firmwares the kPa fallback exists to serve, this stays false
+    // forever, so a bare enum==0 is NOT accepted as proof-of-normal for re-arm
+    // (only a valid kPa reading is) — otherwise a kPa signal dropout, which
+    // leaves enum stuck at 0, would masquerade as a normal read, re-arm the
+    // latch, and let the SAME persisting low tyre notify again (duplicate).
+    private final boolean[] tyrePressureEnumEverWorked = new boolean[4];
+    // Per corner: consecutive reads where kPa was INVALID (getter null / sentinel)
+    // while the corner was still being evaluated. kPa is the ground-truth channel,
+    // so a SHORT dropout must HOLD the latch — we can't confirm the tyre recovered
+    // without a real reading, and an intermittent enum lying with 0 during the
+    // dropout must not re-arm us (that re-fires the same persisting low tyre =
+    // duplicate). But once kPa has been dead for TYRE_KPA_DEAD_STREAK reads it is
+    // treated as a dead channel, and we fall back to trusting a proven enum's 0
+    // for re-arm — otherwise a firmware whose kPa dies (or a single spurious
+    // startup kPa reading) would latch the corner forever and suppress every
+    // future alarm on it (a missed SAFETY alarm, worse than a duplicate).
+    private final int[] tyrePressureKpaInvalidStreak = new int[4];
+    private final int[] tyreLeakLatchedSeverity = new int[4];
+    private final int[] tyreLeakNormalStreak = new int[4];
+    private final Object tyreAlarmLock = new Object();
+
+    // kPa numeric thresholds — mirror the vehicle-control.js corner colouring
+    // (PSI = kPa * 0.1450377): warn below ~34 PSI / above ~45 PSI, critical
+    // below ~22 PSI (deflated). These are the SAFETY NET for firmwares whose
+    // getTyrePressureState enum stays stuck at 0 even when a tyre is clearly
+    // low — the exact case the old enum-only notifier missed.
+    private static final int TYRE_PRESSURE_LOW_WARN_KPA = 234;   // ~34 PSI
+    private static final int TYRE_PRESSURE_HIGH_WARN_KPA = 310;  // ~45 PSI
+    private static final int TYRE_PRESSURE_LOW_ALERT_KPA = 152;  // ~22 PSI (deflated)
+    // Consecutive-read debounce so a single transient kPa sample (hard cornering,
+    // temperature spike) can't fire, and a single blip can't re-arm.
+    private static final int TYRE_ALARM_FIRE_STREAK = 2;
+    private static final int TYRE_ALARM_REARM_STREAK = 2;
+    // How many consecutive invalid-kPa reads before kPa is considered a DEAD
+    // channel (vs. a transient dropout). Above this, a proven-live enum's 0 is
+    // allowed to re-arm the latch again. Kept comfortably above the dropout
+    // lengths seen in practice so a brief signal gap can't re-enable enum re-arm
+    // and re-fire a persisting alarm, while a genuinely dead kPa channel still
+    // recovers its ability to re-arm within a few polls.
+    private static final int TYRE_KPA_DEAD_STREAK = 4;
+
     private final int[] tyreTemperatureCache = new int[]{
             BydVehicleData.UNAVAILABLE, BydVehicleData.UNAVAILABLE,
             BydVehicleData.UNAVAILABLE, BydVehicleData.UNAVAILABLE
@@ -2724,6 +2829,20 @@ public class BydDataCollector {
     private void logTyreAlertsIfChanged(int[] pressuresKpa, int[] pressureStates,
                                         int[] airLeakStates, int[] signalStates,
                                         int sysState, int tempState) {
+        // Notification emit — delegated to a per-corner LATCHED state machine
+        // (see evaluateTyreAlarms). Unlike the old 0->non-zero enum edge, this:
+        //   - fires for a tyre already low at daemon start (no baseline miss),
+        //   - falls back to kPa thresholds when the firmware alarm enum is
+        //     stuck at 0 (the common BYD-HAL failure mode our own UI already
+        //     works around), and
+        //   - never emits a duplicate: one push per severity step, re-armed
+        //     only after the corner reads normal again.
+        // Runs BEFORE the change-detection early-return below, which only
+        // throttles the diagnostic log — the state machine must observe every
+        // poll so its normal-streak re-arm counter advances and a tyre that
+        // stays low across the very first poll still notifies once.
+        evaluateTyreAlarms(pressuresKpa, pressureStates, airLeakStates);
+
         // Pressures fluctuate constantly (heat, drive cycle). Only treat as
         // "changed" if any wheel moves more than 5 kPa; otherwise the log
         // would fire every poll on a moving car.
@@ -2744,64 +2863,6 @@ public class BydDataCollector {
                 || tempState != lastTyreTemperatureState;
         if (!pressureChanged && !alertChanged) return;
 
-        // Notification emit on TPMS state transitions. We only fire on
-        // 0 (NORMAL) -> non-zero edges so a stuck-non-zero alarm doesn't
-        // re-notify on every poll. The TPMS firmware itself is the source
-        // of truth — we don't threshold kPa ourselves (matches the cluster's
-        // own private-binder calibration).
-        if (lastTyrePressureStates != null && lastTyreAirLeakStates != null) {
-            String[] wheelLabels = {"Front-left", "Front-right", "Rear-left", "Rear-right"};
-            for (int i = 0; i < 4 && i < pressureStates.length; i++) {
-                int prevP = lastTyrePressureStates[i];
-                int curP = pressureStates[i];
-                if (prevP == 0 && curP != 0) {
-                    try {
-                        org.json.JSONObject data = new org.json.JSONObject();
-                        data.put("wheel", i);
-                        data.put("kPa", pressuresKpa[i]);
-                        data.put("state", curP);
-                        com.overdrive.app.notifications.NotificationBus.get().publish(
-                                new com.overdrive.app.notifications.NotificationEvent(
-                                        "vehicle.health.tyre.pressure",
-                                        com.overdrive.app.notifications.NotificationEvent.Severity.WARN,
-                                        curP == 1 ? "Underpressure" : "Overpressure",
-                                        wheelLabels[i] + " — " + pressuresKpa[i] + " kPa",
-                                        "tyre-pressure-" + i,
-                                        null,
-                                        data));
-                    } catch (Throwable t) {
-                        logger.debug("tyre.pressure notify failed: " + t.getMessage());
-                    }
-                }
-
-                int prevL = lastTyreAirLeakStates[i];
-                int curL = airLeakStates[i];
-                if (prevL == 0 && curL != 0) {
-                    try {
-                        org.json.JSONObject data = new org.json.JSONObject();
-                        data.put("wheel", i);
-                        data.put("leakState", curL);
-                        data.put("kPa", pressuresKpa[i]);
-                        com.overdrive.app.notifications.NotificationEvent.Severity sev =
-                                curL == 2
-                                        ? com.overdrive.app.notifications.NotificationEvent.Severity.CRITICAL
-                                        : com.overdrive.app.notifications.NotificationEvent.Severity.WARN;
-                        com.overdrive.app.notifications.NotificationBus.get().publish(
-                                new com.overdrive.app.notifications.NotificationEvent(
-                                        "vehicle.health.tyre.leak",
-                                        sev,
-                                        curL == 2 ? "Fast leak detected" : "Slow leak detected",
-                                        wheelLabels[i] + " (" + pressuresKpa[i] + " kPa)",
-                                        "tyre-leak-" + i,
-                                        null,
-                                        data));
-                    } catch (Throwable t) {
-                        logger.debug("tyre.leak notify failed: " + t.getMessage());
-                    }
-                }
-            }
-        }
-
         lastTyrePressuresKpa = pressuresKpa.clone();
         lastTyrePressureStates = pressureStates.clone();
         lastTyreAirLeakStates = airLeakStates.clone();
@@ -2821,6 +2882,229 @@ public class BydDataCollector {
         sb.append(" sys=").append(sysState == Integer.MIN_VALUE ? "n/a" : sysState);
         sb.append(" temp=").append(tempState == Integer.MIN_VALUE ? "n/a" : tempState);
         logger.info(sb.toString());
+    }
+
+    private static final String[] TYRE_WHEEL_LABELS =
+            {"Front-left", "Front-right", "Rear-left", "Rear-right"};
+
+    /**
+     * Per-corner latched tyre-alarm evaluator. Called on every tyre read (poll
+     * or async listener), it fires a push at most ONCE per severity step and
+     * re-arms only after the corner returns to normal — so a persisting alarm
+     * never spams, but a fresh or escalating one always notifies.
+     *
+     * <p><b>Pressure severity</b> is the max of the firmware enum and the kPa
+     * fallback:
+     * <ul>
+     *   <li>2 (CRITICAL): kPa &le; {@link #TYRE_PRESSURE_LOW_ALERT_KPA} (deflated)</li>
+     *   <li>1 (WARN): firmware pressureState != 0, OR kPa outside
+     *       [{@link #TYRE_PRESSURE_LOW_WARN_KPA}, {@link #TYRE_PRESSURE_HIGH_WARN_KPA}]</li>
+     *   <li>0: normal</li>
+     * </ul>
+     * <b>Leak severity</b> comes straight from the firmware air-leak enum
+     * (1=slow/WARN, 2=fast/CRITICAL) — there is no kPa proxy for a leak.
+     *
+     * <p>A value of -1 (getter returned null / signal dropout) is treated as
+     * "no data": it neither fires an alarm nor counts toward the normal-streak
+     * re-arm, so a transient dropout can't emit a bogus "-1 kPa" push and can't
+     * silently re-arm a latch mid-alarm.
+     */
+    private void evaluateTyreAlarms(int[] pressuresKpa, int[] pressureStates, int[] airLeakStates) {
+        if (pressuresKpa == null || pressureStates == null || airLeakStates == null) return;
+        synchronized (tyreAlarmLock) {
+            for (int i = 0; i < 4; i++) {
+                int kPa = i < pressuresKpa.length ? pressuresKpa[i] : -1;
+                int pState = i < pressureStates.length ? pressureStates[i] : -1;
+                int leak = i < airLeakStates.length ? airLeakStates[i] : -1;
+
+                evaluatePressureCorner(i, kPa, pState);
+                evaluateLeakCorner(i, kPa, leak);
+            }
+        }
+    }
+
+    /** Pressure alarm for one corner. Caller holds tyreAlarmLock. */
+    private void evaluatePressureCorner(int i, int kPa, int pState) {
+        // kPa is valid only when the getter answered with a real reading.
+        // BydVehicleData.UNAVAILABLE (Integer.MIN_VALUE) and the -1 dropout
+        // sentinel both mean "no pressure data". <=0 is never a real tyre.
+        boolean kPaValid = kPa > 0 && kPa != BydVehicleData.UNAVAILABLE;
+        boolean stateValid = pState >= 0; // -1 = getter returned null
+        boolean enumAlarm = stateValid && pState != 0;
+        if (enumAlarm) tyrePressureEnumEverWorked[i] = true;
+        // Track kPa channel liveness: reset on any valid reading, count up while
+        // it's invalid. A single valid read clears the "dead" state, so one
+        // spurious startup blip can't poison re-arm forever.
+        if (kPaValid) tyrePressureKpaInvalidStreak[i] = 0;
+        else if (tyrePressureKpaInvalidStreak[i] < Integer.MAX_VALUE) tyrePressureKpaInvalidStreak[i]++;
+
+        // No usable signal at all this poll — don't advance either streak so a
+        // dropout neither fires nor re-arms; hold the latch as-is.
+        if (!kPaValid && !stateValid) return;
+
+        // Severity = max(firmware enum, kPa fallback). The kPa net is what
+        // catches firmwares whose pressureState stays stuck at 0. Direction
+        // (under/over) is taken from kPa when we have a real reading — the kPa
+        // is ground truth; the enum's 1=UNDER/2=OVER is only a fallback for the
+        // direction word when kPa is absent, and it can disagree with reality
+        // on a misreporting firmware, so kPa wins when present.
+        int level = 0;
+        boolean under = false, over = false;
+        if (enumAlarm) {
+            level = 1;
+            if (pState == 2) over = true; else under = true;
+        }
+        if (kPaValid) {
+            if (kPa <= TYRE_PRESSURE_LOW_ALERT_KPA) { level = 2; under = true; over = false; }
+            else if (kPa < TYRE_PRESSURE_LOW_WARN_KPA) { level = Math.max(level, 1); under = true; over = false; }
+            else if (kPa > TYRE_PRESSURE_HIGH_WARN_KPA) { level = Math.max(level, 1); over = true; under = false; }
+            // else: kPa is in the normal band. It does NOT clear an enum alarm
+            // (level stays 1 from enumAlarm above) — the firmware enum is
+            // authoritative for "there is a problem"; we just can't name a kPa
+            // direction, so leave the enum's under/over.
+        }
+
+        if (level == 0) {
+            // Normal reading — but re-arm ONLY on positive proof of normal, not
+            // mere absence of an alarm. Channel priority mirrors firing: kPa is
+            // ground truth, the enum is only trusted where kPa isn't answering.
+            //   - kPa valid & in-band  -> confirmed normal.
+            //   - kPa dead (invalid for >= TYRE_KPA_DEAD_STREAK reads) but a
+            //     proven-live enum reads 0 -> confirmed normal (enum is all we
+            //     have; refusing forever would suppress every future alarm on a
+            //     firmware whose kPa channel died = missed safety alarm).
+            //   - kPa merely dropped out briefly (invalid but under the dead
+            //     threshold) -> NOT confirmed, even if a proven enum reads 0:
+            //     without a real kPa we can't tell the tyre recovered, and an
+            //     intermittent enum lying with 0 during the dropout would
+            //     otherwise re-arm and re-fire the same persisting low tyre
+            //     (duplicate). Hold the latch instead.
+            //   - stuck-at-0 enum never proven + kPa invalid -> NOT confirmed.
+            boolean kPaDead = tyrePressureKpaInvalidStreak[i] >= TYRE_KPA_DEAD_STREAK;
+            boolean normalConfirmed = kPaValid
+                    || (stateValid && tyrePressureEnumEverWorked[i] && kPaDead);
+            if (!normalConfirmed) return; // hold latch + streaks; no re-arm, no reset
+
+            tyrePressureWarnStreak[i] = 0;
+            tyrePressureCritStreak[i] = 0;
+            if (tyrePressureLatchedLevel[i] != 0) {
+                if (++tyrePressureNormalStreak[i] >= TYRE_ALARM_REARM_STREAK) {
+                    tyrePressureLatchedLevel[i] = 0;
+                    tyrePressureNormalStreak[i] = 0;
+                    logger.info("Tyre pressure re-armed (normal): " + TYRE_WHEEL_LABELS[i]
+                            + (kPaValid ? " " + kPa + " kPa" : ""));
+                }
+            }
+            return;
+        }
+
+        // Abnormal reading. Advance monotone per-severity streaks: any abnormal
+        // read (level>=1) advances warnStreak; only a deflated read (level==2)
+        // advances critStreak. A read that drops from CRITICAL back to WARN
+        // resets critStreak (the deflation didn't persist) while warnStreak
+        // keeps climbing — so boundary flapping still holds WARN and a lone
+        // deflation spike can't fire CRITICAL. A firmware-enum alarm is already
+        // debounced by the TPMS firmware, so it fires on the first read;
+        // the noisier kPa-only fallback waits for a confirming read.
+        tyrePressureNormalStreak[i] = 0;
+        tyrePressureWarnStreak[i]++;
+        if (level >= 2) tyrePressureCritStreak[i]++; else tyrePressureCritStreak[i] = 0;
+
+        // WARN may fire on the first read when the firmware enum confirms it
+        // (already firmware-debounced); a kPa-only WARN waits for a confirming
+        // read. CRITICAL is ALWAYS kPa-derived (level 2 comes only from
+        // kPa<=deflated threshold, never from the enum), so it ALWAYS waits for
+        // a confirming read — a single transient deflation sample never fires
+        // CRITICAL, even when an enum WARN alarm is simultaneously active.
+        int warnRequired = enumAlarm ? 1 : TYRE_ALARM_FIRE_STREAK;
+        int critRequired = TYRE_ALARM_FIRE_STREAK;
+
+        // The severity we're allowed to fire is the HIGHEST whose own streak has
+        // met its required count. Check CRITICAL first, then WARN.
+        int fireLevel = 0;
+        if (level >= 2 && tyrePressureCritStreak[i] >= critRequired) fireLevel = 2;
+        else if (tyrePressureWarnStreak[i] >= warnRequired) fireLevel = 1;
+
+        // Notify only on strict escalation above the latched level. A
+        // same-or-lower fireLevel while already latched is the persisting alarm
+        // — stay silent.
+        if (fireLevel > tyrePressureLatchedLevel[i]) {
+            tyrePressureLatchedLevel[i] = fireLevel;
+            String kPaText = kPaValid ? (kPa + " kPa") : "no reading";
+            String title = fireLevel >= 2
+                    ? "Tyre critically low"
+                    : (over ? "Overpressure" : "Underpressure");
+            com.overdrive.app.notifications.NotificationEvent.Severity sev = fireLevel >= 2
+                    ? com.overdrive.app.notifications.NotificationEvent.Severity.CRITICAL
+                    : com.overdrive.app.notifications.NotificationEvent.Severity.WARN;
+            try {
+                org.json.JSONObject data = new org.json.JSONObject();
+                data.put("wheel", i);
+                if (kPaValid) data.put("kPa", kPa);
+                if (stateValid) data.put("state", pState);
+                data.put("level", fireLevel);
+                com.overdrive.app.notifications.NotificationBus.get().publish(
+                        new com.overdrive.app.notifications.NotificationEvent(
+                                "vehicle.health.tyre.pressure",
+                                sev,
+                                title,
+                                TYRE_WHEEL_LABELS[i] + " — " + kPaText,
+                                "tyre-pressure-" + i,
+                                null,
+                                data));
+            } catch (Throwable t) {
+                // Roll the latch back so a publish failure doesn't permanently
+                // suppress this corner — next abnormal read retries.
+                tyrePressureLatchedLevel[i] = 0;
+                logger.debug("tyre.pressure notify failed: " + t.getMessage());
+            }
+        }
+    }
+
+    /** Leak alarm for one corner. Caller holds tyreAlarmLock. */
+    private void evaluateLeakCorner(int i, int kPa, int leak) {
+        if (leak < 0) return; // getter returned null / dropout — hold latch, no re-arm
+
+        if (leak == 0) {
+            if (tyreLeakLatchedSeverity[i] != 0) {
+                if (++tyreLeakNormalStreak[i] >= TYRE_ALARM_REARM_STREAK) {
+                    tyreLeakLatchedSeverity[i] = 0;
+                    tyreLeakNormalStreak[i] = 0;
+                    logger.info("Tyre leak re-armed (normal): " + TYRE_WHEEL_LABELS[i]);
+                }
+            }
+            return;
+        }
+
+        // leak >= 1. Fire once on first detection and once more on escalation
+        // (slow=1 -> fast=2); a same-or-lower severity while latched is silent.
+        tyreLeakNormalStreak[i] = 0;
+        if (leak > tyreLeakLatchedSeverity[i]) {
+            tyreLeakLatchedSeverity[i] = leak;
+            boolean kPaValid = kPa > 0 && kPa != BydVehicleData.UNAVAILABLE;
+            com.overdrive.app.notifications.NotificationEvent.Severity sev = leak == 2
+                    ? com.overdrive.app.notifications.NotificationEvent.Severity.CRITICAL
+                    : com.overdrive.app.notifications.NotificationEvent.Severity.WARN;
+            try {
+                org.json.JSONObject data = new org.json.JSONObject();
+                data.put("wheel", i);
+                data.put("leakState", leak);
+                if (kPaValid) data.put("kPa", kPa);
+                com.overdrive.app.notifications.NotificationBus.get().publish(
+                        new com.overdrive.app.notifications.NotificationEvent(
+                                "vehicle.health.tyre.leak",
+                                sev,
+                                leak == 2 ? "Fast leak detected" : "Slow leak detected",
+                                TYRE_WHEEL_LABELS[i]
+                                        + (kPaValid ? " (" + kPa + " kPa)" : ""),
+                                "tyre-leak-" + i,
+                                null,
+                                data));
+            } catch (Throwable t) {
+                tyreLeakLatchedSeverity[i] = 0;
+                logger.debug("tyre.leak notify failed: " + t.getMessage());
+            }
+        }
     }
 
     // Per-wheel temperature poll: candidate (device, method, slot-mapping)
@@ -4325,11 +4609,17 @@ public class BydDataCollector {
                 return;
             }
 
-            if ((eventId == BydFeatureIds.SET_IAL_FRONT_COLOR || eventId == BydFeatureIds.SET_IAL_BACK_COLOR) && iVal >= 1 && iVal <= 31) {
-                // The event doesn't fire for the all area. Monitor front and back
-                BydVehicleData current = snapshot.get();
-                if (current != null) {
-                    snapshot.set(current.toBuilder().ambientColour(iVal).build());
+            // Interior ambient colour (1..31). The "all area" event does not fire, so
+            // monitor the FRONT and BACK colour features (same numeric ids as
+            // LIGHT_AMBIENT_FRONT/REAR_COLOR) and mirror the latest into the snapshot.
+            // Must precede the seat 1..3 guard below (ambient values exceed that range).
+            if (eventId == BydFeatureIds.LIGHT_AMBIENT_FRONT_COLOR
+                    || eventId == BydFeatureIds.LIGHT_AMBIENT_REAR_COLOR) {
+                if (iVal >= 1 && iVal <= 31) {
+                    BydVehicleData current = snapshot.get();
+                    if (current != null) {
+                        snapshot.set(current.toBuilder().ambientColour(iVal).build());
+                    }
                 }
                 return;
             }
@@ -5341,6 +5631,24 @@ public class BydDataCollector {
         }
     }
 
+    /**
+     * Set the interior ambient colour by its 1-based palette index (1-31) via the
+     * Setting device's setIALColor. This is the path used by the ambient-colour
+     * vehicle control and automation action (distinct from setAmbientColor above,
+     * which drives the LIGHT_ATMOSPHERE_CUSTOM_COLOR raw value on the Light device).
+     * Returns true when the SDK reports success (result == 0).
+     */
+    public boolean setAmbientLight(int colour) {
+        try {
+            if (colour < 1 || colour > 31) return false;
+            Object result = BydDeviceHelper.callMethod(settingDevice, "setIALColor", colour);
+            return result instanceof Integer && ((Integer) result).intValue() == 0;
+        } catch (Exception e) {
+            logger.debug("setAmbientLight failed: " + e.getMessage());
+        }
+        return false;
+    }
+
     // --- Seats ---
 
     public boolean setSeatHeating(int position, int level) {
@@ -5416,16 +5724,54 @@ public class BydDataCollector {
     }
 
     /**
-     * Recall a stored driver-side seat memory position (1 or 2).
-     * SDK feature lives on settingDevice — Adas.* IDs do not accept this set.
+     * Recall a stored driver-side seat memory position (slot 1 or 2) — moves the
+     * seat to whatever was previously saved into that slot.
+     *
+     * <p>Uses the "WAKE" feature id ({@code SET_LF_MEMORY_LOCATION_WAKE_SET}): on
+     * this platform the memory subsystem has two distinct ids per seat — a plain
+     * "SET" id that <em>stores</em> the current physical position into a slot, and
+     * a "WAKE" id that <em>recalls</em> (activates) a stored slot. This is the
+     * recall half; {@link #setSeatMemorySave} is the store half. SDK feature lives
+     * on settingDevice — Adas.* IDs do not accept this set.
      */
     public boolean setSeatMemoryPosition(int position) {
         try {
             if (position < 1 || position > 2) return false;
             int result = BydDeviceHelper.callSetSingle(settingDevice, BydFeatureIds.SETTING_LF_MEMORY_LOCATION_WAKE_SET, position);
-            return result == 0;
+            // Success = HAL accepted. callSetSingle returns the raw SDK code on
+            // success (SETTING_COMMAND_SUCCESS, which is NOT guaranteed 0 on this
+            // platform — sibling families prove non-zero SUCCESS, e.g. CHARGING=2)
+            // and -1 on sigperm/exception; documented HAL failure is -2147482648.
+            // So test >= 0 (the proven convention used by sendSetCommand), NOT == 0.
+            return result >= 0;
         } catch (Exception e) {
             logger.debug("setSeatMemoryPosition failed: " + e.getMessage());
+        }
+        return false;
+    }
+
+    /**
+     * Save (store) the driver seat's <em>current</em> physical position into a
+     * memory slot (1 or 2) — the mirror of {@link #setSeatMemoryPosition}. This
+     * writes to the same slots as the physical door memory buttons, so a save here
+     * overwrites what those buttons would recall.
+     *
+     * <p>Uses the "SET" feature id ({@code SET_LF_MEMORY_LOCATION_SET}), not the
+     * "WAKE" recall id. Same signature-permission caveat as every other
+     * settingDevice write (CPD, seat heat/vent): the SDK method resolves and rides
+     * the identical {@link BydDeviceHelper#callSetSingle} path, but the HAL may
+     * reject the write from our UID on a firmware that server-side-gates it
+     * (HAL failure = -1 / -2147482648). Returns true when the HAL accepts.
+     */
+    public boolean setSeatMemorySave(int position) {
+        try {
+            if (position < 1 || position > 2) return false;
+            int result = BydDeviceHelper.callSetSingle(settingDevice, BydFeatureIds.SETTING_LF_MEMORY_LOCATION_SET, position);
+            // See setSeatMemoryPosition: >= 0 is the correct success test (SDK
+            // SUCCESS code is not guaranteed 0; -1/-2147482648 are the failures).
+            return result >= 0;
+        } catch (Exception e) {
+            logger.debug("setSeatMemorySave failed: " + e.getMessage());
         }
         return false;
     }
@@ -5486,17 +5832,6 @@ public class BydDataCollector {
             return result instanceof Integer && ((Integer) result).intValue() == 0;
         } catch (Exception e) {
             logger.debug("setDayTimeLight failed: " + e.getMessage());
-        }
-        return false;
-    }
-
-    public boolean setAmbientLight(int colour) {
-        try {
-            if (colour < 1 || colour > 31) return false;
-            Object result = BydDeviceHelper.callMethod(settingDevice, "setIALColor", colour);
-            return result instanceof Integer && ((Integer) result).intValue() == 0;
-        } catch (Exception e) {
-            logger.debug("setAmbientLight failed: " + e.getMessage());
         }
         return false;
     }
@@ -5618,6 +5953,22 @@ public class BydDataCollector {
         } catch (Exception e) {
             logger.debug("setEspState failed: " + e.getMessage());
             return false;
+        }
+    }
+
+    /**
+     * Read the raw Electronic Stability Program (ESP/ESC) state via the setting HAL
+     * ({@code ADAS_ESP_STATE}). Returns the raw SDK int (typically 1=on / 0=off, but
+     * unconfirmed on this firmware — the feature id is a resolveOrFallback guess), or
+     * -1 when the read fails / device is unavailable. Exposed for on-device
+     * verification of the (guessed) ESP feature id before the toggle is trusted.
+     */
+    public int getEspState() {
+        try {
+            return BydDeviceHelper.callGetSingle(settingDevice, BydFeatureIds.ADAS_ESP_STATE);
+        } catch (Exception e) {
+            logger.debug("getEspState failed: " + e.getMessage());
+            return -1;
         }
     }
 

@@ -25,6 +25,12 @@ window.KM = (function () {
     // Value dropdown; the chosen option's `v` is sent as the fire payload.
     //   kind:"catalog" -> {kind:'catalog', key, sub, payload:v}
     //   kind:"vehicle" -> {kind:'vehicle', action:key}   (no payload)
+    //   kind:"api"     -> {kind:'api', id, method, path, body}
+    //       For features with no VehicleControlCatalog SDK entity (surveillance,
+    //       recording). `api.path`/`api.body` support ${v} substitution from the
+    //       chosen payload option. The daemon routes these through the same
+    //       allowlisted automation bypass, so only the curated control surface
+    //       is reachable. `id` is carried for the UI label only (daemon ignores it).
     var CURATED = [
         { id: 'lock',            i18n: 'keymap.act_lock',            kind: 'vehicle', key: 'lock' },
         { id: 'unlock',          i18n: 'keymap.act_unlock',          kind: 'vehicle', key: 'unlock' },
@@ -42,6 +48,8 @@ window.KM = (function () {
           payloads: [ { v: 'auto', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
         { id: 'drl',             i18n: 'keymap.act_drl',             kind: 'catalog', key: 'drl',
           payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'esp_control',     i18n: 'keymap.act_esp',             kind: 'catalog', key: 'esp_control',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
         { id: 'seat_heat_driver',    i18n: 'keymap.act_seat_heat_driver',    kind: 'catalog', key: 'seat_heat_driver',
           payloads: [ { v: 'off', i18n: 'keymap.off' }, { v: 'low', i18n: 'keymap.low' }, { v: 'high', i18n: 'keymap.high' } ] },
         { id: 'seat_heat_passenger', i18n: 'keymap.act_seat_heat_passenger', kind: 'catalog', key: 'seat_heat_passenger',
@@ -57,7 +65,25 @@ window.KM = (function () {
         { id: 'regen_level',     i18n: 'keymap.act_regen',            kind: 'catalog', key: 'regen_level',
           payloads: [ { v: 'standard', i18n: 'keymap.regen_standard' }, { v: 'high', i18n: 'keymap.regen_high' } ] },
         { id: 'steering_mode',   i18n: 'keymap.act_steering',         kind: 'catalog', key: 'steering_mode',
-          payloads: [ { v: 'comfort', i18n: 'keymap.steering_comfort' }, { v: 'sport', i18n: 'keymap.steering_sport' } ] }
+          payloads: [ { v: 'comfort', i18n: 'keymap.steering_comfort' }, { v: 'sport', i18n: 'keymap.steering_sport' } ] },
+        // ── API actions: features with no SDK/catalog entity (routed via the
+        //    allowlisted automation bypass). path/body use ${v} for the payload. ──
+        { id: 'surveillance',    i18n: 'keymap.act_surveillance',     kind: 'api',
+          method: 'POST', path: '/api/surveillance/${v}', body: '',
+          payloads: [ { v: 'enable', i18n: 'keymap.on' }, { v: 'disable', i18n: 'keymap.off' } ] },
+        { id: 'recording',       i18n: 'keymap.act_recording',        kind: 'api',
+          method: 'POST', path: '/api/recording/mode', body: '{"mode":"${v}"}',
+          payloads: [ { v: 'NONE', i18n: 'keymap.rec_none' }, { v: 'CONTINUOUS', i18n: 'keymap.rec_continuous' },
+                      { v: 'DRIVE_MODE', i18n: 'keymap.rec_drive' }, { v: 'PROXIMITY_GUARD', i18n: 'keymap.rec_proximity' } ] },
+        // Seat memory: recall moves the driver seat to a stored slot; save stores
+        // the current position into it. Two curated actions so a button can be
+        // bound to either. Routed via /api/vehicle/seat (already automation-allowlisted).
+        { id: 'seat_recall',     i18n: 'keymap.act_seat_recall',      kind: 'api',
+          method: 'POST', path: '/api/vehicle/seat', body: '{"action":"position","position":${v}}',
+          payloads: [ { v: '1', i18n: 'keymap.seat_slot_1' }, { v: '2', i18n: 'keymap.seat_slot_2' } ] },
+        { id: 'seat_save',       i18n: 'keymap.act_seat_save',        kind: 'api',
+          method: 'POST', path: '/api/vehicle/seat', body: '{"action":"save","position":${v}}',
+          payloads: [ { v: '1', i18n: 'keymap.seat_slot_1' }, { v: '2', i18n: 'keymap.seat_slot_2' } ] }
     ];
 
     // Known BYD steering-wheel / dash buttons (keycode → label), from the OEM
@@ -276,6 +302,31 @@ window.KM = (function () {
             var name = c ? tr(c.i18n) : a.key;
             return a.payload ? (name + ' — ' + a.payload) : name;
         }
+        if (a.kind === 'api') {
+            var ca = curatedById(a.id);
+            var nm = ca ? tr(ca.i18n) : (a.path || a.id || 'api');
+            // Surface the chosen value (last path segment for enable/disable, or the
+            // mode from the body) so "Surveillance — enable" reads clearly.
+            var v = '';
+            if (a.body && a.body.indexOf('"mode"') >= 0) {
+                var m = a.body.match(/"mode"\s*:\s*"([^"]*)"/);
+                if (m) v = m[1];
+            } else if (a.body && a.body.indexOf('"position"') >= 0) {
+                // Seat recall/save: the slot lives in the body as "position":N, and
+                // the path is the constant /api/vehicle/seat — surface the slot so
+                // "Recall seat position — Slot 1" distinguishes the two slots.
+                var mp = a.body.match(/"position"\s*:\s*(\d+)/);
+                if (mp) v = tr('keymap.seat_slot_' + mp[1]) || mp[1];
+            } else if (a.path) {
+                var seg = a.path.split('/');
+                v = seg[seg.length - 1] || '';
+            }
+            return v ? (nm + ' — ' + v) : nm;
+        }
+        if (a.kind === 'openApp') {
+            var appName = a.label || a['package'] || '';
+            return tr('keymap.kind_open_app') + ': ' + appName;
+        }
         if (a.kind === 'shell') return tr('keymap.kind_shell') + ': ' + (a.cmd || '');
         if (a.kind === 'sequence') {
             var steps = a.steps || [];
@@ -381,6 +432,9 @@ window.KM = (function () {
         var kind = $('kmActionKind').value;
         $('kmCuratedWrap').style.display = kind === 'curated' ? '' : 'none';
         $('kmShellWrap').style.display = kind === 'shell' ? '' : 'none';
+        var appWrap = $('kmOpenAppWrap');
+        if (appWrap) appWrap.style.display = kind === 'openApp' ? '' : 'none';
+        if (kind === 'openApp') buildAppOptions();
     }
 
     function onCuratedChange() {
@@ -412,6 +466,47 @@ window.KM = (function () {
             sel.appendChild(o);
         }
         onCuratedChange();
+    }
+
+    // Cached installed-app list [{package,label}] for the openApp picker.
+    var appList = null;
+
+    // Populate the app picker from /api/apps/list (fetched once, then cached).
+    // Shows a "loading" placeholder until the list arrives.
+    function buildAppOptions() {
+        var sel = $('kmOpenApp');
+        if (!sel) return;
+        var fill = function (apps) {
+            var prev = sel.value;
+            sel.innerHTML = '';
+            var ph = document.createElement('option');
+            ph.value = '';
+            ph.textContent = tr('keymap.pick_app');
+            ph.disabled = true; ph.selected = true;
+            sel.appendChild(ph);
+            for (var i = 0; i < apps.length; i++) {
+                var o = document.createElement('option');
+                o.value = apps[i]['package'];
+                o.textContent = apps[i].label || apps[i]['package'];
+                sel.appendChild(o);
+            }
+            if (prev) sel.value = prev;
+        };
+        if (appList) { fill(appList); return; }
+        // placeholder while loading
+        sel.innerHTML = '';
+        var loading = document.createElement('option');
+        loading.value = '';
+        loading.textContent = tr('keymap.loading_apps');
+        loading.disabled = true; loading.selected = true;
+        sel.appendChild(loading);
+        fetch('/api/apps/list', { cache: 'no-store' })
+            .then(function (r) { return r.json(); })
+            .then(function (j) {
+                appList = (j && j.success && j.apps) ? j.apps : [];
+                fill(appList);
+            })
+            ['catch'](function () { appList = []; fill(appList); });
     }
 
     // Populate the "Button" dropdown from KNOWN_BUTTONS. First option is a
@@ -546,9 +641,24 @@ window.KM = (function () {
             if (!c) { toast(tr('keymap.need_action'), 'error'); return null; }
             if (c.kind === 'vehicle') return { kind: 'vehicle', action: c.key };
             var payload = ($('kmPayload').value != null) ? $('kmPayload').value : '';
+            if (c.kind === 'api') {
+                // Substitute the chosen payload into the path/body templates; the
+                // daemon receives a concrete method/path/body (no ${v} at fire time).
+                var sub = function (s) { return (s || '').split('${v}').join(payload); };
+                return { kind: 'api', id: c.id, method: c.method || 'POST',
+                         path: sub(c.path), body: sub(c.body) };
+            }
             var a = { kind: 'catalog', key: c.key, payload: payload };
             if (c.sub) a.sub = c.sub;
             return a;
+        }
+        if (kind === 'openApp') {
+            var sel = $('kmOpenApp');
+            var pkg = sel ? sel.value : '';
+            if (!pkg) { toast(tr('keymap.need_app'), 'error'); return null; }
+            var label = '';
+            if (sel && sel.selectedIndex >= 0) label = sel.options[sel.selectedIndex].textContent;
+            return { kind: 'openApp', 'package': pkg, label: label };
         }
         if (kind === 'shell') {
             if (!state.allowAdvanced) { toast(tr('keymap.advanced_disabled'), 'error'); return null; }

@@ -1508,6 +1508,7 @@ var VC = {
                 var v = parseInt(ambientSlider.value, 10);
                 self.vehicleState.lights.ambientColour = v;
                 self.updateLightsUI();
+                // Debounce the write so dragging the slider doesn't fire a POST per pixel.
                 if (ambientDebounce) clearTimeout(ambientDebounce);
                 ambientDebounce = setTimeout(function() {
                     self.apiPost('/api/vehicle/lights', { target: 'ambientColour', value: v }).then(function(result) {
@@ -1521,7 +1522,6 @@ var VC = {
                 }, 350);
             });
         }
-        this.fetchChargeCap();
 
         // === ADAS CONTROLS ===
         this.bindBtn('btnSLW', function() {
@@ -1879,17 +1879,129 @@ var VC = {
             })(si);
         }
 
-        // Seat memory positions — driver-side recall (BYD SDK supports up to 2 stored positions).
+        // Seat memory positions — driver-side (BYD SDK supports up to 2 stored slots).
+        // TAP = recall the stored slot (move seat to it); LONG-PRESS = save the
+        // seat's current position into that slot (mirrors the physical door memory
+        // buttons). Two distinct SDK feature ids back these — see BydDataCollector
+        // setSeatMemoryPosition (WAKE/recall) vs setSeatMemorySave (SET/store).
         for (var smi = 1; smi <= 2; smi++) {
             (function(pos) {
-                self.bindBtn('btnSeatMemory' + pos, function() {
-                    // Blue sonar at driver seat — recall is driver-only.
-                    var sp = seatPositions[1];
-                    self.triggerSonarVFX(sp.x, sp.y, sp.z, new THREE.Color(0x00BFFF));
-                    self.toast(BYD.i18n.t('vehicle.seat_memory_position', {pos: pos}), 'success');
-                    self.apiPost('/api/vehicle/seat', { action: 'position', position: pos });
-                });
+                self.bindTileTapHold('btnSeatMemory' + pos,
+                    function() {
+                        // TAP → recall. Blue sonar at the driver seat.
+                        var sp = seatPositions[1];
+                        self.triggerSonarVFX(sp.x, sp.y, sp.z, new THREE.Color(0x00BFFF));
+                        self.toast(BYD.i18n.t('vehicle.seat_memory_position', {pos: pos}), 'success');
+                        self.apiPost('/api/vehicle/seat', { action: 'position', position: pos });
+                    },
+                    function() {
+                        // LONG-PRESS → save current position. Green sonar to signal
+                        // "stored" (distinct from the blue recall pulse).
+                        var sp = seatPositions[1];
+                        self.triggerSonarVFX(sp.x, sp.y, sp.z, new THREE.Color(0x00D4AA));
+                        self.toast(BYD.i18n.t('vehicle.seat_memory_saved', {pos: pos}), 'success');
+                        self.apiPost('/api/vehicle/seat', { action: 'save', position: pos });
+                    });
             })(smi);
+        }
+    },
+
+    /**
+     * Bind a tile that distinguishes a short TAP from a LONG-PRESS (tap-and-hold).
+     * Used by the seat-memory tiles: tap recalls, hold saves. SOTA-grade for the
+     * Android 7.1 head-unit WebView:
+     *   - Uses pointer events when available, falling back to touch+mouse; a single
+     *     shared guard (bound flag) prevents double-binding across event families.
+     *   - A hold timer (holdMs, default 650) fires onHold and marks the gesture
+     *     "consumed" so the trailing tap/click does NOT also fire onTap.
+     *   - Any move beyond a small slop, or leaving the tile, CANCELS the pending
+     *     hold (so a scroll/drag never saves by accident).
+     *   - A `.arming` class drives a fill animation during the hold for feedback;
+     *     `.armed` flashes once on save. Both are cleared on release.
+     *   - A 500ms post-fire dedupe (same as bindBtn) absorbs the synthetic click
+     *     the platform emits after touchend.
+     */
+    bindTileTapHold: function(id, onTap, onHold, holdMs) {
+        var el = document.getElementById(id);
+        if (!el) return;
+        holdMs = holdMs || 650;
+        var self = this;
+        var timer = null;
+        var startX = 0, startY = 0;
+        var held = false;          // hold already fired for this gesture
+        var active = false;        // a press is in progress
+        var lastFire = 0;          // shared tap/hold dedupe window
+        var SLOP = 12;             // px of movement that cancels the hold
+
+        function fire(fn) {
+            var now = Date.now();
+            if (now - lastFire < 500) return;
+            lastFire = now;
+            try { fn.call(el); }
+            catch (err) { console.error('[VC] tap/hold handler error for #' + id + ':', err); }
+        }
+        function clearArm() {
+            el.classList.remove('arming');
+            if (timer) { clearTimeout(timer); timer = null; }
+        }
+        function begin(x, y) {
+            // Idempotent against overlapping/secondary pointers (multi-touch): a
+            // second begin() before end() would orphan the first hold timer, which
+            // then fires a spurious onHold (save) after release. Ignore any press
+            // that arrives while one is already active.
+            if (active) return;
+            active = true; held = false;
+            startX = x; startY = y;
+            // reflow so the fill animation restarts each press
+            el.classList.remove('arming');
+            void el.offsetWidth;
+            el.style.setProperty('--vc-hold-ms', holdMs + 'ms');
+            el.classList.add('arming');
+            timer = setTimeout(function() {
+                held = true;
+                clearArm();
+                el.classList.add('armed');
+                setTimeout(function() { el.classList.remove('armed'); }, 400);
+                fire(onHold);
+            }, holdMs);
+        }
+        function move(x, y) {
+            if (!active) return;
+            if (Math.abs(x - startX) > SLOP || Math.abs(y - startY) > SLOP) {
+                active = false; clearArm();
+            }
+        }
+        function end(commitTap) {
+            if (!active && !held) { clearArm(); return; }
+            var wasHeld = held;
+            active = false; held = false;
+            clearArm();
+            if (!wasHeld && commitTap) fire(onTap);
+        }
+
+        if (window.PointerEvent) {
+            el.addEventListener('pointerdown', function(e) { begin(e.clientX, e.clientY); });
+            el.addEventListener('pointermove', function(e) { move(e.clientX, e.clientY); });
+            el.addEventListener('pointerup',    function(e) { end(true); });
+            el.addEventListener('pointercancel',function(e) { active = false; held = false; clearArm(); });
+            el.addEventListener('pointerleave', function(e) { if (active) { active = false; clearArm(); } });
+        } else {
+            el.addEventListener('touchstart', function(e) {
+                var t = e.touches[0]; begin(t ? t.clientX : 0, t ? t.clientY : 0);
+            }, { passive: true });
+            el.addEventListener('touchmove', function(e) {
+                var t = e.touches[0]; if (t) move(t.clientX, t.clientY);
+            }, { passive: true });
+            el.addEventListener('touchend', function(e) {
+                e.preventDefault();  // suppress the synthetic click after touchend
+                end(true);
+            }, { passive: false });
+            el.addEventListener('touchcancel', function() { active = false; held = false; clearArm(); });
+            // Mouse fallback for desktop/PWA testing.
+            el.addEventListener('mousedown', function(e) { begin(e.clientX, e.clientY); });
+            el.addEventListener('mousemove', function(e) { move(e.clientX, e.clientY); });
+            el.addEventListener('mouseup',   function() { end(true); });
+            el.addEventListener('mouseleave',function() { if (active) { active = false; clearArm(); } });
         }
     },
 
@@ -2405,24 +2517,25 @@ var VC = {
     },
 
     updateLightsUI: function() {
-        if (this.vehicleState.lights) {
-            var btnDRL = document.getElementById('btnDRL');
-            var on = !!(this.vehicleState.lights.dayTimeLight);
-            if (btnDRL) { if (on) btnDRL.classList.add('on'); else btnDRL.classList.remove('on'); }
+        if (!this.vehicleState.lights) return;
+        var btnDRL = document.getElementById('btnDRL');
+        var on = !!(this.vehicleState.lights.dayTimeLight);
+        if (btnDRL) { if (on) btnDRL.classList.add('on'); else btnDRL.classList.remove('on'); }
 
-            var slider = document.getElementById('ambientColourSlider');
-            if (slider) {
-                var colour = this.vehicleState.lights.ambientColour;
-                if (typeof colour === 'number') {
-                    slider.value = colour;
-                    var options = this.vehicleState.lights.ambientOptions;
-                    if (options && options.length) {
-                        slider.disabled = false;
-                        slider.style.background = `linear-gradient(to right, ${options.join(',')})`;
+        var slider = document.getElementById('ambientColourSlider');
+        if (slider) {
+            var colour = this.vehicleState.lights.ambientColour;
+            if (typeof colour === 'number') {
+                slider.value = colour;
+                var options = this.vehicleState.lights.ambientOptions;
+                if (options && options.length) {
+                    slider.disabled = false;
+                    slider.style.background = 'linear-gradient(to right, ' + options.join(',') + ')';
+                    if (colour >= 1 && colour <= options.length) {
                         slider.style.setProperty('--color', options[colour - 1]);
-                    } else {
-                        slider.disabled = true;
                     }
+                } else {
+                    slider.disabled = true;
                 }
             }
         }
@@ -2433,8 +2546,8 @@ var VC = {
         var on = !!(this.vehicleState.adas && this.vehicleState.adas.speedLimitWarning);
         if (btnSLW) { if (on) btnSLW.classList.add('on'); else btnSLW.classList.remove('on'); }
         var btnCPD = document.getElementById('btnCPD');
-        var on = !!(this.vehicleState.setting && this.vehicleState.setting.childPresenceDetection);
-        if (btnCPD) { if (on) btnCPD.classList.add('on'); else btnCPD.classList.remove('on'); }
+        var cpdOn = !!(this.vehicleState.setting && this.vehicleState.setting.childPresenceDetection);
+        if (btnCPD) { if (cpdOn) btnCPD.classList.add('on'); else btnCPD.classList.remove('on'); }
     },
 
     /** Custom-mode chargeWay: always emit CSV so server doesn't fall back to "e". */

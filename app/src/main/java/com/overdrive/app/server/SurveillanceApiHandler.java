@@ -452,6 +452,10 @@ public class SurveillanceApiHandler {
         // ACC-OFF mode: "smart" (motion + YOLO) | "continuous" (plain rolling).
         // Branched at SurveillanceEngineGpu.enable(). Default smart.
         config.put("accOffMode", survConfig.optString("accOffMode", "smart"));
+        // Arm mode: "lock" (arm on door-lock, disarm on unlock, 60s fallback when
+        // lock state unreadable) | "power" (arm immediately on ACC-off, disarm on
+        // ACC-on). Branched in CameraDaemon's ACC-off dispatch. Default lock.
+        config.put("armMode", survConfig.optString("armMode", "lock"));
         // Keep ONLY the USB/data rail powered after ACC OFF (cameras unaffected).
         // Default true; read by AccSentryDaemon on the next ACC-OFF cycle.
         config.put("keepUsbPowerOnAccOff", survConfig.optBoolean("keepUsbPowerOnAccOff", true));
@@ -497,6 +501,7 @@ public class SurveillanceApiHandler {
             config.put("motionHeatmap", sentryConfig.isMotionHeatmapEnabled());
             config.put("filterDebugLog", sentryConfig.isFilterDebugLogEnabled());
             config.put("discardEmptyBrightMotionEvents", sentryConfig.isDiscardEmptyBrightMotionEvents());
+            config.put("discardEmptyMotionAtNight", sentryConfig.isDiscardEmptyMotionAtNight());
             config.put("telegramSendStartPing", sentryConfig.isTelegramSendStartPing());
             // Per-tier filter now lives in the telegram unified-config section
             // (see UnifiedTelegramConfig.K_TIER_*). Wire format on
@@ -611,6 +616,7 @@ public class SurveillanceApiHandler {
             config.put("motionHeatmap", false);
             config.put("filterDebugLog", false);
             config.put("discardEmptyBrightMotionEvents", false);
+            config.put("discardEmptyMotionAtNight", false);
             config.put("telegramSendStartPing", false);
             // Tier toggles live on the telegram unified-config section, so
             // they're available even when SurveillanceConfig isn't loaded.
@@ -852,6 +858,28 @@ public class SurveillanceApiHandler {
                 configChanged = true;
             }
             
+            // Arm mode: "lock" or "power". Takes effect on the next ACC-off cycle
+            // (the door-lock gate / immediate-arm branch reads it fresh then), so
+            // no mid-session engine restart is needed here. Invalid values are
+            // rejected — getSurveillanceArmMode() falls back to "lock" anyway, but
+            // logging the bad value aids debugging.
+            if (configJson.has("armMode")) {
+                String armMode = configJson.optString("armMode", "lock");
+                if ("lock".equals(armMode) || "power".equals(armMode)) {
+                    boolean persisted = com.overdrive.app.config.UnifiedConfigManager.updateValues(
+                            "surveillance", java.util.Collections.singletonMap("armMode", armMode));
+                    if (!persisted) {
+                        CameraDaemon.log("Failed to persist armMode=" + armMode);
+                        HttpResponse.sendJsonError(out, "Failed to save arm mode");
+                        return;
+                    }
+                    CameraDaemon.log("Arm mode set to: " + armMode);
+                    configChanged = true;
+                } else {
+                    CameraDaemon.log("Rejected armMode: " + armMode);
+                }
+            }
+
             // SOTA: Deterrent action setting (silent / flash_lights / find_car)
             if (configJson.has("deterrentAction")) {
                 String action = configJson.optString("deterrentAction", "silent");
@@ -1264,6 +1292,11 @@ public class SurveillanceApiHandler {
             if (configJson.has("discardEmptyBrightMotionEvents")) {
                 sentryConfig.setDiscardEmptyBrightMotionEvents(
                         configJson.optBoolean("discardEmptyBrightMotionEvents", false));
+                configChanged = true;
+            }
+            if (configJson.has("discardEmptyMotionAtNight")) {
+                sentryConfig.setDiscardEmptyMotionAtNight(
+                        configJson.optBoolean("discardEmptyMotionAtNight", false));
                 configChanged = true;
             }
             if (configJson.has("filterDebugLog")) {

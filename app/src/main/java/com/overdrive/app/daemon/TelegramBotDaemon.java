@@ -95,6 +95,53 @@ public class TelegramBotDaemon {
     // client's idle pool threads. Same happens-before rationale as the volatile
     // gate statics above.
     private static volatile OkHttpClient httpClient;
+    // Dedicated client for heavy multipart uploads (sendVideo/sendDocument). A
+    // multi-MB clip pushed over the car's constrained/park-boundary uplink
+    // routinely needs longer than the 30s write / 60s read the polling+text+
+    // photo client uses — the log showed the hero PHOTO succeeding and the
+    // clip then timing out on the SAME link seconds later. Derived from
+    // httpClient via newBuilder() so it (a) tracks every proxy switch for free
+    // and (b) SHARES the connection pool + dispatcher — no orphaned idle
+    // threads. Rebuilt in lockstep inside refreshHttpClient() under the same
+    // monitor. Only the write/read timeouts are widened; connect stays 30s (a
+    // real connect either lands quickly or the host is unreachable) and no
+    // callTimeout is set, so a legitimately-slow-but-progressing upload is
+    // bounded per-socket-operation rather than hard-capped mid-flight.
+    private static volatile OkHttpClient uploadHttpClient;
+
+    // ---- Fix #2: retry + spool on a definitively-undelivered send ----
+    // A send that fails because the network never carried a byte (DNS didn't
+    // resolve, connect refused, connect timed out) is dup-SAFE to replay: the
+    // request provably never reached Telegram. A POST-connect read/write
+    // timeout is AMBIGUOUS (Telegram may have received + acted on it) and, with
+    // no outbound idempotency key, must NOT be replayed. sendMessage/sendPhoto
+    // set this per-thread flag in their catch so the enclosing IPC handler can
+    // decide whether to spool the original command. ThreadLocal because each
+    // IPC command runs start-to-finish on one worker thread; the send is
+    // synchronous on that thread, so the flag is set-then-read with no cross-
+    // thread visibility concern. Cleared before every send so a stale value
+    // from a prior command can never leak in.
+    private static final ThreadLocal<Boolean> lastSendUndelivered =
+            ThreadLocal.withInitial(() -> Boolean.FALSE);
+
+    // Set while draining the disk spool so the daemon-side spool-on-failure
+    // path is SUPPRESSED for replays. Without this, a replay that fails again
+    // during a still-ongoing outage would re-offer the command (new file, reset
+    // age stamp) and could ping-pong across drains, defeating the age cap and
+    // TelegramSpool's at-most-once contract. ThreadLocal: the drain runs on its
+    // own "TelegramSpoolDrain" thread and calls processIpcCommand synchronously.
+    private static final ThreadLocal<Boolean> replayingSpooledCmd =
+            ThreadLocal.withInitial(() -> Boolean.FALSE);
+
+    // down→up edge detector for the poll loop. Set true whenever a poll or send
+    // hits a network failure; when a poll next SUCCEEDS we flip it and kick a
+    // spool drain so alerts spooled during the outage go out the moment
+    // connectivity returns — not only on the next daemon restart.
+    private static volatile boolean connectivityWasDown = false;
+    // Guards against overlapping drains (startup drain + a recovery drain, or
+    // two rapid recovery edges) running the same spool dir concurrently.
+    private static final AtomicBoolean spoolDrainInProgress = new AtomicBoolean(false);
+
     private static long lastUpdateId = 0;
     
     // Track processed update IDs to prevent duplicate processing
@@ -656,8 +703,29 @@ public class TelegramBotDaemon {
         }
 
         lastProxyState = proxyAvailable;
-        httpClient = builder.build();
+        OkHttpClient base = builder.build();
+        httpClient = base;
+        // Upload client: same proxy + shared pool/dispatcher (newBuilder reuses
+        // them), only the write/read windows widened for slow multi-MB pushes.
+        // Rebuilt here (not lazily) so a mid-session proxy switch can never
+        // leave the upload path pinned to a stale proxy.
+        uploadHttpClient = base.newBuilder()
+                .writeTimeout(UPLOAD_WRITE_TIMEOUT_SEC, TimeUnit.SECONDS)
+                .readTimeout(UPLOAD_READ_TIMEOUT_SEC, TimeUnit.SECONDS)
+                .build();
     }
+
+    /**
+     * Write/read timeouts for the heavy-upload client. A 40s clip at a poor
+     * uplink can take minutes to push; 30s (the base client's writeTimeout)
+     * guaranteed a mid-upload SocketTimeout and a dropped video. These bound a
+     * single stalled socket operation (no progress for this long ⇒ give up),
+     * NOT total upload duration — a slow-but-steady upload keeps going. The
+     * upload still runs on the isolated IPC_MEDIA_WORKERS lane, so a long push
+     * never delays a text/photo/critical alert.
+     */
+    private static final long UPLOAD_WRITE_TIMEOUT_SEC = 180L;
+    private static final long UPLOAD_READ_TIMEOUT_SEC = 120L;
 
     /**
      * Invalidate HTTP client so next request re-checks proxy.
@@ -672,7 +740,82 @@ public class TelegramBotDaemon {
             refreshHttpClient();
         }
     }
-    
+
+    /**
+     * Classify a send-path exception as DEFINITIVELY-UNDELIVERED (true) — the
+     * request provably never reached Telegram, so replaying it cannot
+     * duplicate — versus AMBIGUOUS/other (false), where the POST may already
+     * have been delivered and a replay would double-send.
+     *
+     * <p>Undelivered ⇔ the failure happened before any request byte left the
+     * device: DNS didn't resolve ({@link java.net.UnknownHostException}) or the
+     * TCP connect was refused/timed out ({@link java.net.ConnectException}, or a
+     * {@link java.net.SocketTimeoutException} whose message names the CONNECT
+     * phase). A plain read/write {@code SocketTimeoutException} after connect is
+     * AMBIGUOUS and returns false — the exact seam the emit-side spool already
+     * refuses to cross (TelegramNotifier's {@code connected} flag). This mirrors
+     * that boundary daemon-side so retry/spool inherits the same no-dup safety.
+     */
+    private static boolean isDefinitivelyUndelivered(Throwable e) {
+        if (e instanceof java.net.UnknownHostException) return true;
+        if (e instanceof java.net.ConnectException) return true;
+        if (e instanceof java.net.SocketTimeoutException) {
+            // OkHttp labels a pre-connect timeout with a message that mentions
+            // "connect" (e.g. "failed to connect to api.telegram.org/… after
+            // 30000ms"); a post-connect stall reads "timeout"/"Read timed
+            // out"/"timeout ... after Nms" WITHOUT "connect". Only the connect
+            // phase is dup-safe to replay.
+            String m = e.getMessage();
+            return m != null && m.toLowerCase(java.util.Locale.US).contains("connect");
+        }
+        return false;
+    }
+
+    /**
+     * IPC actions whose ORIGINAL command is dup-safe to spool for later replay
+     * when a live send fails undelivered. Restricted to owner-gated TEXT/PHOTO
+     * alerts (door/critical/proximity/motion). Deliberately EXCLUDES:
+     * <ul>
+     *   <li>sendVideo / sendDocument — a stale multi-MB clip replayed after the
+     *       car has driven off is undesirable (matches the emit-side rule that
+     *       fire-and-forget video is never spooled); the widened upload timeout
+     *       (Fix #1) is the video path's resilience.</li>
+     *   <li>notifyTunnel — throttled + tied to a live URL that rotates; a
+     *       replayed old URL would be worse than useless.</li>
+     *   <li>ping / query commands — no user-facing payload.</li>
+     * </ul>
+     * The replay re-enters {@link #processIpcCommand}, which re-applies the
+     * category/owner gate and file-existence check, so a since-muted category
+     * or since-deleted hero still drops correctly.
+     */
+    private static boolean isSpoolableOnUndelivered(String action) {
+        switch (action) {
+            case "sendMessage":
+            case "notifyMotion":
+            case "notifyMotionFinalized":
+            case "notifyCritical":
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /** Backoff before the single in-send retry on an undelivered failure. */
+    private static final long SEND_RETRY_BACKOFF_MS = 1500L;
+
+    /**
+     * Record that the current thread's send failed DEFINITIVELY-UNDELIVERED
+     * (safe to replay). Read by {@link #processIpcCommand} to decide whether to
+     * spool the original command. The connectivity-recovery edge is armed
+     * separately — only AFTER an entry is actually spooled (see the spool block
+     * in processIpcCommand) — so a poll succeeding between this flag and the
+     * offer() write can't drain-then-miss the not-yet-written entry, and a
+     * drain is never armed when there was nothing to spool.
+     */
+    private static void markSendUndelivered() {
+        lastSendUndelivered.set(Boolean.TRUE);
+    }
+
     /**
      * Get global HTTP proxy from Android settings.
      * Reads from: settings get global http_proxy (format: host:port)
@@ -1040,6 +1183,12 @@ public class TelegramBotDaemon {
 
     private static JSONObject processIpcCommand(JSONObject cmd) {
         JSONObject response = new JSONObject();
+        // Reset the per-thread undelivered flag at command entry so it can only
+        // ever reflect a send made WITHIN this command — never a stale value
+        // from a prior command handled on the same reused worker thread (which
+        // could otherwise trigger a false spool on a command that errored for a
+        // non-network reason, e.g. "Missing chatId").
+        lastSendUndelivered.set(Boolean.FALSE);
         try {
             String action = cmd.optString("cmd", "");
 
@@ -1303,6 +1452,42 @@ public class TelegramBotDaemon {
                     response.put("status", "error");
                     response.put("message", "Unknown command: " + action);
             }
+
+            // Fix #2: if the send failed DEFINITIVELY-UNDELIVERED (DNS/connect,
+            // set by markSendUndelivered on the send path) AND this action is a
+            // dup-safe owner-gated text/photo alert, spool the ORIGINAL command
+            // for later replay so a transient outage doesn't silently eat a
+            // door/critical/motion alert. Guarded so it never runs for a replay
+            // (would loop / reset the age cap) or when the send actually
+            // reached Telegram (delivered-ambiguous timeouts, HTTP errors, and
+            // gate "skipped" outcomes all leave the flag false ⇒ no dup).
+            if (Boolean.TRUE.equals(lastSendUndelivered.get())
+                    && !Boolean.TRUE.equals(replayingSpooledCmd.get())
+                    && isSpoolableOnUndelivered(action)) {
+                try {
+                    // Strip a caller-supplied chatId so the replay re-resolves
+                    // to the CURRENT owner inside processIpcCommand (defense-in-
+                    // depth: a spooled entry can never target a stale chat), and
+                    // drop the transient status we just set — the drainer stamps
+                    // its own K_SPOOLED_AT.
+                    JSONObject spoolCmd = new JSONObject(cmd.toString());
+                    spoolCmd.remove("chatId");
+                    boolean spooled =
+                            com.overdrive.app.telegram.TelegramSpool.offer(spoolCmd);
+                    if (spooled) {
+                        // Arm the recovery edge ONLY once an entry is on disk, so
+                        // the next successful poll drains it. Set after offer()
+                        // returns (file published) → no drain-before-write race.
+                        connectivityWasDown = true;
+                        response.put("status", "spooled");
+                    }
+                    log("Send undelivered for '" + action + "'; "
+                            + (spooled ? "spooled for retry on reconnect"
+                                        : "spool failed, dropped"));
+                } catch (Exception spoolEx) {
+                    log("Spool-on-undelivered error: " + spoolEx.getMessage());
+                }
+            }
         } catch (Exception e) {
             try {
                 response.put("status", "error");
@@ -1481,6 +1666,17 @@ public class TelegramBotDaemon {
      * throws into startup.
      */
     private static void drainSpooledNotifications() {
+        // Single-flight: the startup drain and a poll-triggered reconnect drain
+        // (or two rapid reconnect edges) must not run the same spool dir at
+        // once — concurrent drains would race the .inflight claim and could
+        // double-attempt an entry. TelegramSpool.drain is itself synchronized,
+        // but that would only SERIALISE two drains (the second re-scanning a
+        // dir the first already emptied); this flag skips the redundant pass
+        // entirely. Reset in finally so a crashed drain never wedges the gate.
+        if (!spoolDrainInProgress.compareAndSet(false, true)) {
+            log("Spool drain already in progress; skipping");
+            return;
+        }
         try {
             int n = com.overdrive.app.telegram.TelegramSpool.drain(cmd -> {
                 // Defense-in-depth: a spooled entry must only ever reach the
@@ -1489,17 +1685,31 @@ public class TelegramBotDaemon {
                 // entry (were the spool dir ever writable) can't redirect to an
                 // attacker chat.
                 cmd.remove("chatId");
-                JSONObject resp = processIpcCommand(cmd);
-                // Advisory return only (drained-count log). The entry is consumed
-                // after this one attempt regardless of outcome (at-most-once) —
-                // re-arming on a false return risked duplicating an
-                // ambiguous-but-actually-delivered send (no outbound idempotency).
-                String status = (resp != null) ? resp.optString("status", "") : "";
-                return "ok".equals(status);
+                // Mark this as a REPLAY so processIpcCommand's spool-on-
+                // undelivered path is suppressed — a replay that fails again
+                // during a still-ongoing outage must NOT re-offer itself (that
+                // would reset the age stamp and could ping-pong forever,
+                // defeating both the age cap and at-most-once). TelegramSpool
+                // already consumes the entry after this one attempt.
+                replayingSpooledCmd.set(Boolean.TRUE);
+                try {
+                    JSONObject resp = processIpcCommand(cmd);
+                    // Advisory return only (drained-count log). The entry is
+                    // consumed after this one attempt regardless of outcome
+                    // (at-most-once) — re-arming on a false return risked
+                    // duplicating an ambiguous-but-actually-delivered send (no
+                    // outbound idempotency).
+                    String status = (resp != null) ? resp.optString("status", "") : "";
+                    return "ok".equals(status);
+                } finally {
+                    replayingSpooledCmd.set(Boolean.FALSE);
+                }
             });
             if (n > 0) log("Replayed " + n + " spooled notification(s)");
         } catch (Throwable t) {
             log("Spool drain error: " + t.getMessage());
+        } finally {
+            spoolDrainInProgress.set(false);
         }
     }
 
@@ -1763,7 +1973,27 @@ public class TelegramBotDaemon {
                 onHttpFailure();
                 return;
             }
-            
+
+            // A successful poll (2xx) is the authoritative "connectivity is
+            // back" signal. If a prior poll or send saw the network go down and
+            // spooled alerts, drain now — the moment we can reach Telegram
+            // again — instead of waiting for the next daemon restart. Runs on a
+            // separate thread because the drain replays serially and each send
+            // can sleep up to 30-60s on a 429, which must not stall the
+            // long-poll loop. The down→up flag is flipped BEFORE spawning so a
+            // burst of successful polls can't launch a drain per cycle;
+            // spoolDrainInProgress single-flights any overlap with the startup
+            // drain.
+            if (connectivityWasDown) {
+                connectivityWasDown = false;
+                log("Connectivity restored — draining spooled notifications");
+                Thread recoverDrain = new Thread(
+                        TelegramBotDaemon::drainSpooledNotifications,
+                        "TelegramSpoolDrainReconnect");
+                recoverDrain.setDaemon(true);
+                recoverDrain.start();
+            }
+
             String body = response.body() != null ? response.body().string() : "";
             JSONObject json = new JSONObject(body);
             
@@ -2003,55 +2233,90 @@ public class TelegramBotDaemon {
     // ==================== MESSAGING ====================
     
     private static boolean sendMessage(long chatId, String text) {
-        try {
-            String url = TELEGRAM_API_BASE() + botToken + "/sendMessage";
+        // Clear the per-thread undelivered flag before we start: a stale value
+        // from a prior send on this worker thread must never be read by the
+        // enclosing IPC handler as if it were this send's outcome.
+        lastSendUndelivered.set(Boolean.FALSE);
+        String url = TELEGRAM_API_BASE() + botToken + "/sendMessage";
 
-            JSONObject body = new JSONObject();
+        JSONObject body = new JSONObject();
+        try {
             body.put("chat_id", chatId);
             body.put("text", text);
             body.put("parse_mode", "Markdown");
-            String payload = body.toString();
-
-            // Single retry on 429, matching the media send paths (sendPhoto/
-            // sendVideo/sendDocument). Text alerts (motion-start, critical,
-            // proximity, tunnel) are the highest-priority surface, so they
-            // should get at least the same rate-limit budget as media — a
-            // burst-induced 429 must not silently drop the alert.
-            for (int attempt = 0; attempt < 2; attempt++) {
-                Request request = new Request.Builder()
-                        .url(url)
-                        .post(RequestBody.create(payload, MediaType.parse("application/json")))
-                        .build();
-
-                try (Response response = httpClient.newCall(request).execute()) {
-                    if (response.isSuccessful()) {
-                        return true;
-                    }
-                    if (response.code() == 429 && attempt == 0) {
-                        long sleepSec = parseRetryAfter(response, 1L);
-                        log("sendMessage 429 — sleeping " + sleepSec + "s before retry");
-                        try { Thread.sleep(Math.min(sleepSec * 1000L, 30_000L)); }
-                        catch (InterruptedException ie) {
-                            Thread.currentThread().interrupt();
-                            return false;
-                        }
-                        continue;  // retry
-                    }
-                    // Surface 4xx/5xx so silent failures (e.g. 400
-                    // "can't parse entities" from Markdown content the
-                    // bot helper didn't escape) stop being invisible.
-                    String respBody = response.body() != null
-                            ? response.body().string() : "";
-                    log("sendMessage HTTP " + response.code() + ": " + respBody);
-                    return false;
-                }
-            }
-            return false;
         } catch (Exception e) {
-            log("sendMessage error: " + e.getMessage());
-            onHttpFailure();
+            // JSON build can't realistically fail here, but if it does the
+            // failure is local (not a network drop) — don't mark undelivered.
+            log("sendMessage payload build error: " + e.getMessage());
             return false;
         }
+        String payload = body.toString();
+
+        // OUTER loop: one extra whole-send retry when the failure was
+        // DEFINITIVELY-UNDELIVERED (DNS/connect) — a transient blip (the log's
+        // dominant "Unable to resolve host" / "failed to connect" pattern)
+        // often clears within a second or two, and one dup-safe retry recovers
+        // the alert without waiting for the spool. Delivered-ambiguous timeouts
+        // do NOT enter this loop (they return from the catch immediately).
+        for (int netAttempt = 0; netAttempt < 2; netAttempt++) {
+            try {
+                // Single retry on 429, matching the media send paths (sendPhoto/
+                // sendVideo/sendDocument). Text alerts (motion-start, critical,
+                // proximity, tunnel) are the highest-priority surface, so they
+                // should get at least the same rate-limit budget as media — a
+                // burst-induced 429 must not silently drop the alert.
+                for (int attempt = 0; attempt < 2; attempt++) {
+                    Request request = new Request.Builder()
+                            .url(url)
+                            .post(RequestBody.create(payload, MediaType.parse("application/json")))
+                            .build();
+
+                    try (Response response = httpClient.newCall(request).execute()) {
+                        if (response.isSuccessful()) {
+                            return true;
+                        }
+                        if (response.code() == 429 && attempt == 0) {
+                            long sleepSec = parseRetryAfter(response, 1L);
+                            log("sendMessage 429 — sleeping " + sleepSec + "s before retry");
+                            try { Thread.sleep(Math.min(sleepSec * 1000L, 30_000L)); }
+                            catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                                return false;
+                            }
+                            continue;  // retry
+                        }
+                        // Surface 4xx/5xx so silent failures (e.g. 400
+                        // "can't parse entities" from Markdown content the
+                        // bot helper didn't escape) stop being invisible. An
+                        // HTTP-level response means the request WAS delivered —
+                        // not spoolable (would duplicate).
+                        String respBody = response.body() != null
+                                ? response.body().string() : "";
+                        log("sendMessage HTTP " + response.code() + ": " + respBody);
+                        return false;
+                    }
+                }
+                return false;
+            } catch (Exception e) {
+                onHttpFailure();
+                boolean undelivered = isDefinitivelyUndelivered(e);
+                if (undelivered && netAttempt == 0) {
+                    log("sendMessage undelivered (" + e.getMessage()
+                            + ") — retrying once in " + SEND_RETRY_BACKOFF_MS + "ms");
+                    try { Thread.sleep(SEND_RETRY_BACKOFF_MS); }
+                    catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        markSendUndelivered();  // let the handler spool it
+                        return false;
+                    }
+                    continue;  // one dup-safe whole-send retry
+                }
+                log("sendMessage error: " + e.getMessage());
+                if (undelivered) markSendUndelivered();
+                return false;
+            }
+        }
+        return false;
     }
     
     /**
@@ -2126,60 +2391,83 @@ public class TelegramBotDaemon {
      * PWA notification's hero image.
      */
     public static boolean sendPhoto(long chatId, String photoPath, String caption) {
-        try {
-            File photoFile = new File(photoPath);
-            if (!photoFile.exists()) {
-                log("Photo file not found: " + photoPath);
+        // Clear the per-thread undelivered flag before starting (see sendMessage).
+        lastSendUndelivered.set(Boolean.FALSE);
+        File photoFile = new File(photoPath);
+        if (!photoFile.exists()) {
+            log("Photo file not found: " + photoPath);
+            return false;  // local miss, not a network drop — don't mark undelivered
+        }
+
+        String url = TELEGRAM_API_BASE() + botToken + "/sendPhoto";
+
+        // OUTER loop: one dup-safe whole-send retry on a DEFINITIVELY-UNDELIVERED
+        // (DNS/connect) failure — same rationale as sendMessage. The multipart
+        // body (and file handle) is rebuilt fresh per attempt below, so a retry
+        // re-reads the file cleanly.
+        for (int netAttempt = 0; netAttempt < 2; netAttempt++) {
+            try {
+                // Build the multipart request once per attempt; OkHttp consumes
+                // the body exactly once, so it's re-created on 429 retry too.
+                for (int attempt = 0; attempt < 2; attempt++) {
+                    MultipartBody.Builder bodyBuilder = new MultipartBody.Builder()
+                            .setType(MultipartBody.FORM)
+                            .addFormDataPart("chat_id", String.valueOf(chatId))
+                            .addFormDataPart("photo", photoFile.getName(),
+                                    RequestBody.create(photoFile, MediaType.parse("image/jpeg")));
+
+                    if (caption != null && !caption.isEmpty()) {
+                        bodyBuilder.addFormDataPart("caption", caption);
+                        bodyBuilder.addFormDataPart("parse_mode", "Markdown");
+                    }
+
+                    Request request = new Request.Builder()
+                            .url(url)
+                            .post(bodyBuilder.build())
+                            .build();
+
+                    try (Response response = httpClient.newCall(request).execute()) {
+                        if (response.isSuccessful()) {
+                            log("Photo sent: " + photoPath);
+                            return true;
+                        }
+                        if (response.code() == 429 && attempt == 0) {
+                            // Telegram rate limit. Body carries {"parameters":{"retry_after":N}}
+                            long sleepSec = parseRetryAfter(response, 1L);
+                            log("sendPhoto 429 — sleeping " + sleepSec + "s before retry");
+                            try { Thread.sleep(Math.min(sleepSec * 1000L, 30_000L)); }
+                            catch (InterruptedException ie) {
+                                Thread.currentThread().interrupt();
+                                return false;
+                            }
+                            continue;  // retry
+                        }
+                        // HTTP-level response ⇒ delivered ⇒ not spoolable.
+                        log("sendPhoto HTTP error: " + response.code());
+                        return false;
+                    }
+                }
+                return false;
+            } catch (Exception e) {
+                onHttpFailure();
+                boolean undelivered = isDefinitivelyUndelivered(e);
+                if (undelivered && netAttempt == 0) {
+                    log("sendPhoto undelivered (" + e.getMessage()
+                            + ") — retrying once in " + SEND_RETRY_BACKOFF_MS + "ms");
+                    try { Thread.sleep(SEND_RETRY_BACKOFF_MS); }
+                    catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        markSendUndelivered();
+                        return false;
+                    }
+                    continue;
+                }
+                log("sendPhoto error: " + e.getMessage());
+                if (undelivered) markSendUndelivered();
                 return false;
             }
-
-            String url = TELEGRAM_API_BASE() + botToken + "/sendPhoto";
-
-            // Build the multipart request once; we may need to re-send on 429.
-            // Reusing the builder is simplest because OkHttp consumes the body
-            // exactly once per request, so we re-create the body on retry.
-            for (int attempt = 0; attempt < 2; attempt++) {
-                MultipartBody.Builder bodyBuilder = new MultipartBody.Builder()
-                        .setType(MultipartBody.FORM)
-                        .addFormDataPart("chat_id", String.valueOf(chatId))
-                        .addFormDataPart("photo", photoFile.getName(),
-                                RequestBody.create(photoFile, MediaType.parse("image/jpeg")));
-
-                if (caption != null && !caption.isEmpty()) {
-                    bodyBuilder.addFormDataPart("caption", caption);
-                    bodyBuilder.addFormDataPart("parse_mode", "Markdown");
-                }
-
-                Request request = new Request.Builder()
-                        .url(url)
-                        .post(bodyBuilder.build())
-                        .build();
-
-                try (Response response = httpClient.newCall(request).execute()) {
-                    if (response.isSuccessful()) {
-                        log("Photo sent: " + photoPath);
-                        return true;
-                    }
-                    if (response.code() == 429 && attempt == 0) {
-                        // Telegram rate limit. Body carries {"parameters":{"retry_after":N}}
-                        long sleepSec = parseRetryAfter(response, 1L);
-                        log("sendPhoto 429 — sleeping " + sleepSec + "s before retry");
-                        try { Thread.sleep(Math.min(sleepSec * 1000L, 30_000L)); }
-                        catch (InterruptedException ie) {
-                            Thread.currentThread().interrupt();
-                            return false;
-                        }
-                        continue;  // retry
-                    }
-                    log("sendPhoto HTTP error: " + response.code());
-                    return false;
-                }
-            }
-            return false;
-        } catch (Exception e) {
-            log("sendPhoto error: " + e.getMessage());
-            return false;
         }
+        return false;
     }
 
     /**
@@ -2421,7 +2709,9 @@ public class TelegramBotDaemon {
                         .post(bodyBuilder.build())
                         .build();
 
-                try (Response response = httpClient.newCall(request).execute()) {
+                // Heavy-upload client: widened write/read timeouts so a
+                // multi-MB clip on a slow uplink isn't cut off at 30s.
+                try (Response response = uploadHttpClient.newCall(request).execute()) {
                     if (response.isSuccessful()) {
                         log("Video sent: " + videoPath);
                         return true;
@@ -2490,7 +2780,8 @@ public class TelegramBotDaemon {
                         .post(bodyBuilder.build())
                         .build();
 
-                try (Response response = httpClient.newCall(request).execute()) {
+                // Heavy-upload client (same widened timeouts as sendVideo).
+                try (Response response = uploadHttpClient.newCall(request).execute()) {
                     if (response.isSuccessful()) {
                         log("Document sent: " + filePath);
                         return true;

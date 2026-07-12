@@ -1,5 +1,6 @@
 package com.overdrive.app.automation.action;
 
+import com.overdrive.app.automation.type.AppType;
 import com.overdrive.app.automation.type.ColourType;
 import com.overdrive.app.automation.type.EnumType;
 import com.overdrive.app.automation.type.IntType;
@@ -24,6 +25,11 @@ public class Actions {
         addAction(new NotificationAction(new Label("notification", "automation.send_notification"), "automation.send_notification_description"));
         addAction(new VehicleControlAction(
                 new Label("adas_slw", "automation.set_slw"), "automation.set_slw_description",
+                new EnumType(new Label("payload", "automation.action"), new Label("off", "automation.off"), new Label("on", "automation.on"))));
+        // ESP / Electronic Stability Control — label id MUST equal the catalog key
+        // "esp_control" so VehicleControlAction.trigger resolves it. SAFETY control.
+        addAction(new VehicleControlAction(
+                new Label("esp_control", "automation.set_esp"), "automation.set_esp_description",
                 new EnumType(new Label("payload", "automation.action"), new Label("off", "automation.off"), new Label("on", "automation.on"))));
         addAction(new ApiAction(
                 new Label("cpd", "automation.set_cpd"),
@@ -174,6 +180,16 @@ public class Actions {
                         new Label("CONTINUOUS", "automation.continuous"),
                         new Label("DRIVE_MODE", "automation.drive_mode"),
                         new Label("PROXIMITY_GUARD", "automation.proximity_guard"))));
+        // Open app — launch a user-selected installed app. The package is chosen
+        // from a live picker (AppType → dropdown fed by GET /api/apps/list). Routes
+        // through the allowlisted POST /api/apps/launch (shared with key mapping).
+        addAction(new ApiAction(
+                new Label("openApp", "automation.open_app"),
+                "automation.open_app_description",
+                "POST",
+                "/api/apps/launch",
+                "{\"package\":\"${package}\"}",
+                new AppType(new Label("package", "automation.app"))));
         // Shell command — the free-text StringType variable is defined inside
         // ShellAction. Autonomous exec, so it self-gates on the dedicated
         // automation.allowShell flag (toggle on the Automations page) at fire

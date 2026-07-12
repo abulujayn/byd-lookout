@@ -617,11 +617,46 @@ public class HttpServer {
     }
 
     /**
-     * Used for automations to have an API action without going through authentication
+     * Path prefixes an automation {@code ApiAction} is permitted to reach through the auth-free
+     * {@link #automationApiRequest} bypass. This is a hard security boundary: automationApiRequest
+     * skips {@link AuthMiddleware} entirely, so this allowlist — NOT the curated catalog in
+     * Actions.java — is what keeps an ApiAction (existing or a carelessly-added future one) from
+     * reaching sensitive surfaces like /api/debug/* (car-property / light / autoservice writes),
+     * /api/backup/ (device key material), /api/update/ (APK install), /api/telegram/ (bot token),
+     * /api/oem-dashcam/ (shells to pm), /api/logs or /api/keymap. Keep it as tight as the curated
+     * automation actions genuinely need.
+     */
+    private static final String[] AUTOMATION_ALLOWED_PREFIXES = {
+        "/api/vehicle/",       // vehicle controls: setting, window, climate, seat
+        "/api/surveillance/",  // surveillance enable / disable
+        "/api/recording/mode", // recording mode
+        "/api/apps/launch",    // open-app action: launch a user-selected app (NOT /api/apps/list)
+    };
+
+    /** Whether an automation-originated request path is inside the allowlist above. */
+    private static boolean isAutomationAllowed(String path) {
+        if (path == null) return false;
+        int q = path.indexOf('?');
+        String clean = q >= 0 ? path.substring(0, q) : path;
+        for (String prefix : AUTOMATION_ALLOWED_PREFIXES) {
+            if (clean.startsWith(prefix)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Used for automations to have an API action without going through authentication.
+     * The request is served in-process (no socket, so this is unreachable from the network) and
+     * is gated by {@link #AUTOMATION_ALLOWED_PREFIXES} so the auth bypass can only ever hit the
+     * curated automation control surface, never the sensitive /api/debug|backup|update|... paths.
      *
-     * @return The HTTP response as a String
+     * @return The HTTP response as a String, or null if denied by the allowlist or on error
      */
     public String automationApiRequest(String method, String path, String body) {
+        if (!isAutomationAllowed(path)) {
+            CameraDaemon.log("AUTH: automation API request denied (not in allowlist): " + method + " " + path);
+            return null;
+        }
         OutputStream out = new ByteArrayOutputStream();
         try {
             if (!routeToHandlers(method, path, body, null, null, out)) return null;
@@ -739,6 +774,11 @@ public class HttpServer {
             return AutomationApiHandler.handle(method, path, body, out);
         }
 
+        // Community Automations API (browse / publish / import shared automations)
+        if (path.startsWith("/api/community/")) {
+            return com.overdrive.app.community.CommunityApiHandler.handle(method, path, body, out);
+        }
+
         // RoadSense API (delete-local / delete-cloud data actions)
         if (path.startsWith("/api/roadsense/")) {
             return RoadSenseApiHandler.handle(method, path, body, out);
@@ -822,6 +862,13 @@ public class HttpServer {
         // accessibility service POST here so BYD SDK writes run in the daemon UID.
         if (path.startsWith("/api/keymap")) {
             return KeymapApiHandler.handle(method, path, body, out);
+        }
+
+        // Installed-app enumeration + launch — shared by the key-mapping app picker
+        // and the automation "open app" action (POST /api/apps/launch is allowlisted
+        // for automation ApiActions in AUTOMATION_ALLOWED_PREFIXES).
+        if (path.startsWith("/api/apps/")) {
+            return AppsApiHandler.handle(method, path, body, out);
         }
 
         // Autoservice AIDL debug sweep — read-only reach probes for the BYD

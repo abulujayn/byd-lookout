@@ -583,7 +583,12 @@ public class TelemetryDataCollector {
             com.overdrive.app.byd.BydDataCollector collector =
                     com.overdrive.app.byd.BydDataCollector.getInstance();
             if (collector != null) {
-                double f = collector.getDistanceToKmFactor();
+                // Use the HARDWARE unit factor, not the app's display override:
+                // the raw getCurrentSpeed() reading is in the cluster's unit, which
+                // is fixed by getMileageUnit() and can diverge from the km/mi DISPLAY
+                // preference. Scaling by the display override inflates speed ~1.6×
+                // when the two disagree (e.g. km cluster + user picks mi).
+                double f = collector.getSpeedToKmhFactor();
                 if (f > 0) return f;
             }
         } catch (Throwable ignored) {

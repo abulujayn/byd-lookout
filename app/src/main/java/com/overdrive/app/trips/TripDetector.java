@@ -249,6 +249,9 @@ public class TripDetector {
         try {
             startOdometerKm = OdometerReader.getInstance().readOdometerKm();
             if (startOdometerKm > 0) {
+                // Persist the absolute reading for display (distanceKm is the
+                // delta; this is the odometer value shown on the trip card).
+                activeTrip.odometerStartKm = startOdometerKm;
                 logger.info("Start odometer: " + startOdometerKm + " km");
             }
         } catch (Exception e) {
@@ -372,6 +375,11 @@ public class TripDetector {
         double endOdometerKm = -1;
         try {
             endOdometerKm = OdometerReader.getInstance().readOdometerKm();
+            if (endOdometerKm > 0) {
+                // Persist the absolute end reading for display (paired with the
+                // start snapshot; the card shows start→end, distanceKm the delta).
+                activeTrip.odometerEndKm = endOdometerKm;
+            }
         } catch (Exception e) {
             logger.warn("Failed to read end odometer: " + e.getMessage());
         }

@@ -30,6 +30,23 @@ public final class NotificationEvent {
     /** Category-specific extras (filename, wheel index, kPa, etc.). Never null. */
     public final JSONObject data;
 
+    /**
+     * Transient delivery hint — NOT serialized into the push payload and NOT
+     * persisted by HistorySink. When true, {@link
+     * com.overdrive.app.notifications.sinks.PushSink} skips Web Push for this
+     * event; every other sink (HistorySink persistence, LogSink diagnostics,
+     * TelegramSink) still processes it normally.
+     *
+     * <p>This lets a source that owns a push-tier preference (e.g. surveillance
+     * motion, whose per-tier toggle would otherwise decide delivery) still
+     * publish EVERY event to the bus — so the Notification Log records it — while
+     * honoring the tier choice for Web Push only. Set once by the publisher
+     * BEFORE {@link NotificationBus#publish}; read only by sinks on the single
+     * bus dispatch thread, so the executor-submit happens-before edge makes it
+     * visible with no extra synchronization. Default false = deliver normally.
+     */
+    private boolean pushSuppressed = false;
+
     public NotificationEvent(String category, Severity severity, String title, String body,
                              String tag, String clickUrl, JSONObject data) {
         if (category == null) throw new IllegalArgumentException("category required");
@@ -43,6 +60,22 @@ public final class NotificationEvent {
         this.tag = tag;
         this.clickUrl = clickUrl;
         this.data = data == null ? new JSONObject() : data;
+    }
+
+    /**
+     * Mark this event as Web-Push-suppressed (see {@link #pushSuppressed}) and
+     * return {@code this} so publishers can chain it onto construction:
+     * {@code bus.publish(new NotificationEvent(...).suppressPush())}. Affects
+     * only PushSink; persistence/log/Telegram sinks are unaffected.
+     */
+    public NotificationEvent suppressPush() {
+        this.pushSuppressed = true;
+        return this;
+    }
+
+    /** @return true if PushSink should skip Web Push for this event. */
+    public boolean isPushSuppressed() {
+        return pushSuppressed;
     }
 
     /** Build the wire envelope sent inside the encrypted Web Push payload. */

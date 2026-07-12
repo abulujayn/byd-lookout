@@ -110,6 +110,7 @@ class RoadSenseOverlayService : Service() {
         ioHandler = Handler(ioThread!!.looper)
         createOverlay()
         startPolling()
+        instance = this
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -128,12 +129,24 @@ class RoadSenseOverlayService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (instance === this) instance = null
         pollRunnable?.let { ioHandler?.removeCallbacks(it) }
         ioThread?.quitSafely()
         ioThread = null
         ioHandler = null
         stopArrowPulse()
         removeOverlay()
+    }
+
+    /** Re-inflate the overlay against the current app locale/theme. Called when the
+     *  user switches the in-app language while the overlay is live — a bare Service
+     *  doesn't get onConfigurationChanged for an AppCompat per-app locale change, so
+     *  the pill would otherwise stay in the previous language until the next restart.
+     *  Mirrors onConfigurationChanged's rebuild (arrow-pulse reset + re-inflate). */
+    private fun relocalize() {
+        handler.post {
+            if (overlayView != null) { stopArrowPulse(); removeOverlay(); createOverlay() }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -729,15 +742,46 @@ class RoadSenseOverlayService : Service() {
     }
 
     private fun themedContext(): Context {
-        val mode = androidx.appcompat.app.AppCompatDelegate.getDefaultNightMode()
-        val uiNight = when (mode) {
-            androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES -> Configuration.UI_MODE_NIGHT_YES
-            androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO -> Configuration.UI_MODE_NIGHT_NO
-            else -> return this
-        }
         val cfg = Configuration(resources.configuration)
-        cfg.uiMode = (cfg.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or uiNight
-        return createConfigurationContext(cfg)
+        var overridden = false
+
+        // Day/night: a bare Service runs against the system configuration, so
+        // AppCompatDelegate.setDefaultNightMode() doesn't reach the overlay unless
+        // we mirror it onto the config here (matches StatusOverlayService).
+        val mode = androidx.appcompat.app.AppCompatDelegate.getDefaultNightMode()
+        when (mode) {
+            androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_YES -> {
+                cfg.uiMode = (cfg.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
+                        Configuration.UI_MODE_NIGHT_YES
+                overridden = true
+            }
+            androidx.appcompat.app.AppCompatDelegate.MODE_NIGHT_NO -> {
+                cfg.uiMode = (cfg.uiMode and Configuration.UI_MODE_NIGHT_MASK.inv()) or
+                        Configuration.UI_MODE_NIGHT_NO
+                overridden = true
+            }
+            else -> { /* follow-system — leave uiMode alone */ }
+        }
+
+        // Locale: the app's in-app language (AppCompatDelegate.setApplicationLocales,
+        // set from LocaleManager in OverdriveApplication) is applied to Activities but
+        // NOT to a bare Service — its Resources stay on the SYSTEM locale, so getString()
+        // for the roadsense_* pill/caption strings would ignore the user's chosen
+        // language. Pull the app locale list and set it on the config so the overlay
+        // resolves the values-<lang>/ strings the rest of the app uses.
+        val appLocales = androidx.appcompat.app.AppCompatDelegate.getApplicationLocales()
+        if (!appLocales.isEmpty) {
+            val locale = appLocales[0]
+            if (locale != null) {
+                val locList = android.os.LocaleList(locale)
+                android.os.LocaleList.setDefault(locList)
+                cfg.setLocales(locList)
+                overridden = true
+            }
+        }
+
+        // No overrides (follow-system night + auto locale) → keep the service context.
+        return if (overridden) createConfigurationContext(cfg) else this
     }
 
     private fun startForegroundCompat() {
@@ -783,6 +827,17 @@ class RoadSenseOverlayService : Service() {
     }
 
     companion object {
+        /** Live instance while the overlay window is up, for the locale-change
+         *  relocalize hook. @Volatile: written on the main thread (onCreate/onDestroy),
+         *  read from the language-picker call site. */
+        @Volatile private var instance: RoadSenseOverlayService? = null
+
+        /** Re-inflate the running overlay in the newly-selected app language. No-op if
+         *  the overlay isn't currently up. Call after AppCompatDelegate.setApplicationLocales. */
+        fun relocalizeIfRunning() {
+            instance?.relocalize()
+        }
+
         private const val TAG = "RoadSense/Overlay"
         private const val CHANNEL = "roadsense_overlay"
         private const val NOTIFICATION_ID = 9986

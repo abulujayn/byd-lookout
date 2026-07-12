@@ -3,6 +3,7 @@ package com.overdrive.app.server;
 import com.overdrive.app.byd.BydDataCollector;
 import com.overdrive.app.byd.BydVehicleData;
 import com.overdrive.app.byd.routing.VehicleCommandRouter;
+import com.overdrive.app.daemon.CameraDaemon;
 import com.overdrive.app.logging.DaemonLogger;
 import com.overdrive.app.mqtt.VehicleControlCatalog;
 
@@ -45,6 +46,16 @@ import java.io.OutputStream;
  *       climate, charge_cap_*, child_lock, wireless_charging, adas_*).
  *   { "kind":"vehicle", "action":"lock|unlock|flash|find_car" }
  *       Composite cloud-first commands not registered in the catalog.
+ *   { "kind":"api", "method":"POST", "path":"/api/...", "body":"{...}" }
+ *       Fire an internal API action (surveillance, recording mode) for
+ *       features that have no VehicleControlCatalog/SDK entity. Routed through
+ *       {@link HttpServer#automationApiRequest} — the SAME auth-free, allowlisted
+ *       path automations use — so it can only ever reach the curated control
+ *       surface (/api/vehicle, /api/surveillance, /api/recording/mode), never the
+ *       sensitive /api/debug|backup|update|... endpoints.
+ *   { "kind":"openApp", "package":"com.foo.bar", "label":"Foo" }
+ *       Launch an installed app (resolves its launcher activity). Not gated —
+ *       opening an app is no more privileged than a user tapping its icon.
  *   { "kind":"shell", "cmd":"..." }         — advanced, gated by allowAdvanced
  *   { "kind":"sequence", "steps":[ {kind:...}, ... ] }
  *       Run several of the above actions in order on one keypress. Best-effort:
@@ -748,6 +759,8 @@ public final class KeymapApiHandler {
         switch (kind) {
             case "catalog": return runCatalog(req);
             case "vehicle": return runVehicle(req);
+            case "api":     return runApi(req);
+            case "openApp": return runOpenApp(req);
             case "shell":   return runShell(req);
             default: {
                 JSONObject r = new JSONObject();
@@ -871,6 +884,82 @@ public final class KeymapApiHandler {
         response.put("outcome", r.outcome.toString());
         response.put("message", r.displayMessage);
         return response;
+    }
+
+    /**
+     * Internal API action — for curated features that have no VehicleControlCatalog
+     * SDK entity (surveillance enable/disable, recording mode). Routes through the
+     * same auth-free, allowlisted in-process path automations use
+     * ({@link HttpServer#automationApiRequest}), so the keymap can reach exactly the
+     * control surface the allowlist permits and nothing more. Not advanced-gated:
+     * the reachable paths are curated (the UI only offers the fixed surveillance /
+     * recording actions), unlike the arbitrary-command shell escape hatch.
+     */
+    private static JSONObject runApi(JSONObject req) throws org.json.JSONException {
+        JSONObject response = new JSONObject();
+        String method = req.optString("method", "POST");
+        String path = req.optString("path", null);
+        String body = req.optString("body", "");
+
+        if (path == null || path.isBlank()) {
+            response.put("success", false);
+            response.put("error", "Missing api path");
+            return response;
+        }
+
+        HttpServer server = CameraDaemon.getHttpServer();
+        if (server == null) {
+            response.put("success", false);
+            response.put("error", "HTTP server not available");
+            return response;
+        }
+
+        // automationApiRequest returns the full HTTP response (status line + headers
+        // + body), or null when the path is outside the automation allowlist, the
+        // route is unhandled, or the handler threw. A non-null "HTTP/1.1 2xx" is success.
+        String httpResponse = server.automationApiRequest(method, path, body);
+        boolean ok = httpResponse != null && isSuccessStatus(httpResponse);
+        logger.info("Keymap api '" + method + " " + path + "' -> " + (ok ? "SUCCESS" : "FAILED"));
+
+        response.put("success", ok);
+        if (!ok) {
+            response.put("error", httpResponse == null
+                    ? "API request denied or not handled" : "API request returned an error");
+        }
+        return response;
+    }
+
+    /**
+     * Open an installed app by package name via the shared {@link AppLauncher}.
+     * Not gated by allowAdvanced — launching an app is equivalent to the user
+     * tapping its launcher icon, not an arbitrary-exec escape hatch.
+     */
+    private static JSONObject runOpenApp(JSONObject req) throws org.json.JSONException {
+        JSONObject response = new JSONObject();
+        String pkg = req.optString("package", "");
+        if (pkg == null || pkg.isBlank()) {
+            response.put("success", false);
+            response.put("error", "Missing app package");
+            return response;
+        }
+        boolean ok = com.overdrive.app.launcher.AppLauncher.launch(pkg);
+        logger.info("Keymap openApp '" + pkg + "' -> " + (ok ? "SUCCESS" : "FAILED"));
+        response.put("success", ok);
+        if (!ok) response.put("error", "Could not launch " + pkg);
+        return response;
+    }
+
+    /** True if a raw HTTP response string carries a 2xx status line. */
+    private static boolean isSuccessStatus(String httpResponse) {
+        // Format: "HTTP/1.1 <code> <reason>\r\n..."; parse the code defensively.
+        int sp = httpResponse.indexOf(' ');
+        if (sp < 0 || sp + 4 > httpResponse.length()) return false;
+        try {
+            int code = Integer.parseInt(httpResponse.substring(sp + 1, sp + 4));
+            return code >= 200 && code < 300;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 
     /**

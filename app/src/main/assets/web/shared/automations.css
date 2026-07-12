@@ -112,6 +112,32 @@
     color: var(--text-primary);
     padding: 8px;
 }
+
+/* Native <input type=time> (createTimeInput) inherits the .form-grid input box
+   above, but Chrome-58 WebKit paints the INTERNAL time chrome (digits, spin
+   buttons, the clock icon) in default light-theme colours that clash with the
+   dark M3 UI. Recolour those pseudo-elements to match. The box (bg/border/radius)
+   is already correct via the shared .form-grid input rule. */
+.form-grid input.time { cursor: pointer; }
+/* Recolour ONLY the digit text of the native time field so it reads on the dark
+   theme. Deliberately DO NOT style ::-webkit-inner-spin-button or
+   ::-webkit-calendar-picker-indicator — touching those on the Chrome-58 head-unit
+   WebView can suppress the native time popup (regression seen when they were
+   restyled/hidden). The field box (bg/border/radius) is already themed by the
+   shared .form-grid input rule; the native picker opens on tap as normal. */
+.form-grid input.time::-webkit-datetime-edit,
+.form-grid input.time::-webkit-datetime-edit-hour-field,
+.form-grid input.time::-webkit-datetime-edit-minute-field,
+.form-grid input.time::-webkit-datetime-edit-ampm-field,
+.form-grid input.time::-webkit-datetime-edit-text,
+.form-grid input.time::-webkit-datetime-edit-fields-wrapper {
+    color: var(--text-primary);
+}
+.form-grid input.time:focus {
+    outline: none;
+    border-color: var(--brand-primary);
+    box-shadow: 0 0 0 2px rgba(0, 212, 170, 0.15);
+}
 .form-grid .label {
     font-size: 14px;
     font-weight: 500;
@@ -162,15 +188,20 @@
     flex-wrap: wrap;
     margin-bottom: 5px;
     flex: 1;
-    align-items: center
+    align-items: center;
 }
 /* Each input claims a quarter-row on wide viewports; sibling margins give the
    inter-input spacing (flex gap is ignored on Chrome-58). The negative row
    margin cancels the outer inputs' side margins so the grid stays flush. */
 .form-grid .row .inputs { margin-left: -5px; margin-right: -5px; }
 .form-grid .row .inputs > *, .form-grid .row > .input {
-    flex: 0 0 25%;
-    margin: 5px 0;
+    /* Horizontal margin (not just vertical) so sibling dropdowns — e.g. the
+       condition's type + comparator + value selects — have an even gap between
+       them instead of sitting flush. flex-basis subtracts the 10px total side
+       margin so 4 still fit per row (the .inputs -5px side inset cancels the
+       outermost children's side margins, keeping the grid flush at the edges). */
+    flex: 0 0 calc(25% - 10px);
+    margin: 5px;
     box-sizing: border-box;
 }
 .form-grid .row .inputs > textarea {
@@ -181,12 +212,12 @@
 }
 @media (max-width: 1279px) {
     .form-grid .row .inputs > *, .form-grid .row > .input {
-        flex: 0 0 50%;
+        flex: 0 0 calc(50% - 10px);
     }
 }
 @media (max-width: 773px) {
     .form-grid .row .inputs > *, .form-grid .row > .input {
-        flex: 0 0 100%;
+        flex: 0 0 calc(100% - 10px);
     }
 }
 .form-grid .row .inputs > .type-selector {
@@ -305,8 +336,8 @@
     flex-wrap: wrap;
 }
 @media (max-width: 773px) {
+    /* Four action buttons wrap to two-per-row on narrow devices. */
     #automationList .actions {
-        /* Stack 2 buttons on top of each other on small devices */
         max-width: 84px;
     }
 }

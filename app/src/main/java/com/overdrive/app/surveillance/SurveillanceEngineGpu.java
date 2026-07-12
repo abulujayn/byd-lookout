@@ -570,6 +570,15 @@ public class SurveillanceEngineGpu {
     private volatile boolean eventTriggerWasAiTimeout = false;    // trigger fired on the AI-timeout fallback with NO in-sequence YOLO confirmation → could be a YOLO-missed real actor → hard KEEP
     private volatile float   eventMaxLuma = 0f;                  // brightest quadrant meanLuma seen while recording
     private volatile float   eventMinLuma = Float.MAX_VALUE;     // darkest non-black quadrant meanLuma seen while recording
+    // NIGHT-path discriminators (luma-free, YOLO-free) for the dark-scene discard.
+    // The bright-everywhere clauses are meaningless after dark, so the night sub-
+    // toggle instead rests on signals a real person walking through the dark never
+    // produces: rigid flow translation (→ keep) vs confirmed in-place foliage/shadow
+    // oscillation or a whole-quadrant illumination change (→ FP evidence). Latched
+    // per-tick from results[q] on the engine thread, read once at stop.
+    private volatile boolean eventEverSawCoherentMotion = false; // any tick with a rigidly-translating component (flowCoherence≥ratio or netDrift≥min) → a real moving subject → hard KEEP on the night path
+    private volatile boolean eventSawNightFpEvidence = false;     // positive dark-scene FP evidence: confirmed in-place incoherent flow (tree/shadow) OR a whole-quadrant brightness-suppression event (IR/headlight) — REQUIRED for the night discard path
+    private volatile boolean eventSawUncharacterizedMotion = false; // any tick where a quadrant had a formed motion component (componentSize>0) but flow could NOT resolve it (flowCoherence<0, e.g. a texture-poor dark crop) → the blob is unexplained (could be a dim real person YOLO/flow both missed) → hard KEEP on the night path (true scene-wide fail-open)
     // Every finalized segment of the CURRENT event (the final segment is
     // currentEventFile; earlier ones are added by the rotation listener). The
     // discard decision is whole-event, so a discard must delete ALL of them, not
@@ -1616,6 +1625,49 @@ public class SurveillanceEngineGpu {
                 if (l > 0f) {
                     if (l > eventMaxLuma) eventMaxLuma = l;
                     if (l < eventMinLuma) eventMinLuma = l;
+                }
+                // Night-path discriminators (luma-free, YOLO-free). The flow-
+                // coherence signal (native Stage 4b) is the same one the live
+                // flag/shadow guard trusts; here we accumulate it across the WHOLE
+                // event so a dark scene can be characterized without brightness.
+                MotionPipelineV2.QuadrantResult r = results[q];
+                if (r.flowCoherence >= 0f) {
+                    // A rigidly-translating component appeared this tick — a real
+                    // moving subject (person/vehicle), never a waving flag or an
+                    // in-place shadow. Any single coherent tick hard-KEEPS the clip
+                    // on the night path. Mirror of highThreatIsTrusted's OR test.
+                    if (r.flowCoherence >= COHERENCE_RATIO_MIN
+                            || r.netDriftBlocks >= COHERENCE_NET_MIN) {
+                        eventEverSawCoherentMotion = true;
+                    } else if (r.componentSize > 0) {
+                        // Signal FIRED and reported incoherent, in-place motion on a
+                        // formed component — a confirmed tree/foliage/sweeping-shadow
+                        // oscillation. Positive FP evidence for the night discard.
+                        eventSawNightFpEvidence = true;
+                    }
+                } else if (r.componentSize > 0 && !r.brightnessSuppressed) {
+                    // A formed motion component that the flow stage could NOT resolve
+                    // (flowCoherence==-1: too few textured blocks to block-match — the
+                    // texture-poor dark-crop signature) AND is not itself explained by
+                    // a brightness event. This could be a dim real person that BOTH
+                    // YOLO and flow missed. Because the two latches above are OR-
+                    // accumulated scene-wide, FP evidence from a DIFFERENT quadrant (a
+                    // swaying branch / a headlight in Q2) must NOT override this
+                    // quadrant's unexplained blob. Latch it → hard KEEP on the night
+                    // path, restoring a true scene-wide fail-open. The !brightnessSuppressed
+                    // guard is essential: a headlight/IR flash can itself form an
+                    // unresolved (flow==-1) component, and without the guard that FP —
+                    // the one the user wants discarded — would spuriously self-KEEP.
+                    // (netRingCount saturates during the long pre-record park, so post-
+                    // park a -1 here is genuine unmatchable texture, not flow warmup.)
+                    eventSawUncharacterizedMotion = true;
+                }
+                // A whole-quadrant illumination change (headlight sweep / IR
+                // reflection / glare) — never produced by a person crossing the
+                // scene. Also counts as positive night-FP evidence. Reuses the
+                // Stage-1 global-brightness flag (motion_pipeline_v2.cpp:141).
+                if (r.brightnessSuppressed) {
+                    eventSawNightFpEvidence = true;
                 }
             }
         }
@@ -5641,27 +5693,33 @@ public class SurveillanceEngineGpu {
             // (event-peak frame) shows the person. See finalNotificationActors().
             java.util.List<Actor> snap = finalNotificationActors();
             Actor.Severity peakSev = com.overdrive.app.notifications.NotificationGate.maxSeverity(snap);
-            // Per-tier gate (config-level): if the user has unchecked the push
-            // toggle for this tier in surveillance.html, suppress the publish
-            // entirely. Per-device subcategory muting still happens downstream
-            // in PushSink for users who want to silence individual devices.
+            // Per-tier gate (config-level): the push toggle for this tier decides
+            // whether to deliver a WEB PUSH — but NOT whether to publish. We
+            // ALWAYS publish to the bus so HistorySink persists every event to
+            // the Notification Log (a durable history the user browses); the
+            // tier decision is applied as a push-only suppression flag read by
+            // PushSink. Before this, a failed gate `return`ed here, dropping the
+            // event before HistorySink/LogSink/TelegramSink ever saw it — so the
+            // Log tab silently missed every NOTICE-tier motion (the common case,
+            // since pushNotices defaults off). Per-device subcategory muting
+            // still happens downstream in PushSink.
             //
             // snap is now the event-peak union, so peakSev reflects the event
             // peak (which the title/hero use). Mirror sendFinalTelegramNotification's
-            // OR-of-both gate so we never SUPPRESS something the old instantaneous
+            // OR-of-both gate so we never SUPPRESS a push the old instantaneous
             // gate would have sent: the per-tier toggles are INDEPENDENT booleans,
             // not an ordinal threshold, so a raised peakSev could otherwise flip
             // SEND→SUPPRESS in a pathological inverted config (e.g. NOTICE-push on,
-            // ALERT-push off). Send if EITHER the live snapshot OR the event peak
+            // ALERT-push off). Push if EITHER the live snapshot OR the event peak
             // passes its own toggle.
             Actor.Severity liveSev = com.overdrive.app.notifications.NotificationGate
                     .maxSeverity(lastActors);
             boolean liveOk = com.overdrive.app.notifications.NotificationGate.shouldPush(liveSev, config);
             boolean peakOk = com.overdrive.app.notifications.NotificationGate.shouldPush(peakSev, config);
-            if (!liveOk && !peakOk) {
-                logger.debug("publishMotionFinal suppressed by per-tier toggle (live=" + liveSev
-                        + ", peak=" + peakSev + ")");
-                return;
+            final boolean pushOk = liveOk || peakOk;
+            if (!pushOk) {
+                logger.debug("publishMotionFinal: push suppressed by per-tier toggle (live=" + liveSev
+                        + ", peak=" + peakSev + ") — still persisting to Log");
             }
 
             // Build per-class counts + closest proximity from snapshot.
@@ -5841,7 +5899,7 @@ public class SurveillanceEngineGpu {
             else if (peakSev == Actor.Severity.ALERT) subCategory = "surveillance.motion.alert";
             else subCategory = "surveillance.motion.notice";
 
-            com.overdrive.app.notifications.NotificationBus.get().publish(
+            com.overdrive.app.notifications.NotificationEvent ev =
                     new com.overdrive.app.notifications.NotificationEvent(
                             subCategory,
                             nsev,
@@ -5849,7 +5907,12 @@ public class SurveillanceEngineGpu {
                             body,
                             notificationTagFor(videoFilename),
                             url,
-                            data));
+                            data);
+            // Tier toggle governs Web Push only — publish regardless so
+            // HistorySink persists it to the Log. suppressPush() makes PushSink
+            // skip delivery when the tier is off; other sinks are unaffected.
+            if (!pushOk) ev.suppressPush();
+            com.overdrive.app.notifications.NotificationBus.get().publish(ev);
         } catch (Throwable t) {
             logger.debug("publishMotionFinal failed: " + t.getMessage());
         }
@@ -6291,6 +6354,9 @@ public class SurveillanceEngineGpu {
         eventTriggerWasAiTimeout = false;
         eventMaxLuma = 0f;
         eventMinLuma = Float.MAX_VALUE;
+        eventEverSawCoherentMotion = false;
+        eventSawNightFpEvidence = false;
+        eventSawUncharacterizedMotion = false;
         eventSegmentFiles.clear();
 
         // OEM Dashcam parallel event recording. When the user has opted into
@@ -6479,13 +6545,39 @@ public class SurveillanceEngineGpu {
      *   <li>2/3 no non-static retained actor and no confirmed loitering PERSON.</li>
      * </ul>
      * Person/object/lateral evidence can only PROTECT a clip here, never delete one.
+     *
+     * <p><b>Night path.</b> Clauses 5/6 (bright-everywhere) are meaningless after
+     * dark and were deliberately un-satisfiable at night so a real intruder YOLO
+     * missed in the dark was never deleted. When the scene is too dark for the
+     * brightness test AND the SECOND opt-in flag {@code discardEmptyMotionAtNight}
+     * is on, the predicate swaps the brightness clauses (and the AI-timeout keep,
+     * which is structurally always-true at night since YOLO produces no anchor in
+     * the dark) for two luma-free, YOLO-free criteria drawn from the native flow-
+     * coherence signal (Stage 4b):
+     * <ul>
+     *   <li>KEEP if any tick showed a rigidly-translating component
+     *       ({@code eventEverSawCoherentMotion}) — a real moving subject, never a
+     *       waving flag / in-place shadow.</li>
+     *   <li>DISCARD requires POSITIVE FP evidence ({@code eventSawNightFpEvidence}):
+     *       confirmed in-place incoherent flow (tree/foliage/sweeping shadow) OR a
+     *       whole-quadrant brightness-suppression event (headlight sweep / IR
+     *       reflection / glare). Absent that evidence the clip is KEPT (fail-open),
+     *       so a dark scene the pipeline couldn't characterize is never deleted.</li>
+     * </ul>
+     * All the shared KEEP-overrides (person/moving-object/lateral-mass/approach/
+     * retained-actor) still apply on the night path. This is strictly opt-in behind
+     * its own toggle with explicit low-light risk copy — with either flag off it is
+     * byte-identical to before.
      */
     private boolean shouldDiscardEvent() {
-        // Flag default OFF → never discard (byte-identical).
+        // Flag default OFF → never discard (byte-identical). The night sub-flag is
+        // an additional opt-in that only takes effect when the primary flag is on.
         boolean enabled;
+        boolean nightEnabled;
         try {
-            enabled = com.overdrive.app.config.UnifiedConfigManager.getSurveillance()
-                    .optBoolean("discardEmptyBrightMotionEvents", false);
+            org.json.JSONObject sv = com.overdrive.app.config.UnifiedConfigManager.getSurveillance();
+            enabled = sv.optBoolean("discardEmptyBrightMotionEvents", false);
+            nightEnabled = sv.optBoolean("discardEmptyMotionAtNight", false);
         } catch (Throwable t) {
             return false;
         }
@@ -6536,33 +6628,75 @@ public class SurveillanceEngineGpu {
         // make YOLO miss entirely (project_fisheye_dewarp) — keep it rather than
         // risk deleting a real-person/vehicle clip in a bright lot.
         if (eventTriggerWasLateralMass) return false;
-        // Hard AI-timeout KEEP: the recording fired purely on the AI-timeout
-        // fallback with NO in-sequence YOLO confirmation — the path that exists
-        // precisely to trust motion when an object is too small/dark/distorted
-        // for YOLO but real. Such a clip could contain a YOLO-missed real actor
-        // (documented bright-daytime / fisheye whole-event 0-detection), so it
-        // must never be auto-deleted. The shadow-over-parked-car FP is unaffected:
-        // it gets its AI gate opened by the parked car's own YOLO boxes
-        // (sequenceConfirmed==true at trigger → this latch false → still discardable).
-        if (eventTriggerWasAiTimeout) return false;
-        // Clause 4: never approached.
+        // Clause 4: never approached (shared — an approacher is real day or night).
         if (eventEverApproaching) return false;
-        // Clause 5: bright everywhere — rejects the night low-light real-person miss.
-        if (eventMaxLuma < DISCARD_BRIGHT_LUMA_THRESHOLD) return false;
-        // Clause 6: no dark quadrant — rejects the close-zone real-person miss.
-        if (eventMinLuma == Float.MAX_VALUE || eventMinLuma < DISCARD_DARK_FLOOR) return false;
+
+        // ── Day vs night split ────────────────────────────────────────────────
+        // "Dark" = the bright-everywhere clause (5) cannot be satisfied. On a
+        // bright event we run the original day predicate unchanged (byte-identical
+        // when the night flag is off). On a dark event the brightness clauses are
+        // meaningless, so we either KEEP (night flag off — the original behaviour)
+        // or evaluate the luma-free night criteria (night flag on).
+        boolean darkScene = eventMaxLuma < DISCARD_BRIGHT_LUMA_THRESHOLD
+                || eventMinLuma == Float.MAX_VALUE
+                || eventMinLuma < DISCARD_DARK_FLOOR;
+        if (!darkScene) {
+            // DAY PATH (unchanged).
+            // Hard AI-timeout KEEP: the recording fired purely on the AI-timeout
+            // fallback with NO in-sequence YOLO confirmation — the path that exists
+            // precisely to trust motion when an object is too small/dark/distorted
+            // for YOLO but real. Such a clip could contain a YOLO-missed real actor
+            // (documented bright-daytime / fisheye whole-event 0-detection), so it
+            // must never be auto-deleted. The shadow-over-parked-car FP is
+            // unaffected: it gets its AI gate opened by the parked car's own YOLO
+            // boxes (sequenceConfirmed==true at trigger → this latch false → still
+            // discardable). Clauses 5/6 already held (darkScene is false here).
+            if (eventTriggerWasAiTimeout) return false;
+        } else {
+            // NIGHT PATH. Requires the second opt-in flag; otherwise keep (this is
+            // exactly the pre-existing clause-5 KEEP for dark scenes).
+            if (!nightEnabled) return false;
+            // The AI-timeout keep is skipped here ON PURPOSE: in the dark YOLO
+            // produces no in-sequence anchor, so eventTriggerWasAiTimeout is
+            // structurally almost always true and would make the night path inert.
+            // Its safety role is taken over by the two luma-free criteria below.
+            //
+            // KEEP: any tick showed a rigidly-translating component — a real moving
+            // subject (person/vehicle). Foliage/shadow oscillates in place and a
+            // headlight/IR event is a global illumination shift, neither of which
+            // ever reads coherent. This is the night analogue of the day person/
+            // moving-object keeps, using motion geometry instead of YOLO class.
+            if (eventEverSawCoherentMotion) return false;
+            // KEEP: any quadrant had a formed motion blob the flow stage could not
+            // resolve (texture-poor dark crop, flow==-1) and that wasn't a brightness
+            // event — a possible dim real person BOTH YOLO and flow missed. Without
+            // this, FP evidence latched from a DIFFERENT quadrant (a swaying branch)
+            // could delete a clip whose real subject was simply unmatchable — the
+            // scene-wide-OR false-negative the audit found. Restores fail-open.
+            if (eventSawUncharacterizedMotion) return false;
+            // DISCARD requires POSITIVE FP evidence: confirmed in-place incoherent
+            // flow (tree/foliage/sweeping shadow) OR a whole-quadrant brightness-
+            // suppression event (headlight sweep / IR reflection / glare). Without
+            // it, the pipeline never characterized the motion as an FP, so a dark
+            // scene it simply couldn't resolve (real intruder in a texture-poor
+            // dark crop, flow signal == -1 all event) is KEPT — fail-open.
+            if (!eventSawNightFpEvidence) return false;
+        }
         // Clauses 2 & 3: no non-static actor of any class, and no confirmed person
         // (a still loiterer is a confirmed PERSON → KEEP-override).
         for (Actor a : eventPeakActors.values()) {
             if (!a.isStaticForTimeline) return false;                          // a real moving actor existed → keep
             if (a.classGroup == Actor.ClassGroup.PERSON && a.confirmed) return false;  // confirmed loiterer → keep
         }
-        // All six held → this is the empty-bright-motion FP.
+        // All clauses held → this is an empty-motion FP (bright shadow by day, or
+        // confirmed incoherent-flow / illumination-artifact motion at night).
         logger.warn(String.format(
-                "Discarding empty bright motion event (shadow-FP): motionOnly=%b approaching=%b "
-                + "maxLuma=%.0f minLuma=%.0f peakActors=%d peakSev=%s",
+                "Discarding empty motion event (%s-FP): motionOnly=%b approaching=%b "
+                + "maxLuma=%.0f minLuma=%.0f coherentSeen=%b nightFpEvidence=%b peakActors=%d peakSev=%s",
+                darkScene ? "night" : "bright",
                 eventTriggerWasMotionOnly, eventEverApproaching, eventMaxLuma,
                 (eventMinLuma == Float.MAX_VALUE ? -1f : eventMinLuma),
+                eventEverSawCoherentMotion, eventSawNightFpEvidence,
                 eventPeakActors.size(), eventPeakSeverity));
         return true;
     }
