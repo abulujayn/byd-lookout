@@ -95,6 +95,8 @@ public final class RecordingsIndex {
     // change to filename grammar updates both.
     private static final Pattern CAM_PATTERN =
             Pattern.compile("cam(\\d+)?_(\\d{8})_(\\d{6})(?:_\\d+)?\\.mp4");
+    private static final Pattern REPLAY_PATTERN =
+            Pattern.compile("replay_(\\d{8})_(\\d{6})(?:_\\d+)?\\.mp4");
     private static final Pattern EVENT_PATTERN =
             Pattern.compile("event_(\\d{8})_(\\d{6})(?:_\\d+)?\\.mp4");
     private static final Pattern PROXIMITY_PATTERN =
@@ -1349,6 +1351,7 @@ public final class RecordingsIndex {
 
         // Type + timestamp from filename pattern.
         Matcher cam = CAM_PATTERN.matcher(name);
+        Matcher replay = REPLAY_PATTERN.matcher(name);
         Matcher event = EVENT_PATTERN.matcher(name);
         Matcher prox = PROXIMITY_PATTERN.matcher(name);
         Matcher dvr = DVR_PATTERN.matcher(name);
@@ -1364,6 +1367,11 @@ public final class RecordingsIndex {
                 String camStr = cam.group(1);
                 r.cameraId = camStr != null ? Integer.parseInt(camStr) : 0;
                 r.tsMs = FMT_FILENAME.get().parse(cam.group(2) + "_" + cam.group(3)).getTime();
+            } else if (replay.matches()) {
+                r.type = "normal";
+                r.cameraId = 0;
+                r.tsMs = FMT_FILENAME.get().parse(
+                        replay.group(1) + "_" + replay.group(2)).getTime();
             } else if (dvr.matches()) {
                 r.type = "oemDashcam";
                 r.tsMs = FMT_FILENAME.get().parse(dvr.group(1) + "_" + dvr.group(2)).getTime();

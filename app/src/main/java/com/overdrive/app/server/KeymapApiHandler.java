@@ -6,6 +6,8 @@ import com.overdrive.app.byd.routing.VehicleCommandRouter;
 import com.overdrive.app.daemon.CameraDaemon;
 import com.overdrive.app.logging.DaemonLogger;
 import com.overdrive.app.mqtt.VehicleControlCatalog;
+import com.overdrive.app.recording.ManualClipService;
+import com.overdrive.app.recording.ManualClipWindow;
 
 import org.json.JSONObject;
 
@@ -26,7 +28,8 @@ import java.io.OutputStream;
  *
  * Endpoints:
  *   GET  /api/keymap/config — { enabled, allowAdvanced, bindings[],
- *                               a11yEnabled, a11yBound, a11yPending }
+ *                               a11yEnabled, a11yBound, a11yPending,
+ *                               restartRequired }
  *       a11yEnabled = OS bind PRECONDITION (listed + master-on, or in-proc).
  *       a11yBound   = service ACTUALLY bound/live (in-proc isRunning, or a live
  *                     ServiceRecord via dumpsys) — the honest "keys will fire" truth.
@@ -35,8 +38,8 @@ import java.io.OutputStream;
  *                     bind before hiding the nudge instead of trusting a11yEnabled.
  *   POST /api/keymap/config — persist { enabled, allowAdvanced, bindings[] };
  *                             response echoes { success, a11yEnabled, a11yBound,
- *                             a11yPending } (auto-enables the service on the
- *                             enable edge).
+ *                             a11yPending, restartRequired } (auto-enables the
+ *                             service on the enable edge; never restarts camera).
  *   POST /api/keymap/fire  — body { kind, ... } → run one bound action
  *
  * Action kinds (mirror the settings UI's curated picker + advanced escape hatch):
@@ -56,6 +59,10 @@ import java.io.OutputStream;
  *   { "kind":"openApp", "package":"com.foo.bar", "label":"Foo" }
  *       Launch an installed app (resolves its launcher activity). Not gated —
  *       opening an app is no more privileged than a user tapping its icon.
+ *   { "kind":"manualClip", "beforeSeconds":30, "afterSeconds":0 }
+ *       Save a user-triggered instant replay from the encoded camera ring.
+ *       Dedicated manual-only path: deliberately not routed through the
+ *       automation API allowlist.
  *   { "kind":"shell", "cmd":"..." }         — advanced, gated by allowAdvanced
  *   { "kind":"sequence", "steps":[ {kind:...}, ... ] }
  *       Run several of the above actions in order on one keypress. Best-effort:
@@ -344,6 +351,8 @@ public final class KeymapApiHandler {
         resp.put("a11yEnabled", a11yOn);
         resp.put("a11yBound", a11yBound);
         resp.put("a11yPending", a11yOn && !a11yBound);
+        resp.put("restartRequired", ManualClipService.getInstance()
+                .isCameraDaemonRestartRequired(section));
         HttpResponse.sendJson(out, resp.toString());
 
         // Load-time self-heal: the reported on-car state is an already-enabled
@@ -419,12 +428,27 @@ public final class KeymapApiHandler {
         JSONObject section = new JSONObject();
         section.put("enabled", req.optBoolean("enabled", false));
         section.put("allowAdvanced", req.optBoolean("allowAdvanced", false));
-        // Preserve the bindings array as sent (validated client-side; the fire
-        // path re-validates action kind and gates advanced anyway).
-        section.put("bindings", req.optJSONArray("bindings") != null
-                ? req.optJSONArray("bindings") : new org.json.JSONArray());
+        org.json.JSONArray bindings = req.optJSONArray("bindings") != null
+                ? req.optJSONArray("bindings") : new org.json.JSONArray();
+        String manualClipError = validateManualClipBindings(bindings);
+        if (manualClipError != null) {
+            JSONObject error = new JSONObject();
+            error.put("success", false);
+            error.put("error", manualClipError);
+            HttpResponse.sendJson(out, 400, error.toString());
+            return;
+        }
+        // Preserve all existing binding kinds as sent. manualClip is validated
+        // above (and again at fire time) because a malformed action would still
+        // consume its physical key while doing nothing.
+        section.put("bindings", bindings);
 
         boolean ok = com.overdrive.app.config.UnifiedConfigManager.setKeymap(section);
+        boolean restartRequired = false;
+        if (ok) {
+            restartRequired = ManualClipService.getInstance()
+                    .onKeymapConfigChanged(section);
+        }
         // Self-heal: when the user turns key mapping ON, make sure the
         // accessibility service (which key filtering rides on) is actually
         // enabled, rather than leaving them to toggle it in system settings.
@@ -457,6 +481,7 @@ public final class KeymapApiHandler {
         response.put("a11yEnabled", a11yEnabled);
         response.put("a11yBound", a11yBound);
         response.put("a11yPending", a11yEnabled && !a11yBound);
+        response.put("restartRequired", ok && restartRequired);
         if (!ok) response.put("error", "Failed to persist keymap config");
         HttpResponse.sendJson(out, response.toString());
     }
@@ -760,6 +785,7 @@ public final class KeymapApiHandler {
             case "catalog": return runCatalog(req);
             case "vehicle": return runVehicle(req);
             case "api":     return runApi(req);
+            case "manualClip": return runManualClip(req);
             case "openApp": return runOpenApp(req);
             case "shell":   return runShell(req);
             default: {
@@ -769,6 +795,85 @@ public final class KeymapApiHandler {
                 return r;
             }
         }
+    }
+
+    private static String validateManualClipBindings(org.json.JSONArray bindings) {
+        for (int i = 0; i < bindings.length(); i++) {
+            JSONObject binding = bindings.optJSONObject(i);
+            if (binding == null) continue;
+            String error = validateManualClipAction(
+                    binding.optJSONObject("action"), "bindings[" + i + "].action", false);
+            if (error != null) return error;
+        }
+        return null;
+    }
+
+    private static String validateManualClipAction(
+            JSONObject action, String path, boolean insideSequence) {
+        if (action == null) return null;
+        String kind = action.optString("kind", "");
+        if ("sequence".equals(kind)) {
+            org.json.JSONArray steps = action.optJSONArray("steps");
+            if (steps == null) return null;
+            for (int i = 0; i < steps.length(); i++) {
+                String error = validateManualClipAction(
+                        steps.optJSONObject(i), path + ".steps[" + i + "]", true);
+                if (error != null) return error;
+            }
+            return null;
+        }
+        if (!"manualClip".equals(kind)) return null;
+        if (insideSequence) {
+            return path + ": manualClip must be a direct key binding, not a sequence step";
+        }
+
+        Integer before = strictJsonInteger(action, "beforeSeconds");
+        Integer after = strictJsonInteger(action, "afterSeconds");
+        if (before == null || after == null) {
+            return path + " requires integer beforeSeconds and afterSeconds";
+        }
+        try {
+            ManualClipWindow.create(before, after);
+            return null;
+        } catch (IllegalArgumentException e) {
+            return path + ": " + e.getMessage();
+        }
+    }
+
+    private static Integer strictJsonInteger(JSONObject object, String key) {
+        if (object == null || !object.has(key) || object.isNull(key)) return null;
+        Object raw = object.opt(key);
+        if (!(raw instanceof Byte || raw instanceof Short
+                || raw instanceof Integer || raw instanceof Long)) {
+            return null;
+        }
+        long value = ((Number) raw).longValue();
+        if (value < Integer.MIN_VALUE || value > Integer.MAX_VALUE) return null;
+        return (int) value;
+    }
+
+    /** Manual-only replay action. Never passes through automationApiRequest(). */
+    private static JSONObject runManualClip(JSONObject req) throws org.json.JSONException {
+        JSONObject response = new JSONObject();
+        Integer before = strictJsonInteger(req, "beforeSeconds");
+        Integer after = strictJsonInteger(req, "afterSeconds");
+        if (before == null || after == null) {
+            response.put("success", false);
+            response.put("status", ManualClipService.Status.INVALID_WINDOW.name());
+            response.put("error", "beforeSeconds and afterSeconds must be integers");
+            return response;
+        }
+
+        ManualClipService.RequestResult result =
+                ManualClipService.getInstance().requestClip(before, after);
+        response.put("success", result.isAccepted());
+        response.put("status", result.status.name());
+        response.put("availableBeforeSeconds", result.availableBeforeSeconds);
+        if (result.isAccepted()) response.put("message", result.message);
+        else response.put("error", result.message);
+        logger.info("Keymap manualClip before=" + before + "s after=" + after
+                + "s -> " + result.status);
+        return response;
     }
 
     /**
@@ -793,6 +898,15 @@ public final class KeymapApiHandler {
         for (int i = 0; i < steps.length(); i++) {
             JSONObject step = steps.optJSONObject(i);
             if (step == null) continue;
+            // Replay completes asynchronously (up to 60 s of post-roll). Treating
+            // ACCEPTED as a completed sequence step would let a following camera
+            // lifecycle action tear down the encoder before export. Bind it
+            // directly instead; config validation and the UI enforce the same.
+            if ("manualClip".equals(step.optString("kind", ""))) {
+                response.put("success", false);
+                response.put("error", "manualClip must be a direct key binding");
+                return response;
+            }
             JSONObject r = runStep(step);
             r.remove("httpStatus"); // sequence never 403s the whole call; per-step success carries it
             results.put(r);

@@ -3662,11 +3662,11 @@ public class StorageManager {
      */
     private static String[] auxiliaryPrefixesForCategory(String category) {
         switch (category) {
-            // OEM Dashcam clips share the recordings directory with cam_*.
-            // The primary prefix gate is "cam" (line 2136), so dvr_*.mp4
-            // would be invisible to size accounting and the reaper without
-            // this auxiliary entry — the SD card would fill silently.
-            case "recordings":   return new String[]{"dvr_"};
+            // OEM Dashcam and manual replay clips share the recordings
+            // directory with cam_*. The primary prefix gate is "cam", so both
+            // dedicated prefixes need to be first-class anchors for size
+            // accounting and loop-recording cleanup.
+            case "recordings":   return new String[]{"dvr_", "replay_"};
             // Per-actor JPGs are named `thumb_<anchorStem>_a<id>_<rel>.jpg`,
             // where anchorStem already includes the `event_` prefix
             // (SurveillanceEngineGpu:4815-4824 derives tmpBase from the

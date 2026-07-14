@@ -1451,7 +1451,10 @@ object UnifiedConfigManager {
             "target" to (if (target == "cluster") "cluster" else "head_unit")))
 
     /** Physical-key mapping section: {enabled, allowAdvanced, bindings:[
-     *  {keycode:int, pressType:"single|double|long", action:{type, variables}}]}.
+     *  {keycode:int, pressType:"single|double|long", action:{kind, variables}}]}.
+     *  Manual replay is stored per binding as
+     *  {kind:"manualClip", beforeSeconds:0..60, afterSeconds:0..60}; the two
+     *  values must total 1..60 seconds.
      *  Consumed by KeepAliveAccessibilityService.onKeyEvent → KeyMapDispatcher
      *  (app UID) which fires the mapped action through the daemon; callers needing
      *  cross-UID freshness (the a11y service in the app process reading a

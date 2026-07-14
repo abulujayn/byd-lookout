@@ -1438,6 +1438,8 @@ public class GpuSurveillancePipeline {
         // recorder.encoder still points at a freed instance.
         try {
             encoder = new HardwareEventRecorderGpu(encoderWidth, encoderHeight, fps, bitrate, codecMimeType);
+            encoder.setManualClipRetentionDuration(
+                com.overdrive.app.recording.ManualClipService.getConfiguredRetentionSeconds());
         } catch (Throwable t) {
             logger.warn("New encoder allocation failed — clearing recorder's stale "
                 + "encoder ref so caller can stop() cleanly: " + t.getMessage());
@@ -1690,6 +1692,8 @@ public class GpuSurveillancePipeline {
             (codecMimeType.contains("hevc") ? "H.265" : "H.264") +
             " @ " + fps + "fps, " + (bitrate / 1_000_000) + " Mbps");
         encoder = new HardwareEventRecorderGpu(encoderWidth, encoderHeight, fps, bitrate, codecMimeType);
+        encoder.setManualClipRetentionDuration(
+            com.overdrive.app.recording.ManualClipService.getConfiguredRetentionSeconds());
 
         // Pre-load saved pre-record duration BEFORE encoder.init() so the
         // byte ring is sized correctly on first allocation. Mode-aware:

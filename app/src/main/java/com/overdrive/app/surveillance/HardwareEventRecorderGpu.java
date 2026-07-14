@@ -12,6 +12,7 @@ import com.overdrive.app.telegram.TelegramNotifier;
 
 import java.io.File;
 import java.nio.ByteBuffer;
+import java.util.Locale;
 
 /**
  * HardwareEventRecorderGpu - MediaCodec encoder with Surface input for GPU pipeline.
@@ -75,6 +76,11 @@ public class HardwareEventRecorderGpu {
          * @param info Buffer info (size, offset, timestamp, flags)
          */
         void onH264Packet(ByteBuffer h264Data, MediaCodec.BufferInfo info);
+    }
+
+    /** Resolves replay storage only after the encoded range is strongly pinned. */
+    public interface ManualClipOutputProvider {
+        File createOutputFile();
     }
     
     // Configuration
@@ -252,9 +258,8 @@ public class HardwareEventRecorderGpu {
     // OOM at MAX/30fps. Byte ring packs bytes tightly; same 64 MB budget that
     // held 5s of MAX H.265 in the slot pool now holds ~50s.
     //
-    // Static so it survives encoder reinit (codec/quality changes don't drop
-    // pre-record content). 64 MB allocation happens once at first init and
-    // is never freed.
+    // Static so it survives encoder reinit. Its arena is fixed for the daemon
+    // lifetime; a larger saved replay window takes effect on the next cold start.
     private static H264ByteRingBuffer sharedPreRecordBuffer;
     private static int sharedPreRecordBudgetBytes = 0;  // actual size of allocated ring, 0 if none
     private static final Object bufferLock = new Object();
@@ -264,8 +269,8 @@ public class HardwareEventRecorderGpu {
     // time the ring is drained alongside the video pre-record flush so the
     // first ~5 s of every event clip have audio instead of silence.
     //
-    // Sized for 5 s × 64 kbps × 1.5 overhead ≈ 60 KB — negligible vs. the
-    // video ring's 64 MB. Static so it survives encoder reinit (codec/bitrate
+    // Sized for 62 s × 64 kbps × 1.5 overhead ≈ 744 KB — negligible vs. the
+    // video ring. Static so it survives encoder reinit (codec/bitrate
     // changes don't drop the audio capture window). The ring captures
     // continuously regardless of whether the daemon is currently writing a
     // file — that's the entire point of pre-record. Its content is gated by
@@ -274,10 +279,9 @@ public class HardwareEventRecorderGpu {
     // byte copies. The ring is cleared by setAudioConfig(null) /
     // disableAudioMuxing() so a later re-enable doesn't inherit stale (and
     // almost certainly out-of-window) packets from the prior session.
-    /** Pre-record window for the audio ring, in seconds. Mirrors the default
-     *  video pre-record window so audio coverage is symmetric — the actual
-     *  drain at trigger time is bounded by both this and the video flush. */
-    private static final int AUDIO_PRE_RECORD_SECONDS = 5;
+    /** Keep enough audio for the longest manual replay window. Event-trigger
+     *  drains are still filtered to their own configured pre-roll. */
+    private static final int AUDIO_PRE_RECORD_SECONDS = 62;
     /** Bitrate the audio ring is sized for. AppAudioCaptureController encodes
      *  AAC-LC at 64 kbps; sizing the ring to match keeps the byte budget
      *  realistic regardless of the per-segment audioBitrate the muxer ends
@@ -287,22 +291,27 @@ public class HardwareEventRecorderGpu {
     private static final int AUDIO_PRE_RECORD_BITRATE_BPS = 64_000;
     private static final AacCircularBuffer aacRing =
         new AacCircularBuffer(AUDIO_PRE_RECORD_SECONDS, AUDIO_PRE_RECORD_BITRATE_BPS);
-    // Hard ceiling on the pre-record byte arena. The slot-pool predecessor
-    // hit OOM at ~64 MB on this hardware; the byte ring is denser but stays
-    // capped at the same value so the worst-case footprint is unchanged.
-    private static final int PRE_RECORD_BUDGET_CEILING_BYTES = 64 * 1024 * 1024;
-    // Floor on the byte arena. H264ByteRingBuffer rejects budgets < 1 MB
-    // outright; 8 MB covers a 5 s pre-roll at 10 Mbps with IDR overhead
-    // even on the slowest BYD codec, so anything below this is too small
-    // to be useful.
+    // The dense byte ring replaces the old hundreds-of-slots pool that could
+    // retain ~187 MB at MAX/30fps. A 128 MiB ceiling holds 62 seconds at the
+    // measured MAX H.264 rate while remaining materially below that legacy
+    // footprint. The long arena is allocated only on a cold/shared-ring init;
+    // runtime config changes never double-allocate the old and new arenas.
+    private static final int PRE_RECORD_BUDGET_CEILING_BYTES = 128 * 1024 * 1024;
+    // Keep normal event and per-camera OEM encoders at the existing small
+    // allocation. Only a configured long replay window requests a larger arena.
     private static final int PRE_RECORD_BUDGET_FLOOR_BYTES = 8 * 1024 * 1024;
-    // IDR + B-frame overhead multiplier on top of the steady-state bitrate.
-    // Measured: a 5 Mbps stream produces 750 KB IDRs at GOP=fps; the
-    // running 1-second average peaks ~40% above mean. Sizing the budget
-    // at 1.4× of the bitrate-time product keeps the ring from evicting
-    // a needed pre-roll keyframe under burst.
-    private static final double PRE_RECORD_IDR_OVERHEAD = 1.4;
-    private H264ByteRingBuffer preRecordBuffer;  // Reference to shared buffer
+    // If the full long-replay arena cannot be allocated, retain a useful history
+    // without making 64 MiB the floor for every encoder instance.
+    private static final int LONG_REPLAY_FALLBACK_BYTES = 64 * 1024 * 1024;
+    // Long-run allowance for aggregate VBR/IDR overshoot. The prior 1.4 factor
+    // described a one-second peak and over-provisioned the whole 60-second
+    // window; measured MAX output is ~103% of target, so 10% is conservative.
+    private static final double PRE_RECORD_BITRATE_OVERHEAD = 1.10;
+    // A requested window must begin on the preceding IDR. Retain one complete
+    // two-second GOP beyond the user-visible duration so exact 30/60-second
+    // requests do not intermittently start at the next keyframe and fail.
+    private static final int MANUAL_CLIP_GOP_HEADROOM_SECONDS = 2;
+    private volatile H264ByteRingBuffer preRecordBuffer;  // Reference to shared buffer
 
     // Per-instance pre-record arena. When {@code useInstancePreRecordBuffer}
     // is true, init() allocates a private {@link H264ByteRingBuffer} owned
@@ -343,7 +352,19 @@ public class HardwareEventRecorderGpu {
     // Cursor is set at trigger time, drained by drainEncoderInternal, and
     // closed (releases the pin) when exhausted or aborted.
     private volatile H264ByteRingBuffer.Cursor pendingFlushCursor = null;
+    /** Historical AAC staged by the trigger thread and queued only after the
+     * matching video cursor, preserving per-file origin and FIFO ordering. */
+    private volatile java.util.List<AacCircularBuffer.Packet> pendingAudioPreRecord = null;
     private volatile boolean flushInProgress = false;
+    /** Manual replay reservation, held from the physical-key trigger through
+     * post-roll collection and remux. It deliberately does not hold
+     * startStopLock across that interval, so camera lifecycle and live event
+     * recording remain available while event pre-roll yields the shared ring. */
+    private volatile boolean manualClipExportInProgress = false;
+    /** Live-only event starts wait for the requested IDR before their own muxer
+     * accepts video or audio. The encoder, history ring, stream, and continuous
+     * dashcam remain live while this gate is armed. */
+    private volatile boolean awaitLiveMuxerKeyframe = false;
     private volatile long actualPreRecordDurationMs = 0;  // Actual duration of flushed pre-record buffer
     /** Reusable BufferInfo for cursor reads. drainEncoderInternal is the
      * sole consumer thread, so this can be reused without locking. */
@@ -788,10 +809,11 @@ public class HardwareEventRecorderGpu {
     // ~30-60 packets in worst-case SD backpressure. 64 is a comfortable
     // ceiling (256 KB total native footprint at 4 KB cap each).
     private static final int MUXER_PACKET_MICRO_POOL_CAP = 64;
-    // Drainer's working set is ~10 packets steady-state; cap mirrors the
-    // queue capacity for the worst-case SD-backpressure burst. Small cap is
-    // unchanged from prior behavior.
-    private static final int MUXER_PACKET_SMALL_POOL_CAP = MUXER_WRITE_QUEUE_CAPACITY + 16;
+    // Drainer's working set is ~10 packets steady-state. Retaining all 600
+    // backpressure packets could pin ~154 MiB after the queue recovered;
+    // 64 still covers more than two seconds at 30 fps and lets GC reclaim the
+    // one-off burst before a large replay arena is allocated at a later boot.
+    private static final int MUXER_PACKET_SMALL_POOL_CAP = 64;
     // IDRs land roughly once per GOP (~2 s at 30 fps). The drainer keeps
     // them moving; even under SD backpressure the in-flight count rarely
     // exceeds 4-5. 16 is generous headroom — at 1 MB each that's a 16 MB
@@ -1046,7 +1068,7 @@ public class HardwareEventRecorderGpu {
 
     // Initial pre-record buffer duration. Settable BEFORE init() so the
     // first allocation honours the user's saved value instead of the hardcoded 5s.
-    // setPreRecordDuration() can still resize after init.
+    // Runtime edits update the time window without replacing the direct arena.
     //
     // volatile: written by the control-plane (setPreRecordDuration called
     // from HTTP/IPC threads) under bufferLock, read by init() also under
@@ -1055,6 +1077,10 @@ public class HardwareEventRecorderGpu {
     // would be safe but volatile makes the field uniformly visible across
     // all reader paths without lock-protocol fragility.
     private volatile int preRecordDurationSeconds = 5;
+    // Total retention required by enabled manual-clip key bindings. This is separate
+    // from preRecordDurationSeconds: surveillance events must still flush only
+    // their configured window while the ring keeps enough history for replay.
+    private volatile int manualClipRetentionSeconds = 0;
     
     // Pre-allocated BufferInfo — reused every drain cycle to avoid per-frame allocation
     private final MediaCodec.BufferInfo reusableBufferInfo = new MediaCodec.BufferInfo();
@@ -1557,7 +1583,7 @@ public class HardwareEventRecorderGpu {
         // cheap field write. This eliminates the four-axis triplet reuse
         // logic the slot pool needed.
         if (usePreRecordBuffer) {
-            int desiredSec = Math.max(1, Math.min(30, preRecordDurationSeconds));
+            int desiredSec = effectivePreRecordRetentionSeconds();
             int desiredBudget = computePreRecordBudgetBytes(desiredSec, bitrate);
             if (useInstancePreRecordBuffer) {
                 // Per-instance arena. Skip the static shared ring entirely so
@@ -1565,66 +1591,54 @@ public class HardwareEventRecorderGpu {
                 // useInstancePreRecordBuffer for the corruption-by-interleave
                 // motivation. Allocation happens once per encoder start and
                 // is reclaimed on release(); steady-state memory cost is
-                // bounded by the configured budget (8–64 MB).
-                try {
-                    preRecordBuffer = new H264ByteRingBuffer(desiredBudget, desiredSec);
+                // bounded by the configured budget (8–128 MB).
+                preRecordBuffer = allocatePreRecordBufferWithFallback(
+                        desiredBudget, desiredSec, "per-instance");
+                if (preRecordBuffer != null) {
                     preRecordBufferIsInstance = true;
                     logger.info("Allocated per-instance pre-record byte ring: budget="
-                        + (desiredBudget / 1024 / 1024) + "MB, duration="
-                        + desiredSec + "s, bitrate=" + (bitrate / 1_000_000) + "Mbps");
-                } catch (OutOfMemoryError | RuntimeException oom) {
-                    logger.error("Per-instance pre-record byte ring allocation failed ("
-                        + oom.getMessage() + ") — running without pre-record. "
-                        + "Live recording unaffected.");
-                    preRecordBuffer = null;
+                        + (preRecordBuffer.getBudgetBytes() / 1024 / 1024) + "MB, duration="
+                        + (preRecordBuffer.getMaxDurationUs() / 1_000_000L)
+                        + "s, bitrate=" + (bitrate / 1_000_000) + "Mbps");
+                } else {
+                    logger.error("Pre-record fallback allocation failed — running "
+                            + "without pre-record. Live recording unaffected.");
                     preRecordBufferIsInstance = false;
                     usePreRecordBuffer = false;
                     preRecordAllocFailed = true;
                 }
             } else synchronized (bufferLock) {
-                if (sharedPreRecordBuffer == null
-                        || desiredBudget > sharedPreRecordBudgetBytes) {
-                    // First allocation, or the user has bumped pre-roll
-                    // duration / bitrate beyond what the existing ring can
-                    // hold. H264ByteRingBuffer's payload arena is fixed at
-                    // construction (no resize API), so we have to recreate.
-                    if (sharedPreRecordBuffer != null) {
-                        logger.info("Resizing pre-record byte ring: "
-                            + (sharedPreRecordBudgetBytes / 1024 / 1024) + "MB → "
-                            + (desiredBudget / 1024 / 1024) + "MB (duration="
-                            + desiredSec + "s, bitrate=" + (bitrate / 1_000_000) + "Mbps)");
-                        sharedPreRecordBuffer = null;
-                        sharedPreRecordBudgetBytes = 0;
-                    }
+                if (sharedPreRecordBuffer == null) {
+                    // Allocate the configured arena only when no shared direct
+                    // buffer exists. Replacing a live smaller ring with 128 MiB
+                    // would retain both until the Cleaner runs and recreate the
+                    // native-memory spike that the byte-ring design removed.
                     logger.info("Allocating pre-record byte ring: budget="
                         + (desiredBudget / 1024 / 1024) + "MB, duration="
                         + desiredSec + "s, bitrate=" + (bitrate / 1_000_000) + "Mbps");
-                    try {
-                        sharedPreRecordBuffer = new H264ByteRingBuffer(desiredBudget, desiredSec);
-                        sharedPreRecordBudgetBytes = desiredBudget;
-                    } catch (OutOfMemoryError | RuntimeException oom) {
-                        // Graceful degradation: the daemon's heap couldn't
-                        // satisfy the direct allocation. Drop pre-record
-                        // capability for this session — live recording still
-                        // works, but events have no pre-roll.
-                        logger.error("Pre-record byte ring allocation failed (" + oom.getMessage()
-                            + ") — running without pre-record. Live recording unaffected.");
-                        sharedPreRecordBuffer = null;
-                        sharedPreRecordBudgetBytes = 0;
+                    sharedPreRecordBuffer = allocatePreRecordBufferWithFallback(
+                            desiredBudget, desiredSec, "shared");
+                    sharedPreRecordBudgetBytes = sharedPreRecordBuffer != null
+                            ? sharedPreRecordBuffer.getBudgetBytes() : 0;
+                    if (sharedPreRecordBuffer == null) {
+                        logger.error("Pre-record fallback allocation failed — running "
+                                + "without pre-record. Live recording unaffected.");
                         usePreRecordBuffer = false;
                         preRecordAllocFailed = true;
                     }
                 } else {
-                    // Buffer already exists and is big enough — reuse. Clear
-                    // residual data from prior encoder instance and update
-                    // duration window if it changed (cheap field write).
+                    // Same-process encoder reinit: reuse the existing arena.
+                    // A larger saved replay window takes full effect on the
+                    // next daemon cold start, when the old direct buffer is no
+                    // longer resident and the correct size is allocated once.
                     sharedPreRecordBuffer.clear();
                     long desiredUs = desiredSec * 1_000_000L;
-                    if (sharedPreRecordBuffer.getMaxDurationUs() != desiredUs) {
-                        sharedPreRecordBuffer.setMaxDurationUs(desiredUs);
-                        logger.info("Reusing pre-record byte ring ("
-                            + (sharedPreRecordBudgetBytes / 1024 / 1024) + "MB) with new duration: "
-                            + desiredSec + "s");
+                    sharedPreRecordBuffer.setMaxDurationUs(desiredUs);
+                    if (desiredBudget > sharedPreRecordBudgetBytes) {
+                        logger.warn("Saved replay window needs "
+                                + (desiredBudget / 1024 / 1024) + "MB; reusing "
+                                + (sharedPreRecordBudgetBytes / 1024 / 1024)
+                                + "MB until camera-daemon cold start");
                     } else {
                         logger.info("Reusing pre-record byte ring ("
                             + (sharedPreRecordBudgetBytes / 1024 / 1024) + "MB): " + desiredSec + "s");
@@ -1641,14 +1655,13 @@ public class HardwareEventRecorderGpu {
         startDrainerThread();
 
         logger.info("Encoder initialized successfully"
-                + (usePreRecordBuffer ? " (pre-record: " + Math.max(1, preRecordDurationSeconds) + " sec)" : " (stream-only)"));
+                + (usePreRecordBuffer ? " (event pre-record="
+                    + Math.max(1, preRecordDurationSeconds) + "s, retained="
+                    + effectivePreRecordRetentionSeconds() + "s)" : " (stream-only)"));
     }
     
     /**
      * Updates the pre-record buffer size.
-     * 
-     * SOTA: Reuses existing buffer if same duration to avoid 23MB allocation.
-     * Only recreates if duration actually changed.
      * 
      * @param durationSeconds New buffer duration in seconds
      */
@@ -1658,42 +1671,87 @@ public class HardwareEventRecorderGpu {
         // pipeline reinit) starts at the correct window even if the byte ring
         // has been freed.
         this.preRecordDurationSeconds = clamped;
-        // Per-instance arena: this method runs on the same thread family as
-        // the producer (encoder GL thread). The setMaxDurationUs call below
-        // is safe to invoke without bufferLock — the arena is owned by THIS
-        // encoder, not shared. Skip the static-shared path entirely.
+        applyPreRecordRetentionWindow(effectivePreRecordRetentionSeconds());
+    }
+
+    /**
+     * Keep enough encoded history for enabled manual replay bindings without
+     * changing the shorter window used by surveillance/proximity event flushes.
+     * A live edit changes the retention clock immediately, but a larger native
+     * arena is intentionally deferred to a camera-daemon cold start.
+     */
+    public void setManualClipRetentionDuration(int durationSeconds) {
+        manualClipRetentionSeconds = Math.max(0, Math.min(60, durationSeconds));
+        applyPreRecordRetentionWindow(effectivePreRecordRetentionSeconds());
+    }
+
+    /**
+     * True when the active arena cannot guarantee the requested manual window.
+     * This diagnoses only replay capacity; an unrelated event pre-roll setting
+     * must not make the Key Mapping page claim that its binding needs restart.
+     */
+    public boolean requiresCameraDaemonRestartForManualClip(int durationSeconds) {
+        int manualSeconds = Math.max(0, Math.min(60, durationSeconds));
+        if (manualSeconds == 0) return false;
+        int retainedSeconds = Math.min(62,
+                manualSeconds + MANUAL_CLIP_GOP_HEADROOM_SECONDS);
+        H264ByteRingBuffer ring = preRecordBuffer;
+        return ring != null
+                && (computePreRecordBudgetBytes(retainedSeconds, bitrate) > ring.getBudgetBytes()
+                    || ring.getMaxDurationUs() < retainedSeconds * 1_000_000L);
+    }
+
+    /** Whether the current arena and duration policy can retain a full request. */
+    public boolean canRetainManualClip(int durationSeconds) {
+        int manualSeconds = Math.max(0, Math.min(60, durationSeconds));
+        if (manualSeconds == 0) return false;
+        int retainedSeconds = Math.min(62,
+                manualSeconds + MANUAL_CLIP_GOP_HEADROOM_SECONDS);
+        H264ByteRingBuffer ring = preRecordBuffer;
+        return ring != null
+                && computePreRecordBudgetBytes(retainedSeconds, bitrate) <= ring.getBudgetBytes()
+                && ring.getMaxDurationUs() >= retainedSeconds * 1_000_000L;
+    }
+
+    private int effectivePreRecordRetentionSeconds() {
+        int manualRetention = manualClipRetentionSeconds > 0
+                ? manualClipRetentionSeconds + MANUAL_CLIP_GOP_HEADROOM_SECONDS
+                : 0;
+        return Math.max(1, Math.min(62,
+                Math.max(preRecordDurationSeconds, manualRetention)));
+    }
+
+    private void applyPreRecordRetentionWindow(int retentionSeconds) {
+        final int clamped = Math.max(1, Math.min(62, retentionSeconds));
+        final long desiredUs = clamped * 1_000_000L;
+        final int desiredBudget = computePreRecordBudgetBytes(clamped, bitrate);
+
+        // Never replace a direct arena at runtime. The old ByteBuffer may stay
+        // resident until its Cleaner runs, so a 64→128 MiB edit could create a
+        // dangerous transient peak even though the primary dashcam itself is
+        // healthy. The larger size is allocated once on a future cold start.
         if (preRecordBufferIsInstance && preRecordBuffer != null) {
-            long desiredUs = clamped * 1_000_000L;
-            if (preRecordBuffer.getMaxDurationUs() != desiredUs) {
-                preRecordBuffer.setMaxDurationUs(desiredUs);
-                logger.info("Per-instance pre-record duration updated to " + clamped + "s");
+            H264ByteRingBuffer current = preRecordBuffer;
+            current.setMaxDurationUs(desiredUs);
+            if (desiredBudget > current.getBudgetBytes()) {
+                logger.warn("Pre-record ring needs " + (desiredBudget / 1024 / 1024)
+                        + "MB for " + clamped + "s; keeping "
+                        + (current.getBudgetBytes() / 1024 / 1024)
+                        + "MB until the next cold encoder start");
             }
             return;
         }
+
         synchronized (bufferLock) {
             if (sharedPreRecordBuffer != null) {
-                long desiredUs = clamped * 1_000_000L;
-                int desiredBudget = computePreRecordBudgetBytes(clamped, bitrate);
-                // Always update the duration window. Even when the byte arena
-                // is too small to hold the requested seconds at the current
-                // bitrate, widening the window lets the ring keep whatever
-                // pre-roll it CAN hold instead of stranding the user at the
-                // old (smaller) window until the next encoder reinit. The
-                // ring's eviction policy will trim packets that don't fit.
-                if (sharedPreRecordBuffer.getMaxDurationUs() != desiredUs) {
-                    sharedPreRecordBuffer.setMaxDurationUs(desiredUs);
-                }
+                sharedPreRecordBuffer.setMaxDurationUs(desiredUs);
                 if (desiredBudget > sharedPreRecordBudgetBytes) {
-                    // Byte arena is undersized for the new duration × bitrate
-                    // product. Defer the reallocation to the next init() —
-                    // resizing inline would race the encoder GL thread's
-                    // payload writes.
-                    logger.info("Pre-record duration " + clamped + "s requires "
-                        + (desiredBudget / 1024 / 1024) + "MB; current ring is "
-                        + (sharedPreRecordBudgetBytes / 1024 / 1024)
-                        + "MB — window updated, byte arena will resize on next encoder init");
+                    logger.warn("Pre-record ring needs " + (desiredBudget / 1024 / 1024)
+                            + "MB for " + clamped + "s; keeping "
+                            + (sharedPreRecordBudgetBytes / 1024 / 1024)
+                            + "MB until the next camera-daemon cold start");
                 } else {
-                    logger.info("Pre-record duration updated to " + clamped + "s (window only — no reallocation)");
+                    logger.info("Pre-record retention window updated to " + clamped + "s");
                 }
             }
         }
@@ -1730,26 +1788,82 @@ public class HardwareEventRecorderGpu {
     }
 
     /**
-     * Sizes the pre-record byte arena from the user's configured pre-roll
-     * window and the current encoder bitrate. Floor at 8 MB (anything less
-     * is too small to hold a 5 s pre-roll + IDR), ceiling at 64 MB
-     * (matches the legacy slot-pool's known-good envelope).
+     * Allocate the desired history arena, then degrade through unique smaller
+     * budgets. A replay allocation failure must not remove the safety event's
+     * existing pre-roll; the final 8 MiB attempt preserves at least a partial
+     * event window on memory-constrained units.
+     */
+    private H264ByteRingBuffer allocatePreRecordBufferWithFallback(
+            int desiredBudget, int desiredSeconds, String owner) {
+        int eventSeconds = Math.max(1, Math.min(30, preRecordDurationSeconds));
+        int eventBudget = computePreRecordBudgetBytes(eventSeconds, bitrate);
+        int[] budgets = new int[] {
+                desiredBudget,
+                desiredBudget > LONG_REPLAY_FALLBACK_BYTES
+                        ? LONG_REPLAY_FALLBACK_BYTES : 0,
+                eventBudget,
+                PRE_RECORD_BUDGET_FLOOR_BYTES
+        };
+        int[] durations = new int[] {
+                desiredSeconds,
+                desiredSeconds,
+                eventSeconds,
+                eventSeconds
+        };
+
+        for (int i = 0; i < budgets.length; i++) {
+            int candidateBudget = budgets[i];
+            if (candidateBudget <= 0) continue;
+            boolean duplicate = false;
+            for (int prior = 0; prior < i; prior++) {
+                if (budgets[prior] == candidateBudget) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (duplicate) continue;
+
+            try {
+                H264ByteRingBuffer ring = new H264ByteRingBuffer(
+                        candidateBudget, durations[i]);
+                if (i > 0) {
+                    logger.warn("Using " + (candidateBudget / 1024 / 1024)
+                            + "MB " + owner + " pre-record fallback; manual replay "
+                            + "history may require a camera-daemon cold restart");
+                }
+                return ring;
+            } catch (OutOfMemoryError | RuntimeException allocationError) {
+                logger.warn(owner + " " + (candidateBudget / 1024 / 1024)
+                        + "MB pre-record allocation failed: "
+                        + allocationError.getMessage());
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Sizes the pre-record byte arena from the configured retention window and
+     * current encoder bitrate. The 8 MiB floor preserves normal event-recorder
+     * behavior; the 128 MiB ceiling covers a 60-second MAX H.264 replay plus
+     * the preceding GOP.
      */
     private static int computePreRecordBudgetBytes(int durationSeconds, int bitrateBps) {
         // bytes = (bps × s ÷ 8) × overhead
-        long ideal = (long) ((bitrateBps / 8.0) * durationSeconds * PRE_RECORD_IDR_OVERHEAD);
+        long ideal = (long) ((bitrateBps / 8.0) * durationSeconds
+                * PRE_RECORD_BITRATE_OVERHEAD);
         long bytes = ideal;
         if (bytes < PRE_RECORD_BUDGET_FLOOR_BYTES) bytes = PRE_RECORD_BUDGET_FLOOR_BYTES;
         if (bytes > PRE_RECORD_BUDGET_CEILING_BYTES) bytes = PRE_RECORD_BUDGET_CEILING_BYTES;
         if (ideal > PRE_RECORD_BUDGET_CEILING_BYTES) {
-            // User configured more pre-roll than the 64 MB ceiling can hold at
+            // User configured more pre-roll than the 128 MiB ceiling can hold at
             // this bitrate. The ring will evict older packets to stay within
             // the byte arena, so the effective window will be < durationSeconds.
             // Log so the user can correlate observed pre-roll with their
             // settings; this matches the legacy slot-pool's behavior at the
             // same ceiling.
             long achievableSeconds = (long)
-                ((PRE_RECORD_BUDGET_CEILING_BYTES * 8.0) / (bitrateBps * PRE_RECORD_IDR_OVERHEAD));
+                ((PRE_RECORD_BUDGET_CEILING_BYTES * 8.0)
+                    / (bitrateBps * PRE_RECORD_BITRATE_OVERHEAD));
             logger.warn("Pre-record budget capped at "
                 + (PRE_RECORD_BUDGET_CEILING_BYTES / 1024 / 1024)
                 + "MB; requested " + durationSeconds + "s × "
@@ -1781,7 +1895,7 @@ public class HardwareEventRecorderGpu {
      * SPS/PPS bytes and corrupt every flush. Pano keeps the shared ring;
      * OEM calls this with {@code true} before {@link #init()}.
      *
-     * <p>Cost: one direct allocation (8–64 MB depending on bitrate × pre-roll)
+     * <p>Cost: one direct allocation (8–128 MB depending on bitrate × pre-roll)
      * per encoder lifetime, freed on {@link #release()}. Setting this AFTER
      * init() is a no-op for the current session — the next reinit will
      * pick it up.
@@ -1992,7 +2106,8 @@ public class HardwareEventRecorderGpu {
             // recovers.
             audioPacketCountSinceConfigSet++;
         }
-        if (!isWritingToFile || audioConfig == null || audioTrackIndex < 0) {
+        if (!isWritingToFile || audioConfig == null || audioTrackIndex < 0
+                || awaitLiveMuxerKeyframe) {
             return false;
         }
         // AAC frames are tiny (~256 B at 64 kbps × 20 ms). acquireMuxerPacket
@@ -2019,7 +2134,8 @@ public class HardwareEventRecorderGpu {
         // produce out-of-order PTS errors. Tight critical section: a
         // single state check + one bounded queue offer.
         synchronized (muxerLock) {
-            if (!isWritingToFile || audioConfig == null || audioTrackIndex < 0) {
+            if (!isWritingToFile || audioConfig == null || audioTrackIndex < 0
+                    || awaitLiveMuxerKeyframe) {
                 releaseMuxerPacket(pkt);
                 return false;
             }
@@ -2277,6 +2393,15 @@ public class HardwareEventRecorderGpu {
                 return true;
             }
 
+            // A manual replay may already own the ring's single range cursor.
+            // Do not cancel it: the event muxer still starts immediately and
+            // records live frames, while beginFlushRange below simply skips
+            // event pre-roll if the replay has not released its pin yet.
+            if (manualClipExportInProgress) {
+                logger.warn("Manual replay owns pre-record cursor; event recording "
+                        + "will start live and may omit its pre-trigger window");
+            }
+
         try {
             this.outputPath = outputPath;
             
@@ -2311,9 +2436,12 @@ public class HardwareEventRecorderGpu {
             recordedFrames = 0;
             firstFramePtsUs = -1;
             lastFramePtsUs = -1;
+            actualPreRecordDurationMs = 0L;
             ptsOriginUs = -1;
             lastSourcePtsUs = -1;
             lastAudioPtsUs = -1L;
+            awaitLiveMuxerKeyframe = false;
+            pendingAudioPreRecord = null;
             // Seed the disk-write clock at segment open so the wedge ticker's
             // grace window is measured from "muxer just opened," not a stale
             // prior-session value — a fresh segment must never be judged a
@@ -2399,7 +2527,9 @@ public class HardwareEventRecorderGpu {
                 return false;
             }
 
-            if (savedFormat != null && preRecordBuffer != null) {
+            boolean videoPreRecordCursorAcquired = false;
+            if (!manualClipExportInProgress
+                    && savedFormat != null && preRecordBuffer != null) {
                 // SOTA: streaming flush. beginFlush() takes a seqlock-validated
                 // snapshot and pins the byte-arena read frontier. The drainer
                 // thread iterates the cursor and writes packets directly into
@@ -2410,74 +2540,52 @@ public class HardwareEventRecorderGpu {
                 // and last packet's PTS (can't be exact because we'd have to
                 // walk the cursor twice; close enough for log + timeline).
                 int flushBytes = preRecordBuffer.peekFlushBytes();
-                double preRecordDuration = preRecordBuffer.getDurationSeconds();
-                actualPreRecordDurationMs = (long) (preRecordDuration * 1000);
-
-                H264ByteRingBuffer.Cursor cursor = preRecordBuffer.beginFlush();
+                long latestPtsUs = preRecordBuffer.getLatestPtsUs();
+                long requestedStartPtsUs = latestPtsUs == Long.MIN_VALUE
+                        ? Long.MIN_VALUE
+                        : latestPtsUs - Math.max(1, preRecordDurationSeconds) * 1_000_000L;
+                H264ByteRingBuffer.Cursor cursor = latestPtsUs == Long.MIN_VALUE
+                        ? null
+                        : preRecordBuffer.beginFlushRange(requestedStartPtsUs, latestPtsUs);
                 if (cursor != null) {
+                    videoPreRecordCursorAcquired = true;
+                    double preRecordDuration = Math.max(0L,
+                            cursor.getEndPtsUs() - cursor.getStartPtsUs()) / 1_000_000.0;
+                    actualPreRecordDurationMs = (long) (preRecordDuration * 1000);
                     pendingFlushCursor = cursor;
-                    flushInProgress = true;
                     logger.info(String.format(
                         "Pre-record flush armed: %d packets (%.1f sec, %.1f MB) — streaming via cursor",
                         cursor.remaining(), preRecordDuration, flushBytes / 1024.0 / 1024.0));
                 } else {
                     logger.warn("Pre-record flush skipped — no keyframe in buffer");
-                    flushInProgress = false;
+                    pendingFlushCursor = null;
                 }
             }
 
-            // Audio pre-record flush. Drains the AAC ring into the muxer
-            // queue so this event clip has audio at frame 0 instead of the
-            // previous "5 s of silent video before audio kicks in" behaviour.
-            //
-            // Gating:
-            //   - Only useful when audio is configured (audioConfig != null)
-            //     AND the muxer has an audio track (maybeAddAudioTrack
-            //     succeeded above, i.e. audioTrackIndex >= 0). If audio was
-            //     enabled mid-pipeline AFTER the muxer started, the track
-            //     was never added — drain anyway and discard so the next
-            //     event's pre-record window starts clean.
-            //   - PTS-window filter: ring packets older than the youngest
-            //     ring entry's PTS minus the pre-record duration belong to
-            //     a previous (closed) recording's tail or a long-idle gap.
-            //     Their absolute PTSs would still be valid for
-            //     writeRebasedAudio's negative-rebase clamp, but they'd all
-            //     collapse to PTS=0 and stack on the segment's first audio
-            //     frame. Filter them out.
-            //
-            //     Anchoring the window at the youngest ring PTS (rather
-            //     than the daemon's System.nanoTime()) avoids assuming
-            //     cross-process clock parity. PTSs are stamped in the APP
-            //     process by AppAudioCaptureController.captureLoop using
-            //     System.nanoTime() / 1000; the daemon's nanoTime() shares
-            //     the same kernel CLOCK_MONOTONIC backing on Android in
-            //     practice, but there is no contractual guarantee. Drift
-            //     under suspend or on quirky kernels would otherwise cause
-            //     the filter to drop every pre-record packet, leaving the
-            //     segment silent for the entire pre-record window.
-            //
-            // Lock-wise: this runs under startStopLock (we're inside its
-            // synchronized block) which is fine — aacRing operations are
-            // wait-free and offerMuxerPacket walks muxerWriteQueue without
-            // taking startStopLock. Lock-ordering invariant preserved.
-            //
-            // muxerLock requirement: each offerMuxerPacket() call below
-            // must hold muxerLock so its eviction walk
-            // (drop-oldest-non-keyframe under SD backpressure) is atomic
-            // w.r.t. concurrent producers. pushAudioPacket() takes muxerLock
-            // around its own offerMuxerPacket(); without doing the same
-            // here, two threads could be inside offerMuxerPacket
-            // concurrently and the non-atomic eviction walk could drop a
-            // video keyframe. We acquire/release muxerLock per packet
-            // (rather than wrapping the whole loop) to avoid unnecessarily
-            // serializing against the disk writer for the duration of the
-            // pre-record drain. Lock ordering is preserved
-            // (recordingLock → startStopLock → muxerLock; we hold
-            // startStopLock and take muxerLock briefly).
-            if (audioConfig != null) {
+            // Stage historical AAC, but do not queue it here. The drainer must
+            // enqueue every selected video packet first so writeRebased seeds
+            // the shared PTS origin before writeRebasedAudio sees old AAC. The
+            // youngest AAC PTS anchors filtering without assuming clock parity
+            // between the app and daemon processes.
+            pendingAudioPreRecord = null;
+            if (audioConfig != null && manualClipExportInProgress
+                    && !videoPreRecordCursorAcquired) {
+                // The accepted replay still needs the historical AAC packets.
+                // Leave them in the non-destructive ring; this event starts
+                // with live video and live audio instead.
+                logger.info("Audio pre-record retained for active manual replay; "
+                        + "event audio starts live");
+            } else if (audioConfig != null) {
                 java.util.List<AacCircularBuffer.Packet> audioPackets =
                     aacRing.drainAll();
-                if (audioTrackIndex >= 0 && !audioPackets.isEmpty()) {
+                if (!videoPreRecordCursorAcquired && !audioPackets.isEmpty()) {
+                    // Another consumer (notably a manual replay) may own the
+                    // video ring. In that case the event starts from live
+                    // video, so carrying old AAC into it would create an
+                    // audio-only pre-roll and could delay the first picture.
+                    logger.info("Audio pre-record flush skipped: no matching video cursor "
+                        + "(" + audioPackets.size() + " ring packets discarded)");
+                } else if (audioTrackIndex >= 0 && !audioPackets.isEmpty()) {
                     // Use the youngest ring packet's PTS as the time anchor
                     // for the pre-record window. This avoids the
                     // cross-process clock-domain assumption (daemon's
@@ -2491,59 +2599,19 @@ public class HardwareEventRecorderGpu {
                     long anchorPtsUs = audioPackets.get(audioPackets.size() - 1).ptsUs;
                     long minPtsUs = anchorPtsUs
                         - Math.max(1, preRecordDurationSeconds) * 1_000_000L;
-                    int enqueued = 0;
+                    java.util.List<AacCircularBuffer.Packet> filteredPackets =
+                            new java.util.ArrayList<>(audioPackets.size());
                     int filtered = 0;
-                    boolean abortedMidLoop = false;
                     for (AacCircularBuffer.Packet ap : audioPackets) {
-                        // Re-check per-packet: a concurrent AacIngestServer
-                        // disconnect can call disableAudioMuxing() /
-                        // setAudioConfig(null) mid-loop, in which case
-                        // continuing to enqueue audio packets is wasted work
-                        // — the disk writer would drop them at the gate
-                        // (audioTrackIndex < 0). Discard remaining packets
-                        // (don't re-add to ring; the next event gets fresh
-                        // packets from whichever client is live then).
-                        if (audioTrackIndex < 0 || audioConfig == null) {
-                            logger.info("Audio pre-record drain aborted mid-loop: track gone");
-                            abortedMidLoop = true;
-                            break;
-                        }
                         if (ap.ptsUs < minPtsUs) {
                             filtered++;
                             continue;
                         }
-                        MuxerPacket mp = acquireMuxerPacket(ap.data.length);
-                        if (mp == null) continue;
-                        mp.data.clear();
-                        mp.data.put(ap.data);
-                        mp.data.flip();
-                        mp.payloadSize = ap.data.length;
-                        mp.info.set(0, ap.data.length, ap.ptsUs, 0);
-                        mp.trackKind = TRACK_KIND_AUDIO;
-                        synchronized (muxerLock) {
-                            // Re-check after acquiring the lock — the audio
-                            // track / writing state may have flipped between
-                            // the outer per-packet check and this lock
-                            // acquisition (closeEventRecording or a
-                            // concurrent disableAudioMuxing).
-                            if (audioTrackIndex < 0 || audioConfig == null || !isWritingToFile) {
-                                releaseMuxerPacket(mp);
-                                abortedMidLoop = true;
-                                break;
-                            }
-                            offerMuxerPacket(mp);
-                        }
-                        enqueued++;
+                        filteredPackets.add(ap);
                     }
-                    if (abortedMidLoop) {
-                        logger.info("Audio pre-record flush: " + enqueued
-                            + " packets queued before abort, " + filtered
-                            + " filtered as out-of-window (window="
-                            + preRecordDurationSeconds + "s, anchor="
-                            + anchorPtsUs + "us)");
-                    }
-                    logger.info("Audio pre-record flush: " + enqueued
-                        + " packets queued, " + filtered + " filtered as out-of-window"
+                    pendingAudioPreRecord = filteredPackets;
+                    logger.info("Audio pre-record staged: " + filteredPackets.size()
+                        + " packets, " + filtered + " filtered as out-of-window"
                         + " (window=" + preRecordDurationSeconds + "s, anchor="
                         + anchorPtsUs + "us)");
                 } else if (!audioPackets.isEmpty()) {
@@ -2555,17 +2623,20 @@ public class HardwareEventRecorderGpu {
                 }
             }
 
-            // Reset state
+            // Publish the video cursor before the writer gate. The drainer
+            // always queues it, then pendingAudioPreRecord, then live output.
+            flushInProgress = pendingFlushCursor != null;
             startTimeNs = System.nanoTime();
-            segmentStartTime = System.currentTimeMillis();  // Enable segment rotation for long events
+            segmentStartTime = System.currentTimeMillis();
             segmentNumber = 0;
-            segmentBasePath = outputPath.replaceAll("\\.mp4$", "");  // Store base path for segment rotation
+            segmentBasePath = outputPath.replaceAll("\\.mp4$", "");
+            awaitLiveMuxerKeyframe = true;
+            isWritingToFile = true;
+            recording = true;
+
             // Post-record duration is enforced by the caller (sentry engine /
             // proximity controller / RecordingModeManager) — this encoder
             // does not own the stop schedule.
-
-            isWritingToFile = true;
-            recording = true;  // Keep for compatibility
 
             // SPLICE IDR: force the encoder to emit a keyframe on the next LIVE
             // frame, so the first packet after the pre-record flush is a
@@ -2594,6 +2665,12 @@ public class HardwareEventRecorderGpu {
 
         } catch (Exception e) {
             logger.error("Failed to trigger event recording", e);
+            awaitLiveMuxerKeyframe = false;
+            H264ByteRingBuffer.Cursor failedCursor = pendingFlushCursor;
+            pendingFlushCursor = null;
+            pendingAudioPreRecord = null;
+            flushInProgress = false;
+            if (failedCursor != null) failedCursor.close();
             // Best-effort cleanup so a partial init doesn't leave a muxer alive
             // referencing a now-orphaned tmp file.
             synchronized (muxerLock) {
@@ -2877,6 +2954,8 @@ public class HardwareEventRecorderGpu {
             // No more writers can race us now — flag the writer state OFF before
             // touching muxer.stop(). isWritingToFile is also cleared under the
             // lock so the upcoming format-change handler can't reopen the muxer.
+            awaitLiveMuxerKeyframe = false;
+            pendingAudioPreRecord = null;
             isWritingToFile = false;
 
             // Stop muxer (may throw if no frames were written, or if the
@@ -3088,9 +3167,10 @@ public class HardwareEventRecorderGpu {
     /**
      * Change the encoder bitrate at runtime via MediaCodec.setParameters.
      *
-     * <p>The byte-ring pre-record buffer is bitrate-agnostic — bytes pack
-     * tightly regardless of I-frame size — so this is a pure encoder
-     * reconfig. No buffer reallocation, no pre-record content loss.
+     * <p>The byte-ring format is bitrate-agnostic, but its fixed arena still
+     * needs enough bytes for the configured time window. An inline bitrate
+     * increase therefore reapplies the retention budget and may replace an
+     * undersized arena.
      *
      * @param newBitrate New bitrate in bps
      */
@@ -3101,6 +3181,7 @@ public class HardwareEventRecorderGpu {
                 params.putInt(MediaCodec.PARAMETER_KEY_VIDEO_BITRATE, newBitrate);
                 encoder.setParameters(params);
                 this.bitrate = newBitrate;
+                applyPreRecordRetentionWindow(effectivePreRecordRetentionSeconds());
                 logger.info("Bitrate changed to: " + (newBitrate / 1_000_000) + " Mbps");
             } catch (Exception e) {
                 logger.error("Failed to change bitrate", e);
@@ -3200,6 +3281,271 @@ public class HardwareEventRecorderGpu {
      */
     public H264ByteRingBuffer getPreRecordBuffer() {
         return preRecordBuffer;
+    }
+
+    /** Latest encoded PTS retained for instant replay, or Long.MIN_VALUE. */
+    public long getLatestPreRecordPtsUs() {
+        H264ByteRingBuffer ring = preRecordBuffer;
+        return ring != null ? ring.getLatestPtsUs() : Long.MIN_VALUE;
+    }
+
+    /** Oldest encoded PTS retained for instant replay, or Long.MIN_VALUE. */
+    public long getOldestPreRecordPtsUs() {
+        H264ByteRingBuffer ring = preRecordBuffer;
+        return ring != null ? ring.getOldestPtsUs() : Long.MIN_VALUE;
+    }
+
+    /** True while either event recording or manual replay owns the ring cursor. */
+    public boolean isPreRecordFlushInProgress() {
+        return flushInProgress || manualClipExportInProgress;
+    }
+
+    /**
+     * Reserve the single encoded-history consumer as soon as a manual replay
+     * key fires. Holding this lightweight flag during post-roll prevents a
+     * later safety event from taking the range cursor; that event still starts
+     * immediately from live frames.
+     */
+    public boolean tryReserveManualClip() {
+        synchronized (startStopLock) {
+            if (flushInProgress || manualClipExportInProgress) return false;
+            manualClipExportInProgress = true;
+            return true;
+        }
+    }
+
+    /** Release a pending manual replay that never reached (or finished) export. */
+    public void releaseManualClipReservation() {
+        synchronized (startStopLock) {
+            manualClipExportInProgress = false;
+        }
+    }
+
+    /**
+     * Remux a bounded interval from the encoded history into an independent MP4.
+     * The active recording muxer is untouched. startStopLock is held only while
+     * claiming the ring cursor; slow removable-storage I/O runs outside it so
+     * lifecycle operations cannot be stalled for the duration of a 60s remux.
+     */
+    public boolean exportManualClip(File outputFile, long startPtsUs, long endPtsUs) {
+        if (outputFile == null) return false;
+        return exportManualClip(() -> outputFile, startPtsUs, endPtsUs);
+    }
+
+    public boolean exportManualClip(ManualClipOutputProvider outputProvider,
+                                    long startPtsUs, long endPtsUs) {
+        if (outputProvider == null || startPtsUs > endPtsUs) return false;
+
+        final H264ByteRingBuffer.Cursor cursor;
+        final MediaFormat videoFormat;
+        boolean reservationAcquiredHere = false;
+        synchronized (startStopLock) {
+            if (flushInProgress) {
+                logger.warn("Manual clip refused: event pre-record consumer is active");
+                return false;
+            }
+
+            // requestClip normally reserves at key-down time so an event cannot
+            // steal the cursor during post-roll. Keep direct callers safe by
+            // acquiring the same reservation here when none exists.
+            if (!manualClipExportInProgress) {
+                manualClipExportInProgress = true;
+                reservationAcquiredHere = true;
+            }
+
+            H264ByteRingBuffer ring = preRecordBuffer;
+            videoFormat = savedFormat;
+            if (ring == null || videoFormat == null || encoder == null) {
+                if (reservationAcquiredHere) manualClipExportInProgress = false;
+                return false;
+            }
+
+            cursor = ring.beginStrongFlushRange(startPtsUs, endPtsUs);
+            if (cursor == null) {
+                logger.warn("Manual clip refused: requested range has no decodable keyframe");
+                if (reservationAcquiredHere) manualClipExportInProgress = false;
+                return false;
+            }
+
+            // Never silently turn a requested 30/60-second replay into a
+            // warmed-up or memory-truncated fragment. The start may be earlier
+            // than requested because decoding must begin at the preceding IDR;
+            // it must not be materially later. The end allows a few frame
+            // intervals because the requested timestamp need not land exactly
+            // on an encoded sample.
+            final long coverageToleranceUs = Math.max(250_000L,
+                    fps > 0 ? (3_000_000L / fps) : 250_000L);
+            if (cursor.getStartPtsUs() > startPtsUs + coverageToleranceUs
+                    || cursor.getEndPtsUs() < endPtsUs - coverageToleranceUs) {
+                logger.warn("Manual clip refused: retained range does not cover request"
+                        + " (have=" + cursor.getStartPtsUs() + ".." + cursor.getEndPtsUs()
+                        + ", need=" + startPtsUs + ".." + endPtsUs + ")");
+                cursor.close();
+                if (reservationAcquiredHere) manualClipExportInProgress = false;
+                return false;
+            }
+
+            manualClipExportInProgress = true;
+        }
+
+        try {
+            // Snapshot immutable AAC packet references immediately after the
+            // video pin. Slow storage resolution must not evict the first audio
+            // seconds of a full 60-second replay from its independent ring.
+            java.util.List<AacCircularBuffer.Packet> audioPackets =
+                    aacRing.snapshotRange(cursor.getStartPtsUs(), cursor.getEndPtsUs());
+
+            // Potentially slow StatFs/reaper/removable-storage work happens only
+            // after the selected bytes are protected by the strong cursor.
+            File outputFile;
+            try {
+                outputFile = outputProvider.createOutputFile();
+            } catch (Throwable t) {
+                logger.warn("Manual clip output resolution failed: " + t.getMessage());
+                return false;
+            }
+            if (outputFile == null) return false;
+
+            File temp = new File(outputFile.getAbsolutePath() + ".tmp");
+            MediaMuxer clipMuxer = null;
+            boolean muxerStartedLocal = false;
+            boolean tempOwned = false;
+            boolean stopOk = false;
+            int videoFrames = 0;
+            long firstVideoPtsUs = -1L;
+            long lastVideoPtsUs = -1L;
+            long lastSourceVideoPtsUs = -1L;
+            long lastMuxedVideoPtsUs = -1L;
+
+            try {
+                File parent = temp.getParentFile();
+                if (parent != null && !parent.exists()
+                        && !parent.mkdirs() && !parent.exists()) {
+                    return false;
+                }
+                // Never delete an unknown .tmp. Another writer may have won a
+                // path race; replay_* normally makes that impossible, but the
+                // refusal keeps this method non-destructive by construction.
+                if (temp.exists() || outputFile.exists()) return false;
+
+                clipMuxer = new MediaMuxer(temp.getAbsolutePath(),
+                        MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+                tempOwned = true;
+                int videoTrack = clipMuxer.addTrack(videoFormat);
+                int clipAudioTrack = -1;
+                boolean audioOverlapsVideoRange = false;
+                for (AacCircularBuffer.Packet packet : audioPackets) {
+                    if (packet.ptsUs >= cursor.getStartPtsUs()
+                            && packet.ptsUs <= cursor.getEndPtsUs()) {
+                        audioOverlapsVideoRange = true;
+                        break;
+                    }
+                }
+                if (audioOverlapsVideoRange) {
+                    clipAudioTrack = maybeAddAudioTrack(clipMuxer);
+                }
+                clipMuxer.start();
+                muxerStartedLocal = true;
+
+                MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+                ByteBuffer packetBuffer = null;
+                while (cursor.remaining() > 0) {
+                    int nextSize = cursor.peekSize();
+                    if (nextSize <= 0) break;
+                    if (packetBuffer == null || packetBuffer.capacity() < nextSize) {
+                        packetBuffer = ByteBuffer.allocateDirect(nextSize);
+                    }
+                    packetBuffer.clear();
+                    if (!cursor.next(packetBuffer, info)) break;
+                    packetBuffer.flip();
+
+                    long sourcePtsUs = info.presentationTimeUs;
+                    if (firstVideoPtsUs < 0L) firstVideoPtsUs = sourcePtsUs;
+                    lastVideoPtsUs = sourcePtsUs;
+                    long muxedPtsUs;
+                    if (lastSourceVideoPtsUs < 0L) {
+                        muxedPtsUs = 0L;
+                    } else {
+                        long sourceGapUs = sourcePtsUs - lastSourceVideoPtsUs;
+                        if (sourceGapUs <= 0L
+                                || sourceGapUs > MAX_PLAUSIBLE_INTERFRAME_GAP_US) {
+                            long nominalFrameUs = fps > 0 ? 1_000_000L / fps : 33_333L;
+                            muxedPtsUs = lastMuxedVideoPtsUs + nominalFrameUs;
+                        } else {
+                            muxedPtsUs = lastMuxedVideoPtsUs + sourceGapUs;
+                        }
+                    }
+                    info.offset = 0;
+                    info.presentationTimeUs = muxedPtsUs;
+                    clipMuxer.writeSampleData(videoTrack, packetBuffer, info);
+                    lastSourceVideoPtsUs = sourcePtsUs;
+                    lastMuxedVideoPtsUs = muxedPtsUs;
+                    videoFrames++;
+                }
+
+                boolean complete = !cursor.aborted() && cursor.remaining() == 0;
+                if (complete && clipAudioTrack >= 0 && firstVideoPtsUs >= 0L) {
+                    MediaCodec.BufferInfo audioInfo = new MediaCodec.BufferInfo();
+                    long lastWrittenAudioPtsUs = -1L;
+                    for (AacCircularBuffer.Packet packet : audioPackets) {
+                        if (packet.ptsUs < firstVideoPtsUs || packet.ptsUs > lastVideoPtsUs) continue;
+                        long rebasedPtsUs = packet.ptsUs - firstVideoPtsUs;
+                        if (rebasedPtsUs <= lastWrittenAudioPtsUs) {
+                            rebasedPtsUs = lastWrittenAudioPtsUs + 1L;
+                        }
+                        ByteBuffer audioData = ByteBuffer.wrap(packet.data);
+                        audioInfo.set(0, packet.data.length, rebasedPtsUs, 0);
+                        clipMuxer.writeSampleData(clipAudioTrack, audioData, audioInfo);
+                        lastWrittenAudioPtsUs = rebasedPtsUs;
+                    }
+                }
+
+                if (complete && videoFrames > 0) {
+                    clipMuxer.stop();
+                    muxerStartedLocal = false;
+                    stopOk = true;
+                } else if (cursor.aborted()) {
+                    logger.warn("Manual clip discarded: ring cursor was preempted");
+                }
+            } catch (Throwable t) {
+                logger.warn("Manual clip mux failed: " + t.getMessage());
+            } finally {
+                if (clipMuxer != null) {
+                    if (muxerStartedLocal) {
+                        try { clipMuxer.stop(); } catch (Throwable ignored) {}
+                    }
+                    try { clipMuxer.release(); } catch (Throwable ignored) {}
+                }
+            }
+
+            if (!stopOk || videoFrames <= 0 || !temp.exists() || temp.length() <= 1024L) {
+                if (tempOwned && temp.exists() && !temp.delete()) {
+                    logger.warn("Could not delete failed manual clip temp: " + temp.getName());
+                }
+                return false;
+            }
+            if (outputFile.exists()) {
+                logger.warn("Could not finalize manual clip: destination appeared during export");
+                if (tempOwned) temp.delete();
+                return false;
+            }
+            if (!temp.renameTo(outputFile)) {
+                logger.warn("Could not finalize manual clip: " + outputFile.getAbsolutePath());
+                if (tempOwned) temp.delete();
+                return false;
+            }
+
+            double durationSec = lastMuxedVideoPtsUs > 0L
+                    ? lastMuxedVideoPtsUs / 1_000_000.0 : 0.0;
+            logger.info(String.format(Locale.US,
+                    "Manual clip exported: %s (%d frames, %.1fs, %.1fMB)",
+                    outputFile.getName(), videoFrames, durationSec,
+                    outputFile.length() / 1024.0 / 1024.0));
+            return true;
+        } finally {
+            cursor.close();
+            releaseManualClipReservation();
+        }
     }
 
     /**
@@ -3706,6 +4052,37 @@ public class HardwareEventRecorderGpu {
         // SOTA: Draining now happens on background thread, not GL thread
         // This method is kept for API compatibility but does nothing
     }
+
+    /** Queue staged AAC only after every matching historical video packet. */
+    private int enqueueStagedPreRecordAudio(
+            java.util.List<AacCircularBuffer.Packet> packets) {
+        int enqueued = 0;
+        for (AacCircularBuffer.Packet packet : packets) {
+            MuxerPacket mp = acquireMuxerPacket(packet.data.length);
+            if (mp == null) continue;
+            mp.data.clear();
+            mp.data.put(packet.data);
+            mp.data.flip();
+            mp.payloadSize = packet.data.length;
+            mp.info.set(0, packet.data.length, packet.ptsUs, 0);
+            mp.trackKind = TRACK_KIND_AUDIO;
+            synchronized (muxerLock) {
+                // The drainer can finish the video flush after the muxer is
+                // ready but just before triggerEvent publishes isWritingToFile.
+                // Muxer readiness is the authoritative gate for this staged
+                // history; startStopLock keeps closeEventRecording out until
+                // trigger publication completes.
+                if (!muxerStarted || muxer == null
+                        || audioTrackIndex < 0 || audioConfig == null) {
+                    releaseMuxerPacket(mp);
+                    break;
+                }
+                offerMuxerPacket(mp);
+                enqueued++;
+            }
+        }
+        return enqueued;
+    }
     
     /**
      * Internal drain method called by background thread.
@@ -3746,6 +4123,7 @@ public class HardwareEventRecorderGpu {
         if (flushInProgress && muxerStarted) {
             H264ByteRingBuffer.Cursor cursor = pendingFlushCursor;
             int flushedCount = 0;
+            boolean videoFlushComplete = false;
             // Outer try/finally guarantees flushInProgress is cleared even if
             // the inner loop throws. Without this, a thrown exception escapes
             // up through the drainer's catch — pendingFlushCursor is nulled
@@ -3793,6 +4171,8 @@ public class HardwareEventRecorderGpu {
                             logger.warn("Pre-record flush aborted by concurrent keyframe (pin broken) — partial flush of "
                                 + flushedCount + " packets");
                         }
+                        videoFlushComplete = !cursor.aborted()
+                                && cursor.remaining() == 0 && flushedCount > 0;
                     } catch (Throwable t) {
                         // Catch Throwable, not Exception. An OOMError (or any
                         // VirtualMachineError) inside cursor.next()/put() would
@@ -3818,10 +4198,22 @@ public class HardwareEventRecorderGpu {
                         pendingFlushCursor = null;
                     }
                 }
+                java.util.List<AacCircularBuffer.Packet> stagedAudio = pendingAudioPreRecord;
+                pendingAudioPreRecord = null;
+                if (stagedAudio != null && !stagedAudio.isEmpty()) {
+                    if (videoFlushComplete) {
+                        int audioCount = enqueueStagedPreRecordAudio(stagedAudio);
+                        logger.info("Async audio pre-record flush complete: "
+                                + audioCount + " packets queued after video");
+                    } else {
+                        logger.warn("Audio pre-record discarded: matching video flush incomplete");
+                    }
+                }
                 if (flushedCount > 0) {
                     logger.info("Async flush complete: " + flushedCount + " pre-record frames queued for disk write");
                 }
             } finally {
+                pendingAudioPreRecord = null;
                 flushInProgress = false;
             }
         }
@@ -3838,6 +4230,8 @@ public class HardwareEventRecorderGpu {
         // (Audit Finding R3.)
         if (writerAbortedCorrupt && isWritingToFile) {
             logger.warn("Writer aborted — stopping recording, no rotation");
+            awaitLiveMuxerKeyframe = false;
+            pendingAudioPreRecord = null;
             isWritingToFile = false;
             recording = false;
             // FIX (audit R2): also propagate the abort up to the wrapper so
@@ -4037,9 +4431,22 @@ public class HardwareEventRecorderGpu {
                     // is the source for pre-record stored PTSs AND live PTSs).
                     // The muxer sees one continuous, ordered stream.
                     if (isWritingToFile && muxerStarted) {
-                        MuxerPacket mp = acquireMuxerPacket(bufferInfo.size);
-                        fillMuxerPacket(mp, outputBuffer, bufferInfo);
-                        offerMuxerPacket(mp);
+                        boolean isKeyFrame = (bufferInfo.flags
+                                & MediaCodec.BUFFER_FLAG_KEY_FRAME) != 0;
+                        if (!awaitLiveMuxerKeyframe || isKeyFrame) {
+                            MuxerPacket mp = acquireMuxerPacket(bufferInfo.size);
+                            fillMuxerPacket(mp, outputBuffer, bufferInfo);
+                            if (awaitLiveMuxerKeyframe) {
+                                // Serialize the first IDR with audio's final gate
+                                // check so AAC cannot enter this event queue first.
+                                synchronized (muxerLock) {
+                                    offerMuxerPacket(mp);
+                                    awaitLiveMuxerKeyframe = false;
+                                }
+                            } else {
+                                offerMuxerPacket(mp);
+                            }
+                        }
                     }
                     
                     // PATH B: Send to network (if streaming).

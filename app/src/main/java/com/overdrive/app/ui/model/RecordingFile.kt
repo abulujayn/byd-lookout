@@ -113,6 +113,9 @@ data class RecordingFile(
         // server-side RecordingsApiHandler.CAM_PATTERN so both surfaces see
         // every clip on disk.
         private val CAM_FILENAME_PATTERN = Regex("""cam(\d+)?_(\d{8})_(\d{6})(?:_\d+)?\.mp4""")
+        // Manual instant-replay clips use their own namespace so their .tmp
+        // can never collide with a live cam_* segment rotation.
+        private val REPLAY_FILENAME_PATTERN = Regex("""replay_(\d{8})_(\d{6})(?:_\d+)?\.mp4""")
         // event_20251224_132630.mp4 or event_20251224_132630_2.mp4
         private val EVENT_FILENAME_PATTERN = Regex("""event_(\d{8})_(\d{6})(?:_\d+)?\.mp4""")
         // proximity_20251224_132630.mp4 or proximity_20251224_132630_2.mp4
@@ -199,6 +202,7 @@ data class RecordingFile(
             val name = file.name
             val matchedPrefix = when {
                 name.startsWith("cam_") || name.matches(Regex("""cam\d+_.*""")) -> RecordingType.NORMAL
+                name.startsWith("replay_") -> RecordingType.NORMAL
                 name.startsWith("event_") -> RecordingType.SENTRY
                 name.startsWith("proximity_") -> RecordingType.PROXIMITY
                 name.startsWith("dvr_") -> RecordingType.OEM_DASHCAM
@@ -219,9 +223,16 @@ data class RecordingFile(
         }
         
         private fun parseNormalRecording(file: File): RecordingFile? {
-            val match = CAM_FILENAME_PATTERN.matchEntire(file.name) ?: return null
-            val cameraId = match.groupValues[1].toIntOrNull() ?: 0  // 0 for mosaic recordings
-            val dateStr = "${match.groupValues[2]}_${match.groupValues[3]}"
+            val camMatch = CAM_FILENAME_PATTERN.matchEntire(file.name)
+            val replayMatch = REPLAY_FILENAME_PATTERN.matchEntire(file.name)
+            if (camMatch == null && replayMatch == null) return null
+            val cameraId = camMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
+            val dateStr = if (camMatch != null) {
+                "${camMatch.groupValues[2]}_${camMatch.groupValues[3]}"
+            } else {
+                val replay = replayMatch ?: return null
+                "${replay.groupValues[1]}_${replay.groupValues[2]}"
+            }
             val timestamp = try {
                 newDateFormat().parse(dateStr)?.time ?: file.lastModified()
             } catch (e: Exception) {

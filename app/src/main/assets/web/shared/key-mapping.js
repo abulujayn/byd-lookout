@@ -25,6 +25,7 @@ window.KM = (function () {
     // Value dropdown; the chosen option's `v` is sent as the fire payload.
     //   kind:"catalog" -> {kind:'catalog', key, sub, payload:v}
     //   kind:"vehicle" -> {kind:'vehicle', action:key}   (no payload)
+    //   kind:"manualClip" -> {kind:'manualClip', beforeSeconds, afterSeconds}
     //   kind:"api"     -> {kind:'api', id, method, path, body}
     //       For features with no VehicleControlCatalog SDK entity (surveillance,
     //       recording). `api.path`/`api.body` support ${v} substitution from the
@@ -66,6 +67,10 @@ window.KM = (function () {
           payloads: [ { v: 'standard', i18n: 'keymap.regen_standard' }, { v: 'high', i18n: 'keymap.regen_high' } ] },
         { id: 'steering_mode',   i18n: 'keymap.act_steering',         kind: 'catalog', key: 'steering_mode',
           payloads: [ { v: 'comfort', i18n: 'keymap.steering_comfort' }, { v: 'sport', i18n: 'keymap.steering_sport' } ] },
+        // Manual-only recording action. This has a dedicated daemon action kind
+        // instead of the automation-shared API path; the two window values are
+        // edited by the clip controls below and persisted directly in the binding.
+        { id: 'manual_clip',     i18n: 'keymap.act_manual_clip',       kind: 'manualClip' },
         // ── API actions: features with no SDK/catalog entity (routed via the
         //    allowlisted automation bypass). path/body use ${v} for the payload. ──
         { id: 'surveillance',    i18n: 'keymap.act_surveillance',     kind: 'api',
@@ -119,9 +124,20 @@ window.KM = (function () {
         { code: 312, i18n: 'keymap.btn_voice_long',  fixed: 'single' }
     ];
 
-    var state = { enabled: false, allowAdvanced: false, bindings: [], a11yEnabled: false };
+    var state = {
+        enabled: false,
+        allowAdvanced: false,
+        bindings: [],
+        a11yEnabled: false,
+        restartRequired: false
+    };
     var capturing = false;
     var captured = null; // last captured keycode while arming
+
+    var CLIP_MAX_BEFORE_SECONDS = 60;
+    var CLIP_MAX_AFTER_SECONDS = 60;
+    var CLIP_MAX_TOTAL_SECONDS = 60;
+    var CLIP_DEFAULT_PRESET = '30:0';
 
     function $(id) { return document.getElementById(id); }
     function tr(key, vars) { return (window.BYD && BYD.i18n) ? (BYD.i18n.t(key, vars) || key) : key; }
@@ -155,6 +171,7 @@ window.KM = (function () {
                 state.allowAdvanced = !!s.allowAdvanced;
                 state.bindings = (s.bindings && s.bindings.length) ? s.bindings : [];
                 state.a11yEnabled = !!s.a11yEnabled;
+                state.restartRequired = !!s.restartRequired;
                 paint();
                 // Fresh foreground load — refill the recheck budget so the
                 // heal-window poll runs, but stays bounded (see scheduleA11yRecheck).
@@ -234,8 +251,14 @@ window.KM = (function () {
 
         // Show the a11y nudge only when mapping is enabled but the OS service is off.
         $('kmA11yCard').style.display = (state.enabled && !state.a11yEnabled) ? '' : 'none';
+        paintRestartWarning();
 
         renderList();
+    }
+
+    function paintRestartWarning() {
+        var card = $('kmReplayRestartCard');
+        if (card) card.style.display = state.restartRequired ? '' : 'none';
     }
 
     function renderList() {
@@ -293,10 +316,31 @@ window.KM = (function () {
         return tr('keymap.press_single');
     }
 
+    function describeClipWindow(beforeSeconds, afterSeconds) {
+        if (beforeSeconds > 0 && afterSeconds > 0) {
+            return tr('keymap.clip_summary_both', {
+                before: beforeSeconds,
+                after: afterSeconds
+            });
+        }
+        if (beforeSeconds > 0) {
+            return tr('keymap.clip_summary_before', { before: beforeSeconds });
+        }
+        return tr('keymap.clip_summary_after', { after: afterSeconds });
+    }
+
     // Human summary of a fire-payload, used when a binding has no stored label.
     function describeAction(a) {
         if (!a) return '';
         if (a.kind === 'vehicle') return tr('keymap.act_' + a.action);
+        if (a.kind === 'manualClip') {
+            var clipBefore = parseInt(a.beforeSeconds, 10);
+            var clipAfter = parseInt(a.afterSeconds, 10);
+            if (isNaN(clipBefore)) clipBefore = 0;
+            if (isNaN(clipAfter)) clipAfter = 0;
+            return tr('keymap.act_manual_clip') + ' — '
+                + describeClipWindow(clipBefore, clipAfter);
+        }
         if (a.kind === 'catalog') {
             var c = curatedById(a.key);
             var name = c ? tr(c.i18n) : a.key;
@@ -362,6 +406,10 @@ window.KM = (function () {
               // just auto-enabled the service on the enable edge), so adopt it and
               // let paint() hide the nag without waiting for a full reload.
               if (d && typeof d.a11yEnabled !== 'undefined') state.a11yEnabled = !!d.a11yEnabled;
+              if (d && d.success && typeof d.restartRequired !== 'undefined') {
+                  state.restartRequired = !!d.restartRequired;
+                  paintRestartWarning();
+              }
               if (cb) cb(!!(d && d.success));
           })
           .catch(function () { if (cb) cb(false); });
@@ -442,7 +490,15 @@ window.KM = (function () {
         var c = curatedById($('kmCuratedAction').value);
         var row = $('kmPayloadRow');
         var sel = $('kmPayload');
+        var clipWrap = $('kmClipWindowWrap');
+        var isManualClip = !!(c && c.kind === 'manualClip');
+        if (clipWrap) clipWrap.style.display = isManualClip ? '' : 'none';
         sel.innerHTML = '';
+        if (isManualClip) {
+            row.style.display = 'none';
+            applyClipPreset(false);
+            return;
+        }
         if (c && c.payloads && c.payloads.length) {
             row.style.display = '';
             for (var i = 0; i < c.payloads.length; i++) {
@@ -454,6 +510,80 @@ window.KM = (function () {
         } else {
             row.style.display = 'none';
         }
+    }
+
+    function updateClipWindowLabels() {
+        var before = parseInt($('kmClipBefore').value, 10);
+        var after = parseInt($('kmClipAfter').value, 10);
+        if (isNaN(before)) before = 0;
+        if (isNaN(after)) after = 0;
+        $('kmClipBeforeValue').textContent = tr('keymap.clip_seconds', { n: before });
+        $('kmClipAfterValue').textContent = tr('keymap.clip_seconds', { n: after });
+    }
+
+    // Apply one of the curated windows. "Custom" keeps the current values and
+    // reveals both sliders so the user can pick any whole-second split.
+    function applyClipPreset(markDirty) {
+        var preset = $('kmClipPreset');
+        var customWrap = $('kmClipCustomWrap');
+        if (!preset || !customWrap) return;
+        var value = preset.value || CLIP_DEFAULT_PRESET;
+        var custom = value === 'custom';
+        customWrap.style.display = custom ? '' : 'none';
+        if (!custom) {
+            var parts = value.split(':');
+            if (parts.length === 2) {
+                $('kmClipBefore').value = parseInt(parts[0], 10);
+                $('kmClipAfter').value = parseInt(parts[1], 10);
+            }
+        }
+        updateClipWindowLabels();
+        if (markDirty) formDirty = true;
+    }
+
+    function onClipPresetChange() {
+        applyClipPreset(true);
+    }
+
+    function onClipWindowChange() {
+        formDirty = true;
+        // Slider edits always represent an intentional custom window, even if
+        // the resulting pair happens to equal one of the convenience presets.
+        var preset = $('kmClipPreset');
+        if (preset) preset.value = 'custom';
+        updateClipWindowLabels();
+    }
+
+    function resetClipWindow() {
+        var preset = $('kmClipPreset');
+        if (preset) preset.value = CLIP_DEFAULT_PRESET;
+        var before = $('kmClipBefore');
+        var after = $('kmClipAfter');
+        if (before) before.value = 30;
+        if (after) after.value = 0;
+        applyClipPreset(false);
+    }
+
+    // Parse and validate the persisted manualClip contract. HTML range inputs
+    // already constrain normal interaction, but this remains strict so a DOM edit
+    // cannot save fractions, negatives, or a window longer than the daemon accepts.
+    function readClipWindow() {
+        var beforeRaw = $('kmClipBefore').value;
+        var afterRaw = $('kmClipAfter').value;
+        var wholeSeconds = /^\d+$/;
+        var before = Number(beforeRaw);
+        var after = Number(afterRaw);
+        var valid = wholeSeconds.test(beforeRaw) && wholeSeconds.test(afterRaw)
+            && isFinite(before) && isFinite(after)
+            && Math.floor(before) === before && Math.floor(after) === after
+            && before >= 0 && before <= CLIP_MAX_BEFORE_SECONDS
+            && after >= 0 && after <= CLIP_MAX_AFTER_SECONDS
+            && before + after >= 1 && before + after <= CLIP_MAX_TOTAL_SECONDS;
+        if (!valid) {
+            toast(tr('keymap.clip_window_invalid'), 'error');
+            return null;
+        }
+        return { beforeSeconds: before, afterSeconds: after };
     }
 
     function buildCuratedOptions() {
@@ -640,6 +770,15 @@ window.KM = (function () {
             var c = curatedById($('kmCuratedAction').value);
             if (!c) { toast(tr('keymap.need_action'), 'error'); return null; }
             if (c.kind === 'vehicle') return { kind: 'vehicle', action: c.key };
+            if (c.kind === 'manualClip') {
+                var clipWindow = readClipWindow();
+                if (!clipWindow) return null;
+                return {
+                    kind: 'manualClip',
+                    beforeSeconds: clipWindow.beforeSeconds,
+                    afterSeconds: clipWindow.afterSeconds
+                };
+            }
             var payload = ($('kmPayload').value != null) ? $('kmPayload').value : '';
             if (c.kind === 'api') {
                 // Substitute the chosen payload into the path/body templates; the
@@ -677,6 +816,10 @@ window.KM = (function () {
     function addStep() {
         var a = buildActionFromForm();
         if (!a) return;
+        if (a.kind === 'manualClip') {
+            toast(tr('keymap.clip_sequence_unsupported'), 'warning');
+            return;
+        }
         seqSteps.push(a);
         clearActionForm();
         renderSteps();
@@ -691,6 +834,7 @@ window.KM = (function () {
         $('kmCuratedAction').selectedIndex = 0;
         onCuratedChange();
         $('kmShellCmd').value = '';
+        resetClipWindow();
         formDirty = false;
     }
 
@@ -740,6 +884,10 @@ window.KM = (function () {
             var steps = seqSteps.slice();
             if (formDirty) {
                 var pending = buildActionFromForm();
+                if (pending && pending.kind === 'manualClip') {
+                    toast(tr('keymap.clip_sequence_unsupported'), 'warning');
+                    return;
+                }
                 if (pending) steps.push(pending);
             }
             if (steps.length === 1) {
@@ -814,6 +962,7 @@ window.KM = (function () {
         $('kmCapKeycode').textContent = '—';
         $('kmCapHint').textContent = tr('keymap.capture_idle');
         $('kmShellCmd').value = '';
+        resetClipWindow();
         seqSteps = [];
         formDirty = false;
         renderSteps();
@@ -880,6 +1029,8 @@ window.KM = (function () {
         onKnownButtonChange: onKnownButtonChange,
         onKindChange: onKindChange,
         onCuratedChange: onCuratedChange,
+        onClipPresetChange: onClipPresetChange,
+        onClipWindowChange: onClipWindowChange,
         addStep: addStep,
         addBinding: addBinding,
         goAdd: goAdd,
