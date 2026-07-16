@@ -502,7 +502,7 @@ BYD.events = {
     async init() {
         const urlParams = new URLSearchParams(window.location.search);
         const filterParam = urlParams.get('filter');
-        if (filterParam && ['all', 'sentry', 'normal', 'proximity'].includes(filterParam)) {
+        if (filterParam && ['all', 'sentry', 'normal', 'proximity', 'replay'].includes(filterParam)) {
             this.currentFilter = filterParam;
             document.querySelectorAll('.filter-tab').forEach(tab => {
                 tab.classList.toggle('active', tab.dataset.filter === filterParam);
@@ -1056,6 +1056,7 @@ BYD.events = {
         var suffixKey;
         if (this.currentFilter === 'sentry') suffixKey = 'events.title_sentry';
         else if (this.currentFilter === 'proximity') suffixKey = 'events.title_proximity';
+        else if (this.currentFilter === 'replay') suffixKey = 'events.title_replay';
         else suffixKey = 'events.title_recordings';
         title.textContent = BYD.i18n.t(suffixKey, {prefix: prefix});
     },
@@ -1123,15 +1124,19 @@ BYD.events = {
                 const counts = data.byType ? {
                     normal: data.byType.normal || {},
                     sentry: data.byType.sentry || {},
-                    proximity: data.byType.proximity || {}
+                    proximity: data.byType.proximity || {},
+                    replay: data.byType.replay || {}
                 } : {
                     normal: { count: data.normalCount, bytes: data.normalSize, todayCount: data.normalTodayCount },
                     sentry: { count: data.sentryCount, bytes: data.sentrySize, todayCount: data.sentryTodayCount },
-                    proximity: { count: data.proximityCount, bytes: data.proximitySize, todayCount: data.proximityTodayCount }
+                    proximity: { count: data.proximityCount, bytes: data.proximitySize, todayCount: data.proximityTodayCount },
+                    replay: { count: data.replayCount, bytes: data.replaySize, todayCount: data.replayTodayCount }
                 };
                 document.getElementById('normalCount').textContent = counts.normal.count || 0;
                 document.getElementById('sentryCount').textContent = counts.sentry.count || 0;
                 document.getElementById('proximityCount').textContent = counts.proximity.count || 0;
+                const replayCountEl = document.getElementById('replayCount');
+                if (replayCountEl) replayCountEl.textContent = counts.replay.count || 0;
 
                 // Daemon's recording index is still warming — surface a tiny
                 // inline notice and self-refresh until it finishes. The notice
@@ -1431,7 +1436,7 @@ BYD.events = {
 
         list.innerHTML = inflightHtml + visible.map(rec => {
             const thumbId = this._thumbDomId(rec.filename);
-            const badge = rec.type === 'sentry' ? BYD.i18n.t('events.badge_sentry') : rec.type === 'proximity' ? BYD.i18n.t('events.badge_proximity') : BYD.i18n.t('events.badge_normal');
+            const badge = rec.type === 'sentry' ? BYD.i18n.t('events.badge_sentry') : rec.type === 'proximity' ? BYD.i18n.t('events.badge_proximity') : rec.type === 'replay' ? BYD.i18n.t('events.badge_replay') : BYD.i18n.t('events.badge_normal');
             const fname = rec.filename.length > 28 ? rec.filename.substring(0, 25) + '...' : rec.filename;
             const isSelected = this.selectedFiles.has(rec.filename);
             

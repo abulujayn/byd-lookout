@@ -104,7 +104,8 @@ data class RecordingFile(
         NORMAL,         // Regular recordings (cam_*.mp4)
         SENTRY,         // Sentry event recordings (event_*.mp4)
         PROXIMITY,      // Proximity guard recordings (proximity_*.mp4)
-        OEM_DASHCAM     // OEM forward-sensor dashcam recordings (dvr_*.mp4)
+        OEM_DASHCAM,    // OEM forward-sensor dashcam recordings (dvr_*.mp4)
+        REPLAY          // Manual instant-replay clips (replay_*.mp4)
     }
     
     companion object {
@@ -151,6 +152,7 @@ data class RecordingFile(
                 RecordingType.SENTRY -> parseSentryRecording(file)
                 RecordingType.PROXIMITY -> parseProximityRecording(file)
                 RecordingType.OEM_DASHCAM -> parseOemDashcamRecording(file)
+                RecordingType.REPLAY -> parseReplayRecording(file)
             }
 
             // If type-specific parsing failed, try fallback parsing
@@ -202,7 +204,7 @@ data class RecordingFile(
             val name = file.name
             val matchedPrefix = when {
                 name.startsWith("cam_") || name.matches(Regex("""cam\d+_.*""")) -> RecordingType.NORMAL
-                name.startsWith("replay_") -> RecordingType.NORMAL
+                name.startsWith("replay_") -> RecordingType.REPLAY
                 name.startsWith("event_") -> RecordingType.SENTRY
                 name.startsWith("proximity_") -> RecordingType.PROXIMITY
                 name.startsWith("dvr_") -> RecordingType.OEM_DASHCAM
@@ -223,22 +225,15 @@ data class RecordingFile(
         }
         
         private fun parseNormalRecording(file: File): RecordingFile? {
-            val camMatch = CAM_FILENAME_PATTERN.matchEntire(file.name)
-            val replayMatch = REPLAY_FILENAME_PATTERN.matchEntire(file.name)
-            if (camMatch == null && replayMatch == null) return null
-            val cameraId = camMatch?.groupValues?.get(1)?.toIntOrNull() ?: 0
-            val dateStr = if (camMatch != null) {
-                "${camMatch.groupValues[2]}_${camMatch.groupValues[3]}"
-            } else {
-                val replay = replayMatch ?: return null
-                "${replay.groupValues[1]}_${replay.groupValues[2]}"
-            }
+            val camMatch = CAM_FILENAME_PATTERN.matchEntire(file.name) ?: return null
+            val cameraId = camMatch.groupValues[1].toIntOrNull() ?: 0
+            val dateStr = "${camMatch.groupValues[2]}_${camMatch.groupValues[3]}"
             val timestamp = try {
                 newDateFormat().parse(dateStr)?.time ?: file.lastModified()
             } catch (e: Exception) {
                 file.lastModified()
             }
-            
+
             return RecordingFile(
                 file = file,
                 cameraId = cameraId,
@@ -246,6 +241,29 @@ data class RecordingFile(
                 durationMs = 0, // Would need MediaMetadataRetriever to get actual duration
                 sizeBytes = file.length(),
                 type = RecordingType.NORMAL
+            )
+        }
+
+        // replay_*.mp4 used to parse as NORMAL; it now carries its own type so
+        // the recordings library can list instant replays in a dedicated
+        // Replays segment instead of mixed with the dashcam loop. Mirrors the
+        // server-side RecordingsIndex v3 classification.
+        private fun parseReplayRecording(file: File): RecordingFile? {
+            val match = REPLAY_FILENAME_PATTERN.matchEntire(file.name) ?: return null
+            val dateStr = "${match.groupValues[1]}_${match.groupValues[2]}"
+            val timestamp = try {
+                newDateFormat().parse(dateStr)?.time ?: file.lastModified()
+            } catch (e: Exception) {
+                file.lastModified()
+            }
+
+            return RecordingFile(
+                file = file,
+                cameraId = 0,  // Replays remux the mosaic pre-record ring
+                timestamp = timestamp,
+                durationMs = 0,
+                sizeBytes = file.length(),
+                type = RecordingType.REPLAY
             )
         }
         

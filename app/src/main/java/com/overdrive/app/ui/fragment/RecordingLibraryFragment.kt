@@ -255,7 +255,7 @@ class RecordingLibraryFragment : Fragment() {
     private var warmupRetryAttempt: Int = 0
 
     enum class RecordingFilter {
-        ALL, NORMAL, SENTRY, PROXIMITY
+        ALL, NORMAL, SENTRY, PROXIMITY, REPLAY
     }
 
     /**
@@ -871,6 +871,7 @@ class RecordingLibraryFragment : Fragment() {
                 }
                 RecordingFilter.SENTRY -> typeSet.add("sentry")
                 RecordingFilter.PROXIMITY -> typeSet.add("proximity")
+                RecordingFilter.REPLAY -> typeSet.add("replay")
                 RecordingFilter.ALL, null -> { /* leave empty = no narrowing */ }
             }
         }
@@ -1118,6 +1119,7 @@ class RecordingLibraryFragment : Fragment() {
                             acceptedTypes += RecordingFile.RecordingType.SENTRY
                             acceptedTypes += RecordingFile.RecordingType.PROXIMITY
                             acceptedTypes += RecordingFile.RecordingType.OEM_DASHCAM
+                            acceptedTypes += RecordingFile.RecordingType.REPLAY
                         }
                         RecordingFilter.NORMAL -> {
                             // NORMAL filter (parent: Dashcam segment) folds in OEM
@@ -1127,6 +1129,7 @@ class RecordingLibraryFragment : Fragment() {
                         }
                         RecordingFilter.SENTRY ->     acceptedTypes += RecordingFile.RecordingType.SENTRY
                         RecordingFilter.PROXIMITY ->  acceptedTypes += RecordingFile.RecordingType.PROXIMITY
+                        RecordingFilter.REPLAY ->     acceptedTypes += RecordingFile.RecordingType.REPLAY
                     }
                 }
                 include(currentFilter)

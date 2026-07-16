@@ -726,6 +726,7 @@ object UnifiedConfigManager {
         }
         if (!statusOverlay.has("cameraVisible")) statusOverlay.put("cameraVisible", true)
         if (!statusOverlay.has("tripVisible")) statusOverlay.put("tripVisible", true)
+        if (!statusOverlay.has("replayVisible")) statusOverlay.put("replayVisible", true)
         
         // BYD Cloud defaults
         val bydCloud = config.optJSONObject("bydCloud") ?: JSONObject().also {

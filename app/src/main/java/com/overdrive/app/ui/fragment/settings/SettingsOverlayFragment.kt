@@ -13,9 +13,10 @@ import org.json.JSONObject
 /**
  * Settings → Status overlay pane.
  *
- * Two switches that gate the segments of the floating status pill
+ * Three switches that gate the segments of the floating status pill
  * ([com.overdrive.app.overlay.StatusOverlayService]):
  *  - Camera/recording indicator (REC / PROX)
+ *  - Instant replay indicator (CLIP)
  *  - Trip indicator (TRIP)
  *
  * The flags live in [UnifiedConfigManager]'s `statusOverlay` section so
@@ -36,10 +37,12 @@ class SettingsOverlayFragment : Fragment() {
         super.onViewCreated(view, savedInstanceState)
 
         val swCamera = view.findViewById<SwitchMaterial>(R.id.swOverlayCamera) ?: return
+        val swReplay = view.findViewById<SwitchMaterial>(R.id.swOverlayReplay) ?: return
         val swTrip = view.findViewById<SwitchMaterial>(R.id.swOverlayTrip) ?: return
 
         val cfg = UnifiedConfigManager.getStatusOverlay()
         swCamera.isChecked = cfg.optBoolean("cameraVisible", true)
+        swReplay.isChecked = cfg.optBoolean("replayVisible", true)
         swTrip.isChecked = cfg.optBoolean("tripVisible", true)
 
         // Make the whole row clickable as well for forgiveness on a wide
@@ -48,11 +51,15 @@ class SettingsOverlayFragment : Fragment() {
         view.findViewById<View>(R.id.rowOverlayCamera).setOnClickListener {
             swCamera.isChecked = !swCamera.isChecked
         }
+        view.findViewById<View>(R.id.rowOverlayReplay).setOnClickListener {
+            swReplay.isChecked = !swReplay.isChecked
+        }
         view.findViewById<View>(R.id.rowOverlayTrip).setOnClickListener {
             swTrip.isChecked = !swTrip.isChecked
         }
 
         swCamera.setOnCheckedChangeListener { _, checked -> persist("cameraVisible", checked) }
+        swReplay.setOnCheckedChangeListener { _, checked -> persist("replayVisible", checked) }
         swTrip.setOnCheckedChangeListener { _, checked -> persist("tripVisible", checked) }
     }
 

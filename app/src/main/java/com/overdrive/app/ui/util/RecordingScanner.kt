@@ -286,10 +286,26 @@ object RecordingScanner {
             scanDirectoryDedup(dir, RecordingFile.RecordingType.OEM_DASHCAM, oemDashcam, seenOemDashcam)
         }
 
-        val allFiles = (normal + sentry + proximity + oemDashcam).sortedByDescending { it.timestamp }
+        // Instant replays (replay_*.mp4) also live in the recordings dirs —
+        // same physical location as cam_*, own type so the Replays segment
+        // can list them separately (mirrors the OEM dashcam arrangement).
+        // Seed `seen` with the names the NORMAL/OEM passes already claimed:
+        // parseFallbackRecording tags an UNKNOWN-prefixed .mp4 with whatever
+        // type the pass asked for, so without the seed a foo.mp4 in these
+        // shared dirs would be claimed a third time here. Well-formed
+        // replay_* names are prefix-rejected by those passes and so are
+        // never in the seed.
+        val replay = mutableListOf<RecordingFile>()
+        val seenReplay = (seenNormal + seenOemDashcam).toMutableSet()
+        for (dir in sm.allRecordingsDirs) {
+            scanDirectoryDedup(dir, RecordingFile.RecordingType.REPLAY, replay, seenReplay)
+        }
+
+        val allFiles = (normal + sentry + proximity + oemDashcam + replay).sortedByDescending { it.timestamp }
 
         Log.d(TAG, "Direct Scan: Found ${allFiles.size} total videos " +
-            "(normal=${normal.size}, sentry=${sentry.size}, proximity=${proximity.size}, oemDashcam=${oemDashcam.size})")
+            "(normal=${normal.size}, sentry=${sentry.size}, proximity=${proximity.size}, " +
+            "oemDashcam=${oemDashcam.size}, replay=${replay.size})")
 
         return allFiles
     }

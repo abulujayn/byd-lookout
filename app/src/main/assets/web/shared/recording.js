@@ -424,9 +424,15 @@ BYD.recording = {
 
                 // Prefer the structured byType block; fall back to legacy
                 // flat fields so a stale daemon still renders correctly.
+                // Instant replays are typed 'replay' since index schema v3
+                // but still live in the recordings dirs and count against
+                // recordingsLimitMb (StorageManager reaps cam_* + replay_*
+                // together), so they must stay inside this card's usage
+                // math. Old daemons have no replay fields → 0.
                 const counts = data.byType ? {
                     normal: data.byType.normal || {},
-                    proximity: data.byType.proximity || {}
+                    proximity: data.byType.proximity || {},
+                    replay: data.byType.replay || {}
                 } : {
                     normal: {
                         count: data.normalCount,
@@ -439,17 +445,23 @@ BYD.recording = {
                         bytes: data.proximitySize,
                         bytesFormatted: data.proximitySizeFormatted,
                         todayCount: data.proximityTodayCount
+                    },
+                    replay: {
+                        count: data.replayCount || 0,
+                        bytes: data.replaySize || 0,
+                        todayCount: data.replayTodayCount || 0
                     }
                 };
 
-                const normalBytesFormatted = counts.normal.bytesFormatted || data.normalSizeFormatted;
-                if (usedEl) usedEl.textContent = BYD.i18n.t('recording.storage_used', {size: normalBytesFormatted});
+                // Used = everything the recordings quota actually holds
+                // (cam_* + replay_*), matching the server-side reaper.
+                const usedBytes = (counts.normal.bytes || 0) + (counts.replay.bytes || 0);
+                if (usedEl) usedEl.textContent = BYD.i18n.t('recording.storage_used', {size: this.formatSize(usedBytes)});
 
                 const limitMb = this.config.recordingsLimitMb || 500;
                 if (limitEl) limitEl.textContent = BYD.i18n.t('recording.storage_limit_mb', {mb: limitMb});
 
                 // Calculate percentage
-                const usedBytes = counts.normal.bytes || 0;
                 const limitBytes = limitMb * 1024 * 1024;
                 const percent = Math.min(100, Math.round(usedBytes * 100 / limitBytes));
                 if (fillEl) fillEl.style.width = percent + '%';
@@ -457,8 +469,10 @@ BYD.recording = {
                 // Update Recordings Today count
                 const recTodayEl = document.getElementById('recToday');
                 if (recTodayEl) {
-                    // Include normal + proximity recordings for today
-                    const todayCount = (counts.normal.todayCount || 0) + (counts.proximity.todayCount || 0);
+                    // Include normal + proximity + replay recordings for today
+                    const todayCount = (counts.normal.todayCount || 0)
+                        + (counts.proximity.todayCount || 0)
+                        + (counts.replay.todayCount || 0);
                     recTodayEl.textContent = todayCount + ' →';
                 }
 

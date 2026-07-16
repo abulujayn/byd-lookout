@@ -771,6 +771,7 @@ public class RecordingsApiHandler {
                     case "normal": canon.add("normal"); break;
                     case "sentry": canon.add("sentry"); break;
                     case "proximity": canon.add("proximity"); break;
+                    case "replay": canon.add("replay"); break;
                     case "oemdashcam":
                     case "oem_dashcam": canon.add("oemDashcam"); break;
                     default: canon.add(t); // unknown — pass through (logs as zero matches)
@@ -967,6 +968,9 @@ public class RecordingsApiHandler {
         response.put("proximityCount", s.proximityCount);
         response.put("proximitySize", s.proximityBytes);
         response.put("proximitySizeFormatted", formatSize(s.proximityBytes));
+        response.put("replayCount", s.replayCount);
+        response.put("replaySize", s.replayBytes);
+        response.put("replaySizeFormatted", formatSize(s.replayBytes));
         response.put("totalCount", s.totalCount());
         response.put("totalSize", s.totalBytes());
         response.put("totalSizeFormatted", formatSize(s.totalBytes()));
@@ -977,6 +981,7 @@ public class RecordingsApiHandler {
         response.put("normalTodayCount", s.normalToday);
         response.put("sentryTodayCount", s.sentryToday);
         response.put("proximityTodayCount", s.proximityToday);
+        response.put("replayTodayCount", s.replayToday);
         response.put("totalTodayCount", s.totalToday());
 
         // Storage limits.
@@ -986,8 +991,12 @@ public class RecordingsApiHandler {
         response.put("surveillanceLimitMb", surLimitMb);
         response.put("recordingsLimitBytes", recLimitMb * 1024L * 1024L);
         response.put("surveillanceLimitBytes", surLimitMb * 1024L * 1024L);
+        // Replays live in the recordings dirs and are reaped under the same
+        // 'recordings' category as cam_*/dvr_* (StorageManager auxiliary
+        // prefixes), so they count toward the recordings limit here too.
         response.put("recordingsUsagePercent",
-                recLimitMb > 0 ? Math.round(s.normalBytes * 100.0 / (recLimitMb * 1024L * 1024L)) : 0);
+                recLimitMb > 0 ? Math.round((s.normalBytes + s.replayBytes) * 100.0
+                        / (recLimitMb * 1024L * 1024L)) : 0);
         response.put("surveillanceUsagePercent",
                 surLimitMb > 0 ? Math.round(s.sentryBytes * 100.0 / (surLimitMb * 1024L * 1024L)) : 0);
         response.put("recordingsPath", getRecordingsDir());
@@ -999,6 +1008,7 @@ public class RecordingsApiHandler {
         byType.put("normal", typeBlock(s.normalCount, s.normalBytes, s.normalToday));
         byType.put("sentry", typeBlock(s.sentryCount, s.sentryBytes, s.sentryToday));
         byType.put("proximity", typeBlock(s.proximityCount, s.proximityBytes, s.proximityToday));
+        byType.put("replay", typeBlock(s.replayCount, s.replayBytes, s.replayToday));
         response.put("byType", byType);
 
         // Index health surface — clients can detect a still-warming index.

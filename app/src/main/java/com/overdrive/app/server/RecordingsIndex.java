@@ -116,7 +116,12 @@ public final class RecordingsIndex {
     // existing on-disk DBs migrate forward without a wipe.
     //   v1 → v2: added the `storage` column (INTERNAL / SD_CARD / USB), so the
     //            recordings library can filter by physical volume.
-    private static final int SCHEMA_VERSION = 2;
+    //   v2 → v3: replay_* rows get their own type='replay' (previously folded
+    //            into 'normal') so the UIs can list instant replays in a
+    //            dedicated Replays tab instead of mixed with dashcam loops.
+    //            Migration is a data UPDATE, not a column change — see
+    //            createSchema().
+    private static final int SCHEMA_VERSION = 3;
 
     // Singleton — one index per daemon process.
     private static volatile RecordingsIndex INSTANCE;
@@ -354,6 +359,16 @@ public final class RecordingsIndex {
             // from the path when the column is NULL, so the UI never shows a
             // blank badge for a legacy row.
             stmt.execute("ALTER TABLE recordings ADD COLUMN IF NOT EXISTS storage VARCHAR(16)");
+
+            // v2 → v3 migration: retype existing replay_* rows from 'normal'
+            // to 'replay'. Idempotent (the predicate excludes already-migrated
+            // rows) and cheap at the ~1000-row scale, so it runs on every
+            // open like the ADD COLUMN above. ESCAPE pins the underscore as a
+            // literal — without it '_' is the single-char wildcard and a
+            // hypothetical 'replayX...' name would be swept in too.
+            stmt.execute("UPDATE recordings SET type = 'replay'"
+                    + " WHERE type <> 'replay'"
+                    + " AND filename LIKE 'replay\\_%' ESCAPE '\\'");
 
             // Indexes — covering most common access patterns.
             stmt.execute("CREATE INDEX IF NOT EXISTS idx_rec_ts ON recordings(ts_ms DESC)");
@@ -1151,6 +1166,8 @@ public final class RecordingsIndex {
                         s.sentryCount = c; s.sentryBytes = b; s.sentryToday = tc;
                     } else if ("proximity".equals(t)) {
                         s.proximityCount = c; s.proximityBytes = b; s.proximityToday = tc;
+                    } else if ("replay".equals(t)) {
+                        s.replayCount = c; s.replayBytes = b; s.replayToday = tc;
                     }
                 }
             }
@@ -1368,7 +1385,7 @@ public final class RecordingsIndex {
                 r.cameraId = camStr != null ? Integer.parseInt(camStr) : 0;
                 r.tsMs = FMT_FILENAME.get().parse(cam.group(2) + "_" + cam.group(3)).getTime();
             } else if (replay.matches()) {
-                r.type = "normal";
+                r.type = "replay";
                 r.cameraId = 0;
                 r.tsMs = FMT_FILENAME.get().parse(
                         replay.group(1) + "_" + replay.group(2)).getTime();
@@ -1735,8 +1752,9 @@ public final class RecordingsIndex {
         public long normalCount, normalBytes, normalToday;
         public long sentryCount, sentryBytes, sentryToday;
         public long proximityCount, proximityBytes, proximityToday;
-        public long totalCount() { return normalCount + sentryCount + proximityCount; }
-        public long totalBytes() { return normalBytes + sentryBytes + proximityBytes; }
-        public long totalToday() { return normalToday + sentryToday + proximityToday; }
+        public long replayCount, replayBytes, replayToday;
+        public long totalCount() { return normalCount + sentryCount + proximityCount + replayCount; }
+        public long totalBytes() { return normalBytes + sentryBytes + proximityBytes + replayBytes; }
+        public long totalToday() { return normalToday + sentryToday + proximityToday + replayToday; }
     }
 }

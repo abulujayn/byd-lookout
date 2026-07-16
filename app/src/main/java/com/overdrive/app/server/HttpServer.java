@@ -1258,7 +1258,19 @@ public class HttpServer {
         } catch (Exception e) {
             // Recording status not available
         }
-        
+
+        // Instant-replay lifecycle (for the status overlay's clip segment).
+        // Poll catch-up channel for the daemon's REPLAY_STATE broadcast:
+        // {configured, state: idle|recording|saved|failed, stateAgeMs}.
+        // Cheap by contract (see ManualClipService.statusJson) and absent on
+        // failure so older clients see no shape change.
+        try {
+            status.put("replay",
+                    com.overdrive.app.recording.ManualClipService.getInstance().statusJson());
+        } catch (Exception e) {
+            // Replay status not available
+        }
+
         // Trip analytics status (for status overlay)
         try {
             JSONObject tripStatus = new JSONObject();

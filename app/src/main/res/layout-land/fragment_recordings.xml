@@ -12,7 +12,7 @@
     Row D: SEVERITY chips (left half) · PLACE chips (right half) · Reset.
 
   IDs preserved (consumed by RecordingsFragment.kt):
-    segmentedSource, segmentDashcam, segmentSurveillance,
+    segmentedSource, segmentDashcam, segmentReplays, segmentSurveillance,
     btnRecordingsSettings, libraryContainer, previewContainer, previewPlaceholder,
     btnPrevDay, btnNextDay, cardDateJump, tvSelectedDate, tvDayClipCount,
     chipActorAny, chipActorPerson, chipActorVehicle, chipActorBike, chipActorAnimal,
@@ -192,6 +192,20 @@
                     android:text="@string/recordings_segment_dashcam"
                     android:textAllCaps="false"
                     app:icon="@drawable/ic_directions_car"
+                    app:iconSize="16dp"
+                    app:iconGravity="textStart"
+                    app:iconPadding="6dp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/segmentReplays"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:text="@string/recordings_segment_replays"
+                    android:textAllCaps="false"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    app:icon="@drawable/ic_instant_replay"
                     app:iconSize="16dp"
                     app:iconGravity="textStart"
                     app:iconPadding="6dp" />

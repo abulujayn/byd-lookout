@@ -2,13 +2,15 @@
 <!--
   Settings → Status overlay pane.
 
-  Two switch rows in a single MaterialCardView, each gating a segment of
+  Three switch rows in a single MaterialCardView, each gating a segment of
   the floating status pill:
     1. Camera / recording indicator (REC / PROX)
-    2. Trip indicator (TRIP)
+    2. Instant replay indicator (CLIP)
+    3. Trip indicator (TRIP)
 
   IDs the Kotlin driver (SettingsOverlayFragment) reads:
     rowOverlayCamera, swOverlayCamera
+    rowOverlayReplay, swOverlayReplay
     rowOverlayTrip,   swOverlayTrip
 -->
 <androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
@@ -101,6 +103,63 @@
 
                     <com.google.android.material.switchmaterial.SwitchMaterial
                         android:id="@+id/swOverlayCamera"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:clickable="true"
+                        android:focusable="true" />
+                </LinearLayout>
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginHorizontal="@dimen/card_padding_standard"
+                    android:background="?attr/colorOutlineVariant"
+                    android:alpha="0.5" />
+
+                <!-- Instant replay indicator -->
+                <LinearLayout
+                    android:id="@+id/rowOverlayReplay"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="?attr/selectableItemBackground"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:padding="@dimen/card_padding_standard">
+
+                    <ImageView
+                        android:layout_width="@dimen/card_icon_standard"
+                        android:layout_height="@dimen/card_icon_standard"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_overlay_replay_active"
+                        app:tint="?attr/colorPrimary" />
+
+                    <LinearLayout
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="16dp"
+                        android:layout_weight="1"
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="@string/settings_overlay_replay_title"
+                            android:textAppearance="@style/TextAppearance.Material3.TitleMedium"
+                            android:textColor="?attr/colorOnSurface" />
+
+                        <TextView
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="2dp"
+                            android:text="@string/settings_overlay_replay_subtitle"
+                            android:textAppearance="@style/TextAppearance.Material3.BodySmall"
+                            android:textColor="?attr/colorOnSurfaceVariant" />
+                    </LinearLayout>
+
+                    <com.google.android.material.switchmaterial.SwitchMaterial
+                        android:id="@+id/swOverlayReplay"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:clickable="true"

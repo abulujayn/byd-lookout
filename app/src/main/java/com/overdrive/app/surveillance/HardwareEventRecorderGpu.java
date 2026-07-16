@@ -237,6 +237,13 @@ public class HardwareEventRecorderGpu {
     // do not update it.
     private volatile long lastEncodedFrameMs = 0L;
 
+    // Monotonic sibling of lastEncodedFrameMs (SystemClock.elapsedRealtime).
+    // ManualClipService's encoder-freshness gate compares against this one so
+    // a GPS/NTP wall-clock step mid post-roll can't make a healthy encoder
+    // read as stale and cancel an accepted replay. The wall-clock field stays
+    // untouched for the RMM wedge ticker's existing consumers.
+    private volatile long lastEncodedFrameElapsedMs = 0L;
+
     // FIX (false-GREEN: "REC/MIC green but no video file"): timestamp of the
     // last VIDEO sample actually written to the muxer (disk). Distinct from
     // lastEncodedFrameMs, which is stamped on every coded frame dequeued from
@@ -311,6 +318,12 @@ public class HardwareEventRecorderGpu {
     // two-second GOP beyond the user-visible duration so exact 30/60-second
     // requests do not intermittently start at the next keyframe and fail.
     private static final int MANUAL_CLIP_GOP_HEADROOM_SECONDS = 2;
+
+    // Floor for a start-truncated manual-clip export (see the
+    // allowStartTruncation overload of exportManualClip): if adopting the
+    // first decodable keyframe would leave less than this before the
+    // requested end, refuse instead of emitting a useless sliver.
+    private static final long MANUAL_CLIP_MIN_TRUNCATED_SPAN_US = 1_000_000L;
     private volatile H264ByteRingBuffer preRecordBuffer;  // Reference to shared buffer
 
     // Per-instance pre-record arena. When {@code useInstancePreRecordBuffer}
@@ -3239,6 +3252,15 @@ public class HardwareEventRecorderGpu {
     }
 
     /**
+     * Monotonic (elapsedRealtime) variant of {@link #getLastEncodedFrameMs()}
+     * for freshness checks that must survive wall-clock steps. 0 = no coded
+     * frame dequeued yet.
+     */
+    public long getLastEncodedFrameElapsedMs() {
+        return lastEncodedFrameElapsedMs;
+    }
+
+    /**
      * @return wall-clock ms (System.currentTimeMillis) of the last VIDEO
      *         sample actually written to the muxer (disk). Seeded at segment
      *         open/rotation. 0 = never written yet (no muxer has opened).
@@ -3334,6 +3356,23 @@ public class HardwareEventRecorderGpu {
 
     public boolean exportManualClip(ManualClipOutputProvider outputProvider,
                                     long startPtsUs, long endPtsUs) {
+        return exportManualClip(outputProvider, startPtsUs, endPtsUs, false);
+    }
+
+    /**
+     * @param allowStartTruncation the caller already truncated the requested
+     *        start to the ring's oldest PACKET ("save whatever is buffered").
+     *        After a PTS-discontinuity wipe that oldest packet is usually a
+     *        P-frame, so the decodable start (next IDR) can sit up to one GOP
+     *        later — with this flag the export adopts the cursor's decodable
+     *        start instead of refusing on the start-side coverage check. The
+     *        end-side check still applies, and a clip whose decodable region
+     *        would shrink below {@link #MANUAL_CLIP_MIN_TRUNCATED_SPAN_US} is
+     *        still refused rather than emitted as a sliver.
+     */
+    public boolean exportManualClip(ManualClipOutputProvider outputProvider,
+                                    long startPtsUs, long endPtsUs,
+                                    boolean allowStartTruncation) {
         if (outputProvider == null || startPtsUs > endPtsUs) return false;
 
         final H264ByteRingBuffer.Cursor cursor;
@@ -3375,8 +3414,22 @@ public class HardwareEventRecorderGpu {
             // on an encoded sample.
             final long coverageToleranceUs = Math.max(250_000L,
                     fps > 0 ? (3_000_000L / fps) : 250_000L);
-            if (cursor.getStartPtsUs() > startPtsUs + coverageToleranceUs
-                    || cursor.getEndPtsUs() < endPtsUs - coverageToleranceUs) {
+            boolean startCovered =
+                    cursor.getStartPtsUs() <= startPtsUs + coverageToleranceUs;
+            if (!startCovered && allowStartTruncation) {
+                // Truncated request: the caller pinned its start to the oldest
+                // ring packet, which may be undecodable (P-frame head after a
+                // discontinuity wipe). Accept the cursor's decodable start as
+                // the effective start as long as a meaningful window remains.
+                startCovered = cursor.getStartPtsUs()
+                        <= endPtsUs - MANUAL_CLIP_MIN_TRUNCATED_SPAN_US;
+                if (startCovered) {
+                    logger.info("Manual clip start truncated to first decodable"
+                            + " keyframe: " + cursor.getStartPtsUs()
+                            + " (requested " + startPtsUs + ")");
+                }
+            }
+            if (!startCovered || cursor.getEndPtsUs() < endPtsUs - coverageToleranceUs) {
                 logger.warn("Manual clip refused: retained range does not cover request"
                         + " (have=" + cursor.getStartPtsUs() + ".." + cursor.getEndPtsUs()
                         + ", need=" + startPtsUs + ".." + endPtsUs + ")");
@@ -4397,6 +4450,7 @@ public class HardwareEventRecorderGpu {
                     // wedge ticker. Real coded frames only (CODEC_CONFIG
                     // already filtered above).
                     lastEncodedFrameMs = System.currentTimeMillis();
+                    lastEncodedFrameElapsedMs = android.os.SystemClock.elapsedRealtime();
                     // ALWAYS add to circular buffer (for pre-record) - unless stream-only mode
                     if (usePreRecordBuffer && preRecordBuffer != null) {
                         preRecordBuffer.add(outputBuffer, bufferInfo);

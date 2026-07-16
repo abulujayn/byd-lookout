@@ -42,6 +42,8 @@
     <color name="status_success">#5BD382</color>
     <color name="status_warning">#FFB870</color>
     <color name="status_danger">#FFB4AB</color>
+    <!-- Informational/confirmation blue — the overlay's "replay saved" hold. -->
+    <color name="status_info">#A8C7FA</color>
     <color name="status_running">@color/status_success</color>
     <color name="status_stopped">@color/text_muted</color>
     <color name="status_error">@color/status_danger</color>

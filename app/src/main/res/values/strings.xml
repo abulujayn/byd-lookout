@@ -58,6 +58,7 @@
     <string name="cd_recording_status">Recording status</string>
     <string name="cd_trip_tracking_status">Trip tracking status</string>
     <string name="cd_mic_status">Microphone capture status</string>
+    <string name="cd_replay_status">Instant replay status</string>
     <string name="cd_video_thumbnail">Video thumbnail</string>
     <string name="cd_play">Play</string>
     <string name="cd_back">Back</string>
@@ -86,6 +87,7 @@
     <string name="overlay_rec_inactive_label">REC</string>
     <string name="overlay_trip_inactive_label">TRIP</string>
     <string name="overlay_mic_inactive_label">MIC</string>
+    <string name="overlay_replay_label" translatable="false">CLIP</string>
     <!-- Quick-action chips revealed by tapping the REC pill: switch
          recording mode without opening the app. Short labels read fine
          cross-locale (matches existing REC/MIC/TRIP precedent), so
@@ -477,6 +479,7 @@
     <string name="recording_lib_type_event">EVENT</string>
     <string name="recording_lib_type_proximity">PROX</string>
     <string name="recording_lib_type_oem">OEM</string>
+    <string name="recording_lib_type_replay">REPLAY</string>
     <!-- Per-clip storage tag — where the clip actually landed. Surfaces the
          silent SD→internal fallback (SD bridged behind the USB power rail). -->
     <string name="recording_lib_storage_sd">SD</string>
@@ -871,6 +874,8 @@
     <string name="settings_overlay_camera_subtitle">Show the REC / PROX badge while recording is active.</string>
     <string name="settings_overlay_trip_title">Trip indicator</string>
     <string name="settings_overlay_trip_subtitle">Show the TRIP badge while trip detection is running.</string>
+    <string name="settings_overlay_replay_title">Instant replay indicator</string>
+    <string name="settings_overlay_replay_subtitle">Show the CLIP badge: green while a replay records, blue for 5s once saved, red when it fails. Appears only when a replay binding or automation exists.</string>
     <!-- Was "About & updates" — Check for Updates row was removed from
          the About page, so the menu / rail label is now just "About". -->
     <string name="settings_section_about">About</string>
@@ -958,12 +963,14 @@
     <!-- Recordings page (header + segmented control + page actions) -->
     <string name="recordings_title">Recordings</string>
     <string name="recordings_segment_dashcam">Dashcam</string>
+    <string name="recordings_segment_replays">Replays</string>
     <string name="recordings_segment_surveillance">Surveillance</string>
     <string name="recordings_action_settings">Settings</string>
     <!-- Hero subtitle: "%1$d today · %2$d total · %3$s" where %3$s is a pre-formatted size like "42 GB". -->
     <string name="recordings_summary_format">%1$d today · %2$d total · %3$s</string>
     <!-- Per-segment label with running count, e.g. "Dashcam · 118". -->
     <string name="recordings_segment_dashcam_count">Dashcam · %d</string>
+    <string name="recordings_segment_replays_count">Replays · %d</string>
     <string name="recordings_segment_surveillance_count">Surveillance · %d</string>
     <!-- Layout-time placeholder for the counts subtitle before the scan completes. -->
     <string name="recordings_summary_pending">—</string>

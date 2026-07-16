@@ -177,7 +177,7 @@ class RecordingsFragment : Fragment() {
      */
     private val pendingPosts = mutableListOf<Runnable>()
 
-    enum class Source { DASHCAM, SURVEILLANCE }
+    enum class Source { DASHCAM, REPLAYS, SURVEILLANCE }
 
     private val isLandscape: Boolean
         get() = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -225,6 +225,7 @@ class RecordingsFragment : Fragment() {
                 // only, so proximity would land on an empty list there).
                 "sentry" -> currentSource = Source.SURVEILLANCE
                 "proximity", "normal" -> currentSource = Source.DASHCAM
+                "replay" -> currentSource = Source.REPLAYS
             }
         }
 
@@ -421,6 +422,15 @@ class RecordingsFragment : Fragment() {
                 // Dashcam segment hides the actor/severity rows, so push
                 // empty sets — otherwise stale state from a previous
                 // Surveillance session would silently filter Dashcam clips.
+                actors = emptySet()
+                severities = emptySet()
+            }
+            Source.REPLAYS -> {
+                // Instant replays only. No type chips (single type), and no
+                // actor/severity narrowing — replay clips are manual exports
+                // with no surveillance classification sidecar.
+                source = RecordingLibraryFragment.RecordingFilter.REPLAY
+                extra = null
                 actors = emptySet()
                 severities = emptySet()
             }
@@ -629,6 +639,7 @@ class RecordingsFragment : Fragment() {
         val group = view.findViewById<MaterialButtonToggleGroup>(R.id.segmentedSource)
         when (currentSource) {
             Source.DASHCAM -> group.check(R.id.segmentDashcam)
+            Source.REPLAYS -> group.check(R.id.segmentReplays)
             Source.SURVEILLANCE -> group.check(R.id.segmentSurveillance)
         }
         applyChipRowVisibility(view)
@@ -636,6 +647,7 @@ class RecordingsFragment : Fragment() {
             if (!isChecked) return@addOnButtonCheckedListener
             currentSource = when (checkedId) {
                 R.id.segmentSurveillance -> Source.SURVEILLANCE
+                R.id.segmentReplays -> Source.REPLAYS
                 else -> Source.DASHCAM
             }
             applyChipRowVisibility(view)
@@ -666,18 +678,24 @@ class RecordingsFragment : Fragment() {
      */
     private fun applyChipRowVisibility(view: View) {
         val isDashcam = currentSource == Source.DASHCAM
+        // Replays: single type, no actor/severity sidecars — every chip row
+        // is meaningless, so hide all three (place/storage/date still apply
+        // and live outside these rows).
+        val isReplays = currentSource == Source.REPLAYS
         view.findViewById<View>(R.id.rowTypeFilter)?.visibility =
             if (isDashcam) View.VISIBLE else View.GONE
         view.findViewById<View>(R.id.rowWhatFilter)?.visibility =
-            if (isDashcam) View.GONE else View.VISIBLE
+            if (isDashcam || isReplays) View.GONE else View.VISIBLE
         view.findViewById<View>(R.id.rowSeverityFilter)?.visibility =
-            if (isDashcam) View.GONE else View.VISIBLE
+            if (isDashcam || isReplays) View.GONE else View.VISIBLE
     }
 
     private fun setupSettingsAction(view: View) {
         view.findViewById<MaterialButton>(R.id.btnRecordingsSettings)?.setOnClickListener {
             val target = when (currentSource) {
-                Source.DASHCAM -> R.id.recordingSettingsWebFragment
+                // Replays are produced by the dashcam encoder's pre-record
+                // ring; their knobs live on the same recording settings page.
+                Source.DASHCAM, Source.REPLAYS -> R.id.recordingSettingsWebFragment
                 Source.SURVEILLANCE -> R.id.surveillanceSettingsWebFragment
             }
             findNavController().navigate(target)
@@ -912,6 +930,7 @@ class RecordingsFragment : Fragment() {
         val storageActive = storageFilter.isNotEmpty()
         val chipsActive = storageActive || when (currentSource) {
             Source.DASHCAM -> dashcamTypes.isNotEmpty() || placeFilter.isNotEmpty() || searchActive
+            Source.REPLAYS -> placeFilter.isNotEmpty() || searchActive
             Source.SURVEILLANCE -> actorClassFilter.isNotEmpty()
                 || severityFilter.isNotEmpty()
                 || placeFilter.isNotEmpty()
@@ -1084,20 +1103,24 @@ class RecordingsFragment : Fragment() {
                         it.type == RecordingFile.RecordingType.PROXIMITY ||
                         it.type == RecordingFile.RecordingType.OEM_DASHCAM
                 }
+                val replays = all.filter { it.type == RecordingFile.RecordingType.REPLAY }
                 val surveillance = all.filter { it.type == RecordingFile.RecordingType.SENTRY }
                 val dashcamStats = aggregate(dashcam, today0)
+                val replayStats = aggregate(replays, today0)
                 val surveillanceStats = aggregate(surveillance, today0)
-                val totalCount = dashcamStats.total + surveillanceStats.total
-                val totalToday = dashcamStats.today + surveillanceStats.today
-                val totalBytes = dashcamStats.bytes + surveillanceStats.bytes
+                val totalCount = dashcamStats.total + replayStats.total + surveillanceStats.total
+                val totalToday = dashcamStats.today + replayStats.today + surveillanceStats.today
+                val totalBytes = dashcamStats.bytes + replayStats.bytes + surveillanceStats.bytes
                 val segmentClips = when (sourceAtDispatch) {
                     Source.DASHCAM -> dashcam
+                    Source.REPLAYS -> replays
                     Source.SURVEILLANCE -> surveillance
                 }
                 val sortedPlaces = derivePlaceLabelsFromScan(segmentClips)
                 postCountsToUi(
                     viewRef = viewRef,
                     dashcamCount = dashcamStats.total.toLong(),
+                    replaysCount = replayStats.total.toLong(),
                     surveillanceCount = surveillanceStats.total.toLong(),
                     totalCount = totalCount.toLong(),
                     totalToday = totalToday.toLong(),
@@ -1131,11 +1154,13 @@ class RecordingsFragment : Fragment() {
             // type=normal to include OEM clips so they're already inside
             // normalCount. Sum normal + proximity for the segment badge.
             val dashcamCount = stats.normalCount + stats.proximityCount
+            val replaysCount = stats.replayCount
             val surveillanceCount = stats.sentryCount
 
             postCountsToUi(
                 viewRef = viewRef,
                 dashcamCount = dashcamCount,
+                replaysCount = replaysCount,
                 surveillanceCount = surveillanceCount,
                 totalCount = stats.totalCount,
                 totalToday = stats.totalToday,
@@ -1154,6 +1179,7 @@ class RecordingsFragment : Fragment() {
      */
     private fun Source.toApiType(): String = when (this) {
         Source.DASHCAM -> "normal"
+        Source.REPLAYS -> "replay"
         Source.SURVEILLANCE -> "sentry"
     }
 
@@ -1166,6 +1192,7 @@ class RecordingsFragment : Fragment() {
     private fun postCountsToUi(
         viewRef: WeakReference<View?>,
         dashcamCount: Long,
+        replaysCount: Long,
         surveillanceCount: Long,
         totalCount: Long,
         totalToday: Long,
@@ -1201,6 +1228,11 @@ class RecordingsFragment : Fragment() {
                     activeCtx.getString(
                         R.string.recordings_segment_dashcam_count,
                         dashcamCount.toInt()
+                    )
+                v.findViewById<MaterialButton>(R.id.segmentReplays)?.text =
+                    activeCtx.getString(
+                        R.string.recordings_segment_replays_count,
+                        replaysCount.toInt()
                     )
                 v.findViewById<MaterialButton>(R.id.segmentSurveillance)?.text =
                     activeCtx.getString(

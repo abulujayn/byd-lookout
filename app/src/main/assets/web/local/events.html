@@ -429,6 +429,7 @@
         .storage-dot.normal { background: var(--brand-secondary); }
         .storage-dot.sentry { background: var(--danger); }
         .storage-dot.proximity { background: #fb923c; }
+        .storage-dot.replay { background: #3b82f6; }
         
         /* Recordings List Panel */
         .recordings-panel {
@@ -679,6 +680,11 @@
         .recording-badge.proximity {
             background: rgba(251, 146, 60, 0.2);
             color: #fb923c;
+        }
+
+        .recording-badge.replay {
+            background: rgba(59, 130, 246, 0.2);
+            color: #3b82f6;
         }
 
         /* v3 severity badges + actor summary (item 6) */
@@ -1944,6 +1950,7 @@
                         <button class="filter-tab" data-filter="sentry" onclick="BYD.events.setFilter('sentry')" data-i18n="events.badge_sentry">Sentry</button>
                         <button class="filter-tab" data-filter="normal" onclick="BYD.events.setFilter('normal')" data-i18n="events.badge_normal">Normal</button>
                         <button class="filter-tab" data-filter="proximity" onclick="BYD.events.setFilter('proximity')" data-i18n="events.badge_proximity">Proximity</button>
+                        <button class="filter-tab" data-filter="replay" onclick="BYD.events.setFilter('replay')" data-i18n="events.tab_replays">Replays</button>
                     </div>
 
                     <div class="storage-stats" id="storageStats">
@@ -1965,6 +1972,10 @@
                             <div class="storage-item">
                                 <span class="storage-dot proximity"></span>
                                 <span id="proximityCount">0</span>
+                            </div>
+                            <div class="storage-item">
+                                <span class="storage-dot replay"></span>
+                                <span id="replayCount">0</span>
                             </div>
                         </div>
                     </div>

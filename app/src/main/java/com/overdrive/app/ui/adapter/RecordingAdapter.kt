@@ -128,6 +128,8 @@ class RecordingAdapter(
                         ctx.getString(R.string.recording_lib_type_proximity)
                     RecordingFile.RecordingType.OEM_DASHCAM ->
                         ctx.getString(R.string.recording_lib_type_oem)
+                    RecordingFile.RecordingType.REPLAY ->
+                        ctx.getString(R.string.recording_lib_type_replay)
                 }
                 badge.visibility = View.VISIBLE
             }
