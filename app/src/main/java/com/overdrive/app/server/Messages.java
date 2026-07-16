@@ -7,6 +7,7 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.text.MessageFormat;
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 /**
@@ -34,7 +35,7 @@ public final class Messages {
         if (raw == null) return key; // dev-visible miss
         if (args == null || args.length == 0) return raw;
         try {
-            return MessageFormat.format(raw, args);
+            return new MessageFormat(raw, Locale.forLanguageTag(lang)).format(args);
         } catch (Exception e) {
             return raw;
         }

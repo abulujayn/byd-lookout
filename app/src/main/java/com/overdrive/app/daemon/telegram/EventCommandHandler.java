@@ -1,8 +1,10 @@
 package com.overdrive.app.daemon.telegram;
 
+import com.overdrive.app.server.LocaleManager;
 import com.overdrive.app.storage.StorageManager;
 
 import java.io.File;
+import java.text.NumberFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Calendar;
@@ -49,7 +51,7 @@ public class EventCommandHandler implements TelegramCommandHandler {
     
     @Override
     public void handle(long chatId, String[] args, CommandContext ctx) {
-        String cmd = args[0].toLowerCase();
+        String cmd = args[0].toLowerCase(Locale.ROOT);
         
         switch (cmd) {
             case "/events":
@@ -61,7 +63,7 @@ public class EventCommandHandler implements TelegramCommandHandler {
                         if (hours < 1) hours = 1;
                         if (hours > 168) hours = 168; // Max 7 days
                     } catch (NumberFormatException e) {
-                        ctx.sendMessage(chatId, "⚠️ Invalid hours. Usage: /events [hours] [page]\nExample: /events 12 2");
+                        ctx.sendMessage(chatId, ctx.tr("events.invalid_hours"));
                         return;
                     }
                 }
@@ -78,7 +80,7 @@ public class EventCommandHandler implements TelegramCommandHandler {
                 
             case "/download":
                 if (args.length < 2) {
-                    ctx.sendMessage(chatId, "⚠️ Usage: /download <filename>\nExample: /download event_20260113_143022.mp4");
+                    ctx.sendMessage(chatId, ctx.tr("events.download_usage"));
                     return;
                 }
                 handleDownload(chatId, args[1], ctx);
@@ -92,7 +94,7 @@ public class EventCommandHandler implements TelegramCommandHandler {
         File eventDir = new File(getEventDir());
         
         if (!eventDir.exists() || !eventDir.isDirectory()) {
-            ctx.sendMessage(chatId, "📁 No events directory found");
+            ctx.sendMessage(chatId, ctx.tr("events.directory_missing"));
             return;
         }
         
@@ -100,7 +102,7 @@ public class EventCommandHandler implements TelegramCommandHandler {
             name.startsWith("event_") && name.endsWith(".mp4"));
         
         if (files == null || files.length == 0) {
-            ctx.sendMessage(chatId, "📭 No event recordings found");
+            ctx.sendMessage(chatId, ctx.tr("events.none_found"));
             return;
         }
         
@@ -115,7 +117,7 @@ public class EventCommandHandler implements TelegramCommandHandler {
         }
         
         if (recentFiles.isEmpty()) {
-            ctx.sendMessage(chatId, "📭 No events in the last " + hours + " hours");
+            ctx.sendMessage(chatId, ctx.tr("events.none_recent", formatInteger(hours)));
             return;
         }
         
@@ -131,21 +133,21 @@ public class EventCommandHandler implements TelegramCommandHandler {
         int endIdx = Math.min(startIdx + EVENTS_PER_PAGE, totalEvents);
         
         // Build header
-        StringBuilder sb = new StringBuilder();
-        sb.append("📹 *Events* (").append(hours).append("h)");
-        if (totalPages > 1) {
-            sb.append(" ").append(page).append("/").append(totalPages);
-        }
+        StringBuilder sb = new StringBuilder(totalPages > 1
+                ? ctx.tr("events.header_paged",
+                        formatInteger(hours), formatInteger(page), formatInteger(totalPages))
+                : ctx.tr("events.header", formatInteger(hours)));
         sb.append("\n\n");
         
         // Build buttons - one row per event with download button
         List<String[][]> buttonRows = new ArrayList<>();
-        SimpleDateFormat sdf = new SimpleDateFormat("MMM dd HH:mm", Locale.US);
+        Locale locale = displayLocale();
+        SimpleDateFormat sdf = new SimpleDateFormat(eventListDatePattern(locale), locale);
         
         for (int i = startIdx; i < endIdx; i++) {
             File f = recentFiles.get(i);
             String dateStr = sdf.format(new Date(f.lastModified()));
-            String sizeStr = formatFileSize(f.length());
+            String sizeStr = formatFileSize(f.length(), ctx);
             
             // Status indicator
             String status;
@@ -158,7 +160,7 @@ public class EventCommandHandler implements TelegramCommandHandler {
             }
             
             // Button text: "📥 Jan 13 14:30 (7.1MB)"
-            String buttonText = status + " " + dateStr + " (" + sizeStr + ")";
+            String buttonText = ctx.tr("events.download_button", status, dateStr, sizeStr);
             String callbackData = "dl:" + f.getName();
             
             buttonRows.add(new String[][]{{buttonText, callbackData}});
@@ -168,17 +170,17 @@ public class EventCommandHandler implements TelegramCommandHandler {
         if (totalPages > 1) {
             List<String[]> navButtons = new ArrayList<>();
             if (page > 1) {
-                navButtons.add(new String[]{"◀️ Prev", "ev:" + hours + ":" + (page - 1)});
+                navButtons.add(new String[]{ctx.tr("events.previous_button"), "ev:" + hours + ":" + (page - 1)});
             }
             if (page < totalPages) {
-                navButtons.add(new String[]{"Next ▶️", "ev:" + hours + ":" + (page + 1)});
+                navButtons.add(new String[]{ctx.tr("events.next_button"), "ev:" + hours + ":" + (page + 1)});
             }
             if (!navButtons.isEmpty()) {
                 buttonRows.add(navButtons.toArray(new String[0][]));
             }
         }
         
-        sb.append("⏺️ Recording  ⚠️ >50MB  📥 Ready");
+        sb.append(ctx.tr("events.legend"));
         
         // Convert to array
         String[][][] buttons = buttonRows.toArray(new String[0][][]);
@@ -192,24 +194,23 @@ public class EventCommandHandler implements TelegramCommandHandler {
         
         // Ensure it's an event file
         if (!filename.startsWith("event_") || !filename.endsWith(".mp4")) {
-            ctx.sendMessage(chatId, "⚠️ Invalid filename. Must be event_*.mp4");
+            ctx.sendMessage(chatId, ctx.tr("events.invalid_filename"));
             return;
         }
         
         File videoFile = new File(getEventDir(), filename);
         
         if (!videoFile.exists()) {
-            ctx.sendMessage(chatId, "❌ File not found: " + filename);
+            ctx.sendMessage(chatId, ctx.tr("events.file_not_found", filename));
             return;
         }
         
         // Check if file is still being written (recording in progress)
         if (isFileStillWriting(videoFile)) {
-            ctx.sendMessage(chatId, 
-                "⏳ *Recording in progress*\n\n" +
-                "File: `" + filename + "`\n" +
-                "Current size: " + formatFileSize(videoFile.length()) + "\n\n" +
-                "Please wait 10-15 seconds and try again.");
+            ctx.sendMessage(chatId, ctx.tr(
+                    "events.recording_in_progress",
+                    filename,
+                    formatFileSize(videoFile.length(), ctx)));
             return;
         }
         
@@ -217,25 +218,21 @@ public class EventCommandHandler implements TelegramCommandHandler {
         
         // Check file size
         if (fileSize > MAX_VIDEO_SIZE_BYTES) {
-            String sizeStr = formatFileSize(fileSize);
-            ctx.sendMessage(chatId, 
-                "❌ *File too large*\n\n" +
-                "File: `" + filename + "`\n" +
-                "Size: " + sizeStr + "\n" +
-                "Limit: 50MB");
+            String sizeStr = formatFileSize(fileSize, ctx);
+            ctx.sendMessage(chatId, ctx.tr("events.file_too_large", filename, sizeStr));
             return;
         }
         
         // Send uploading message
-        ctx.sendMessage(chatId, "📤 Uploading " + filename + " (" + formatFileSize(fileSize) + ")...");
+        ctx.sendMessage(chatId, ctx.tr("events.uploading", filename, formatFileSize(fileSize, ctx)));
         
         // Extract timestamp from filename for caption
-        String caption = "📹 " + extractEventInfo(filename);
+        String caption = ctx.tr("events.video_caption", extractEventInfo(filename));
         
         boolean success = ctx.sendVideo(chatId, videoFile.getAbsolutePath(), caption);
         
         if (!success) {
-            ctx.sendMessage(chatId, "❌ Failed to upload video. Try again later.");
+            ctx.sendMessage(chatId, ctx.tr("events.upload_failed"));
         }
     }
     
@@ -283,10 +280,11 @@ public class EventCommandHandler implements TelegramCommandHandler {
                 int min = Integer.parseInt(time.substring(2, 4));
                 int sec = Integer.parseInt(time.substring(4, 6));
                 
-                Calendar cal = Calendar.getInstance();
+                Locale locale = displayLocale();
+                Calendar cal = Calendar.getInstance(locale);
                 cal.set(year, month - 1, day, hour, min, sec);
                 
-                SimpleDateFormat sdf = new SimpleDateFormat("MMM dd, HH:mm:ss", Locale.US);
+                SimpleDateFormat sdf = new SimpleDateFormat(eventCaptionDatePattern(locale), locale);
                 return sdf.format(cal.getTime());
             }
         } catch (Exception e) {
@@ -295,9 +293,43 @@ public class EventCommandHandler implements TelegramCommandHandler {
         return filename;
     }
     
-    private String formatFileSize(long bytes) {
-        if (bytes < 1024) return bytes + " B";
-        if (bytes < 1024 * 1024) return String.format("%.1f KB", bytes / 1024.0);
-        return String.format("%.1f MB", bytes / (1024.0 * 1024.0));
+    private String formatFileSize(long bytes, CommandContext ctx) {
+        Locale locale = displayLocale();
+        if (bytes < 1024) {
+            return ctx.tr("events.size_bytes", NumberFormat.getIntegerInstance(locale).format(bytes));
+        }
+
+        NumberFormat decimal = NumberFormat.getNumberInstance(locale);
+        decimal.setGroupingUsed(false);
+        decimal.setMinimumFractionDigits(1);
+        decimal.setMaximumFractionDigits(1);
+        if (bytes < 1024 * 1024) {
+            return ctx.tr("events.size_kb", decimal.format(bytes / 1024.0));
+        }
+        return ctx.tr("events.size_mb", decimal.format(bytes / (1024.0 * 1024.0)));
+    }
+
+    private static String formatInteger(long value) {
+        return NumberFormat.getIntegerInstance(displayLocale()).format(value);
+    }
+
+    private static Locale displayLocale() {
+        try {
+            String tag = LocaleManager.get();
+            if (tag != null && !tag.trim().isEmpty()) {
+                if ("en".equalsIgnoreCase(tag)) return Locale.ENGLISH;
+                Locale locale = Locale.forLanguageTag(tag);
+                if (!locale.getLanguage().isEmpty()) return locale;
+            }
+        } catch (Exception ignored) {}
+        return Locale.ENGLISH;
+    }
+
+    private static String eventListDatePattern(Locale locale) {
+        return "pt".equals(locale.getLanguage()) ? "dd MMM HH:mm" : "MMM dd HH:mm";
+    }
+
+    private static String eventCaptionDatePattern(Locale locale) {
+        return "pt".equals(locale.getLanguage()) ? "dd MMM, HH:mm:ss" : "MMM dd, HH:mm:ss";
     }
 }

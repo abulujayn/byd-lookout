@@ -1,11 +1,24 @@
 package com.overdrive.app.daemon.telegram;
 
+import com.overdrive.app.telegram.TelegramMessages;
 import org.json.JSONObject;
 
 /**
  * Context for command execution - provides messaging and utility methods.
  */
 public interface CommandContext {
+
+    /**
+     * Resolve user-facing Telegram copy using the app's current locale.
+     */
+    default String tr(String key, Object... args) {
+        return TelegramMessages.get(key, args);
+    }
+
+    /** Localize and Markdown-escape a technical error returned by a backend. */
+    default String technicalDetail(String detail) {
+        return TelegramMessages.technicalDetail(detail);
+    }
     
     /**
      * Send a text message to the chat.

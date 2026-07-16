@@ -416,6 +416,8 @@ dependencies {
     implementation("org.eclipse.paho:org.eclipse.paho.mqttv5.client:1.2.5")
 
     testImplementation(libs.junit)
+    // Android's mockable org.json stubs throw in local JVM tests.
+    testImplementation("org.json:json:20231013")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 }

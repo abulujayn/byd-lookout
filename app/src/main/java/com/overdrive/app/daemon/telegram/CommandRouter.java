@@ -2,6 +2,7 @@ package com.overdrive.app.daemon.telegram;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Routes commands to appropriate handlers.
@@ -36,7 +37,7 @@ public class CommandRouter {
         }
         
         String[] args = text.split("\\s+");
-        String command = args[0].toLowerCase();
+        String command = args[0].toLowerCase(Locale.ROOT);
         
         for (TelegramCommandHandler handler : handlers) {
             if (handler.canHandle(command)) {
@@ -46,7 +47,7 @@ public class CommandRouter {
         }
         
         // Unknown command
-        context.sendMessage(chatId, "Unknown command. Use /help for available commands.");
+        context.sendMessage(chatId, context.tr("router.unknown_command"));
         return true;
     }
 }

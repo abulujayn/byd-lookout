@@ -1,5 +1,7 @@
 package com.overdrive.app.telegram.event;
 
+import com.overdrive.app.telegram.TelegramMessages;
+
 /**
  * Network connectivity change event.
  */
@@ -18,10 +20,9 @@ public class ConnectivityEvent extends SystemEvent {
     
     @Override
     public String getMessage() {
-        if (connected) {
-            return "📶 Connected via " + networkType;
-        } else {
-            return "📵 Disconnected from " + networkType;
-        }
+        return TelegramMessages.get(connected
+                        ? "legacy.connectivity.connected"
+                        : "legacy.connectivity.disconnected",
+                networkType);
     }
 }

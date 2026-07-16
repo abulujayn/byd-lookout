@@ -2307,28 +2307,18 @@ public class SurveillanceIpcServer implements Runnable {
         }
         if (!wasIpcTriggered) return;
         String raw = (error != null && !error.trim().isEmpty())
-                ? error.trim() : "unknown (see head unit)";
-        // The bot sends with parse_mode=Markdown and does NOT escape the body,
-        // so an unescaped control char in the download/verify error (e.g. a CDN
-        // message with '_' or '*') would 400 "can't parse entities" and the
-        // message would be silently dropped. Strip the legacy-Markdown control
-        // chars from the reason, mirroring the bot-side failure copy's
-        // mdEscape (UpdateCommandHandler.stripMarkdown uses the same set).
-        StringBuilder safe = new StringBuilder(raw.length());
-        for (int i = 0; i < raw.length(); i++) {
-            char c = raw.charAt(i);
-            if (c == '*' || c == '_' || c == '`' || c == '[' || c == ']') continue;
-            safe.append(c);
-        }
-        String reason = safe.toString();
+                ? error.trim() : Messages.get("telegram.update.unknown_reason");
+        // Localize known backend failures and Markdown-escape English details
+        // before handing the copy to the bot's legacy Markdown send path.
+        String reason = com.overdrive.app.telegram.TelegramMessages
+                .technicalDetail(raw);
         // TelegramNotifier runs the IPC on its own background executor + gates
         // on the criticalAlerts toggle (matching the bot-side failure message
-        // category). Hardcoded English literals match the bot's house style.
+        // category). Copy follows the app locale through TelegramMessages.
         try {
             com.overdrive.app.telegram.TelegramNotifier.sendMessage(
-                    "⚠️ *Overdrive update failed*\n"
-                    + "The device is still on the previous version.\n"
-                    + "Reason: " + reason,
+                    com.overdrive.app.telegram.TelegramMessages.get(
+                            "update.install_failed", reason),
                     "CRITICAL");
         } catch (Exception ignored) {}
     }

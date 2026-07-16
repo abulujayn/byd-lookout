@@ -36,11 +36,7 @@ public class BackupCommandHandler implements TelegramCommandHandler {
     @Override
     public void handle(long chatId, String[] args, CommandContext ctx) {
         if (args.length > 1 && "restore".equalsIgnoreCase(args[1])) {
-            ctx.sendMessage(chatId,
-                    "ℹ️ *Restore* isn't available over Telegram.\n\n" +
-                    "Open Overdrive on the head unit (or the app) → *Settings → " +
-                    "Backup & Restore* → choose your backup file. Restore is " +
-                    "same-device only and asks for confirmation there.");
+            ctx.sendMessage(chatId, ctx.tr("backup.restore_unavailable"));
             return;
         }
 
@@ -49,8 +45,8 @@ public class BackupCommandHandler implements TelegramCommandHandler {
         boolean includeTrips = args.length > 1 && "trips".equalsIgnoreCase(args[1]);
 
         ctx.sendMessage(chatId, includeTrips
-                ? "💾 Building backup (settings + trip history)…"
-                : "💾 Building settings backup…");
+                ? ctx.tr("backup.building_with_trips")
+                : ctx.tr("backup.building_settings"));
 
         JSONObject req = new JSONObject();
         try {
@@ -60,17 +56,17 @@ public class BackupCommandHandler implements TelegramCommandHandler {
 
         JSONObject resp = ctx.sendIpcCommand(CAMERA_IPC_PORT, req, EXPORT_TIMEOUT_MS);
         if (resp == null) {
-            ctx.sendMessage(chatId, "⚠️ Could not reach the backup service.\n\n" +
-                    "The camera daemon may not be running. Try `/daemon camera start`.");
+            ctx.sendMessage(chatId, ctx.tr("backup.service_unreachable"));
             return;
         }
         if (!resp.optBoolean("success", false)) {
-            ctx.sendMessage(chatId, "⚠️ Backup failed: " + resp.optString("error", "unknown"));
+            ctx.sendMessage(chatId, ctx.tr("backup.failed",
+                    ctx.technicalDetail(resp.optString("error", ""))));
             return;
         }
         JSONObject bundle = resp.optJSONObject("bundle");
         if (bundle == null) {
-            ctx.sendMessage(chatId, "⚠️ Backup returned no data.");
+            ctx.sendMessage(chatId, ctx.tr("backup.no_data"));
             return;
         }
 
@@ -99,7 +95,8 @@ public class BackupCommandHandler implements TelegramCommandHandler {
             }
         } catch (Exception e) {
             try { tmp.delete(); } catch (Exception ignored) {}
-            ctx.sendMessage(chatId, "⚠️ Could not write the backup file: " + e.getMessage());
+            ctx.sendMessage(chatId, ctx.tr("backup.write_failed",
+                    ctx.technicalDetail(e.getMessage())));
             return;
         }
 
@@ -111,25 +108,26 @@ public class BackupCommandHandler implements TelegramCommandHandler {
         org.json.JSONArray tripsArr = bundle.optJSONArray("trips");
         if (tripsArr != null) tripCount = tripsArr.length();
 
-        String title = (includeTrips
-                ? "💾 Overdrive backup (settings + " + tripCount + " trips)"
-                : "💾 Overdrive settings backup")
-                + (appVer.isEmpty() ? "" : " · " + appVer);
+        String caption;
+        if (includeTrips) {
+            caption = appVer.isEmpty()
+                    ? ctx.tr("backup.document_with_trips", tripCount)
+                    : ctx.tr("backup.document_with_trips_version", tripCount, appVer);
+        } else {
+            caption = appVer.isEmpty()
+                    ? ctx.tr("backup.document_settings")
+                    : ctx.tr("backup.document_settings_version", appVer);
+        }
 
         boolean sent;
         try {
-            sent = ctx.sendDocument(chatId, tmp.getAbsolutePath(),
-                    title +
-                    "\n\n⚠️ This file contains your credentials and device key" +
-                    (includeTrips ? " and your location history" : "") +
-                    " — keep it private. " +
-                    "Restore it on this same head unit via Settings → Backup & Restore.");
+            sent = ctx.sendDocument(chatId, tmp.getAbsolutePath(), caption);
         } finally {
             try { tmp.delete(); } catch (Exception ignored) {}
         }
 
         if (!sent) {
-            ctx.sendMessage(chatId, "⚠️ Could not upload the backup file to Telegram.");
+            ctx.sendMessage(chatId, ctx.tr("backup.upload_failed"));
         }
     }
 }

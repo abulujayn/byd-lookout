@@ -6945,7 +6945,8 @@ public class SurveillanceEngineGpu {
         try {
             if (config != null && config.isTelegramSendStartPing()) {
                 com.overdrive.app.telegram.TelegramNotifier.sendMessage(
-                        "✅ Motion cleared — no event recorded (filtered as a non-actor false alert).",
+                        com.overdrive.app.telegram.TelegramMessages.get(
+                                "motion.cleared_no_event"),
                         "MOTION");
             }
         } catch (Throwable t) {

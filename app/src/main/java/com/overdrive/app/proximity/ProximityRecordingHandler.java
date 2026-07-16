@@ -4,6 +4,8 @@ import com.overdrive.app.logging.DaemonLogger;
 import com.overdrive.app.storage.StorageManager;
 import com.overdrive.app.surveillance.GpuSurveillancePipeline;
 import com.overdrive.app.telegram.TelegramNotifier;
+import com.overdrive.app.telegram.TelegramMessages;
+import com.overdrive.app.server.LocaleManager;
 
 import java.io.File;
 import java.text.SimpleDateFormat;
@@ -299,16 +301,19 @@ public class ProximityRecordingHandler {
      */
     private void sendTelegramNotification(String triggerLevel) {
         try {
-            SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
+            String language = LocaleManager.get();
+            Locale locale = Locale.forLanguageTag(language);
+            String datePattern = language.startsWith("pt")
+                    ? "dd/MM/yyyy HH:mm:ss" : "yyyy-MM-dd HH:mm:ss";
+            SimpleDateFormat sdf = new SimpleDateFormat(datePattern, locale);
             String timestamp = sdf.format(new Date());
             
-            String emoji = "🚨";
             String distance = triggerLevel.equals("RED") ? "0-0.5m" : "0-0.8m";
-            
-            String message = emoji + " Proximity Alert\n" +
-                           "Time: " + timestamp + "\n" +
-                           "Trigger: " + triggerLevel + " (" + distance + ")\n" +
-                           "Recording started...";
+            String triggerKey = "RED".equals(triggerLevel)
+                    ? "proximity.trigger.red" : "proximity.trigger.yellow";
+            String triggerLabel = TelegramMessages.get(triggerKey);
+            String message = TelegramMessages.get("proximity_alert",
+                    timestamp, triggerLabel, distance);
             
             TelegramNotifier.sendMessage(message);
             logger.info("Telegram notification sent: " + triggerLevel);

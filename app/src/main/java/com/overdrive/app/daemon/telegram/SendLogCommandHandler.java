@@ -4,6 +4,8 @@ import com.overdrive.app.logging.DaemonLogPaths;
 
 import org.json.JSONObject;
 
+import java.util.Locale;
+
 /**
  * Handles /sendlog — uploads a single daemon's log to the Cloudflare Worker
  * (via IPC UPLOAD_LOG → SurveillanceIpcServer → LogUploader) and replies with
@@ -19,6 +21,11 @@ import org.json.JSONObject;
 public class SendLogCommandHandler implements TelegramCommandHandler {
 
     private static final int CAMERA_IPC_PORT = 19877;
+    private static final String DISCORD_URL = "https://discord.gg/PZutk9fg4h";
+    private static final String GITHUB_URL =
+            "https://github.com/yash-srivastava/Overdrive-release/issues";
+    private static final String WHATSAPP_URL =
+            "https://chat.whatsapp.com/HChmriCWgr9KwAtE6OEkiM";
     // Upload is network-bound (read log → POST to CF). 35s sits above
     // LogUploader's bounded worst case (proxy 12s + direct-retry 12s = 24s,
     // via its callTimeout) so the IPC read never races a still-running upload.
@@ -33,23 +40,24 @@ public class SendLogCommandHandler implements TelegramCommandHandler {
     public void handle(long chatId, String[] args, CommandContext ctx) {
         if (args.length < 2 || args[1].trim().isEmpty()) {
             // No daemon specified — show the list as tap buttons.
-            StringBuilder sb = new StringBuilder();
-            sb.append("📄 *Send a daemon log*\n\nPick a daemon (or `/sendlog <name>`):");
             java.util.List<String[][]> rows = new java.util.ArrayList<>();
             for (String key : DaemonLogPaths.keys()) {
-                rows.add(new String[][] {{key, "cmd:/sendlog " + key}});
+                rows.add(new String[][] {{ctx.tr("sendlog.daemon_button", key),
+                        "cmd:/sendlog " + key}});
             }
-            ctx.sendMessageWithButtons(chatId, sb.toString(), rows.toArray(new String[0][][]));
+            ctx.sendMessageWithButtons(chatId, ctx.tr("sendlog.choose"),
+                    rows.toArray(new String[0][][]));
             return;
         }
 
-        String daemon = args[1].trim().toLowerCase();
+        String daemon = args[1].trim().toLowerCase(Locale.ROOT);
         if (DaemonLogPaths.pathFor(daemon) == null) {
-            ctx.sendMessage(chatId, "❌ Unknown daemon `" + daemon + "`.\nTry: " + DaemonLogPaths.keyList());
+            ctx.sendMessage(chatId, ctx.tr("sendlog.unknown_daemon",
+                    daemon, DaemonLogPaths.keyList()));
             return;
         }
 
-        ctx.sendMessage(chatId, "⏳ Uploading *" + daemon + "* log…");
+        ctx.sendMessage(chatId, ctx.tr("sendlog.uploading", daemon));
 
         JSONObject req = new JSONObject();
         try {
@@ -59,23 +67,17 @@ public class SendLogCommandHandler implements TelegramCommandHandler {
 
         JSONObject resp = ctx.sendIpcCommand(CAMERA_IPC_PORT, req, UPLOAD_TIMEOUT_MS);
         if (resp == null) {
-            ctx.sendMessage(chatId, "⚠️ Could not reach the log service. " +
-                    "The camera daemon may not be running (`/daemon camera start`).");
+            ctx.sendMessage(chatId, ctx.tr("sendlog.service_unreachable"));
             return;
         }
         if (!resp.optBoolean("success", false)) {
-            ctx.sendMessage(chatId, "⚠️ Upload failed: " + resp.optString("error", "unknown"));
+            ctx.sendMessage(chatId, ctx.tr("sendlog.upload_failed",
+                    ctx.technicalDetail(resp.optString("error", ""))));
             return;
         }
 
         String code = resp.optString("code", "");
-        ctx.sendMessage(chatId,
-                "✅ *" + daemon + "* log uploaded.\n\n" +
-                "Share this code with us, plus a note on what went wrong:\n`" + code + "`\n\n" +
-                "Report on:\n" +
-                "• Discord: https://discord.gg/PZutk9fg4h\n" +
-                "• GitHub: https://github.com/yash-srivastava/Overdrive-release/issues\n" +
-                "• WhatsApp: https://chat.whatsapp.com/HChmriCWgr9KwAtE6OEkiM\n\n" +
-                "_Secrets were redacted before upload. The log auto-expires._");
+        ctx.sendMessage(chatId, ctx.tr("sendlog.upload_success", daemon, code,
+                DISCORD_URL, GITHUB_URL, WHATSAPP_URL));
     }
 }

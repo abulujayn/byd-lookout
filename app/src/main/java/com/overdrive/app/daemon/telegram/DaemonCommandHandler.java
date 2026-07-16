@@ -3,6 +3,7 @@ package com.overdrive.app.daemon.telegram;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
+import java.util.Locale;
 import java.util.Properties;
 
 /**
@@ -23,17 +24,17 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
     private String lastCommandKey = "";
     private static final long DEBOUNCE_MS = 3000;
     
-    // Daemon definitions: name -> [processName, className, displayName, startable]
+    // Daemon definitions: name -> [processName, className, displayNameKey, startable]
     // startable: "yes" if can be started via app_process or shell, "no" if can't be started remotely
     private static final String[][] DAEMONS = {
-        {"camera", "byd_cam_daemon", "CameraDaemon", "Camera", "yes"},
-        {"acc", "acc_sentry_daemon", "AccSentryDaemon", "ACC Sentry", "yes"},
-        {"sentry", "sentry_daemon", "SentryDaemon", "Sentry", "yes"},
-        {"telegram", "telegram_bot_daemon", "TelegramBotDaemon", "Telegram", "yes"},
-        {"cloudflared", "cloudflared", "shell", "Cloudflare Tunnel", "yes"},
-        {"zrok", "zrok", "shell", "Zrok Tunnel", "yes"},
-        {"tailscale", "tailscaled", "shell", "Tailscale Tunnel", "yes"},
-        {"singbox", "sing-box", "shell", "Sing-Box", "yes"},
+        {"camera", "byd_cam_daemon", "CameraDaemon", "daemon_names.camera", "yes"},
+        {"acc", "acc_sentry_daemon", "AccSentryDaemon", "daemon_names.acc_sentry", "yes"},
+        {"sentry", "sentry_daemon", "SentryDaemon", "daemon_names.sentry", "yes"},
+        {"telegram", "telegram_bot_daemon", "TelegramBotDaemon", "daemon_names.telegram", "yes"},
+        {"cloudflared", "cloudflared", "shell", "daemon_names.cloudflare_tunnel", "yes"},
+        {"zrok", "zrok", "shell", "daemon_names.zrok_tunnel", "yes"},
+        {"tailscale", "tailscaled", "shell", "daemon_names.tailscale_tunnel", "yes"},
+        {"singbox", "sing-box", "shell", "daemon_names.sing_box", "yes"},
     };
     
     private static final String AVAILABLE_DAEMONS = "camera, acc, sentry, cloudflared, zrok, tailscale, singbox";
@@ -46,12 +47,12 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
     @Override
     public void handle(long chatId, String[] args, CommandContext ctx) {
         if (args.length < 3) {
-            ctx.sendMessage(chatId, "Usage: /daemon <name> start|stop|status\n\nAvailable: " + AVAILABLE_DAEMONS);
+            ctx.sendMessage(chatId, ctx.tr("daemon.usage", AVAILABLE_DAEMONS));
             return;
         }
         
-        String name = args[1].toLowerCase();
-        String action = args[2].toLowerCase();
+        String name = args[1].toLowerCase(Locale.ROOT);
+        String action = args[2].toLowerCase(Locale.ROOT);
         
         // Debounce
         String cmdKey = name + ":" + action;
@@ -66,17 +67,17 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
         // Find daemon
         String[] daemon = findDaemon(name);
         if (daemon == null) {
-            ctx.sendMessage(chatId, "❌ Unknown daemon: " + name + "\n\nAvailable: " + AVAILABLE_DAEMONS);
+            ctx.sendMessage(chatId, ctx.tr("daemon.unknown", name, AVAILABLE_DAEMONS));
             return;
         }
         
         String processName = daemon[1];
-        String displayName = daemon[3];
+        String displayName = ctx.tr(daemon[3]);
         boolean isStartable = "yes".equals(daemon[4]);
         
         // Can't control telegram from telegram
         if ("telegram".equals(name)) {
-            ctx.sendMessage(chatId, "⚠️ Cannot control Telegram daemon from Telegram.");
+            ctx.sendMessage(chatId, ctx.tr("daemon.cannot_control_telegram"));
             return;
         }
         
@@ -87,9 +88,9 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
         switch (action) {
             case "start":
                 if (isRunning) {
-                    ctx.sendMessage(chatId, "ℹ️ " + displayName + " is already running.");
+                    ctx.sendMessage(chatId, ctx.tr("daemon.already_running", displayName));
                 } else if (!isStartable) {
-                    ctx.sendMessage(chatId, "⚠️ " + displayName + " must be started from the app UI.");
+                    ctx.sendMessage(chatId, ctx.tr("daemon.must_start_from_app", displayName));
                 } else {
                     // Clear the durable disable sentinel — user is explicitly
                     // starting this daemon, so the watchdog + app health-check
@@ -137,13 +138,13 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
                         // Clear stopped state - daemon was started via Telegram
                         saveDaemonState(name, true, ctx);
                     }
-                    ctx.sendMessage(chatId, ok ? "✅ " + displayName + " started." : "⚠️ Failed to start " + displayName);
+                    ctx.sendMessage(chatId, ctx.tr(ok ? "daemon.started" : "daemon.start_failed", displayName));
                 }
                 break;
                 
             case "stop":
                 if (!isRunning) {
-                    ctx.sendMessage(chatId, "ℹ️ " + displayName + " is not running.");
+                    ctx.sendMessage(chatId, ctx.tr("daemon.not_running", displayName));
                 } else {
                     // Real user stop — plant the durable disable sentinel so the
                     // watchdog + app health-check honor it across restarts.
@@ -152,16 +153,18 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
                         // Mark as stopped via Telegram - health check should NOT auto-restart
                         saveDaemonState(name, false, ctx);
                     }
-                    ctx.sendMessage(chatId, ok ? "⛔ " + displayName + " stopped." : "⚠️ Failed to stop " + displayName);
+                    ctx.sendMessage(chatId, ctx.tr(ok ? "daemon.stopped" : "daemon.stop_failed", displayName));
                 }
                 break;
                 
             case "status":
-                ctx.sendMessage(chatId, displayName + ": " + (isRunning ? "✅ Running" : "⛔ Stopped"));
+                ctx.sendMessage(chatId, ctx.tr(
+                        isRunning ? "daemon.status_running" : "daemon.status_stopped",
+                        displayName));
                 break;
                 
             default:
-                ctx.sendMessage(chatId, "Usage: /daemon " + name + " start|stop|status");
+                ctx.sendMessage(chatId, ctx.tr("daemon.action_usage", name));
         }
     }
     
@@ -891,7 +894,7 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
             // config (single source of truth shared with the app).
             long ownerChatId = com.overdrive.app.telegram.config.UnifiedTelegramConfig.getOwnerChatId();
             if (ownerChatId > 0) {
-                ctx.sendMessage(ownerChatId, "🌐 *Tunnel URL*\n" + url);
+                ctx.sendMessage(ownerChatId, ctx.tr("daemon.tunnel_url", url));
                 ctx.log("Tunnel URL notification sent to owner");
             }
         } catch (Exception e) {

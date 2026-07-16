@@ -1,5 +1,7 @@
 package com.overdrive.app.telegram.event;
 
+import com.overdrive.app.telegram.TelegramMessages;
+
 /**
  * Critical system event requiring immediate attention.
  */
@@ -8,15 +10,15 @@ public class CriticalEvent extends SystemEvent {
     private final String details;
     
     public enum CriticalType {
-        LOW_BATTERY("🔋 Low battery"),
-        STORAGE_FULL("💾 Storage full"),
-        DAEMON_CRASH("⚠️ Daemon crashed"),
-        SYSTEM_ERROR("❌ System error"),
-        SYSTEM_REBOOT("🔄 System reboot");
+        LOW_BATTERY("critical.type.low_battery"),
+        STORAGE_FULL("critical.type.storage_full"),
+        DAEMON_CRASH("critical.type.daemon_crash"),
+        SYSTEM_ERROR("critical.type.system_error"),
+        SYSTEM_REBOOT("critical.type.system_reboot");
         
-        private final String prefix;
-        CriticalType(String prefix) { this.prefix = prefix; }
-        public String getPrefix() { return prefix; }
+        private final String messageKey;
+        CriticalType(String messageKey) { this.messageKey = messageKey; }
+        public String getPrefix() { return TelegramMessages.get(messageKey); }
     }
     
     public CriticalEvent(CriticalType criticalType, String details) {
@@ -30,6 +32,7 @@ public class CriticalEvent extends SystemEvent {
     
     @Override
     public String getMessage() {
-        return criticalType.getPrefix() + ": " + details;
+        return TelegramMessages.get("legacy.critical_with_details",
+                criticalType.getPrefix(), details);
     }
 }

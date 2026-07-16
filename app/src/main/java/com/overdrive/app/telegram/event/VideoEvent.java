@@ -1,6 +1,7 @@
 package com.overdrive.app.telegram.event;
 
 import androidx.annotation.Nullable;
+import com.overdrive.app.telegram.TelegramMessages;
 
 /**
  * Event emitted when a surveillance recording is finalized.
@@ -23,11 +24,24 @@ public class VideoEvent extends SystemEvent {
     
     @Override
     public String getMessage() {
-        StringBuilder sb = new StringBuilder("🎬 Recording saved");
         if (aiDetection != null) {
-            sb.append(" (").append(aiDetection).append(" detected)");
+            return TelegramMessages.get("legacy.video.saved_with_detection",
+                    localizedDetection(aiDetection), String.valueOf(durationSeconds));
         }
-        sb.append(" - ").append(durationSeconds).append("s");
-        return sb.toString();
+        return TelegramMessages.get("legacy.video.saved",
+                String.valueOf(durationSeconds));
+    }
+
+    private String localizedDetection(String value) {
+        switch (value.toLowerCase(java.util.Locale.ROOT)) {
+            case "person": return TelegramMessages.get("recording_label.person");
+            case "bike":
+            case "bicycle": return TelegramMessages.get("recording_label.bike");
+            case "car":
+            case "vehicle": return TelegramMessages.get("recording_label.vehicle");
+            case "animal": return TelegramMessages.get("recording_label.animal");
+            case "motion": return TelegramMessages.get("recording_label.motion");
+            default: return value;
+        }
     }
 }

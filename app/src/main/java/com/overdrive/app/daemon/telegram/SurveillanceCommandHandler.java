@@ -2,6 +2,8 @@ package com.overdrive.app.daemon.telegram;
 
 import org.json.JSONObject;
 
+import java.util.Locale;
+
 /**
  * Handles surveillance commands: /start, /stop, /status
  */
@@ -16,7 +18,7 @@ public class SurveillanceCommandHandler implements TelegramCommandHandler {
     
     @Override
     public void handle(long chatId, String[] args, CommandContext ctx) {
-        String cmd = args[0].toLowerCase();
+        String cmd = args[0].toLowerCase(Locale.ROOT);
         
         switch (cmd) {
             case "/start":
@@ -34,66 +36,68 @@ public class SurveillanceCommandHandler implements TelegramCommandHandler {
     private void handleStart(long chatId, CommandContext ctx) {
         JSONObject response = sendSurveillanceCommand("START", ctx);
         if (response != null && response.optBoolean("success", false)) {
-            String[][][] buttons = {{{"⛔ Stop", "cmd:/stop"}, {"📊 Status", "cmd:/status"}}};
-            ctx.sendMessageWithButtons(chatId, "✅ Surveillance started", buttons);
+            String[][][] buttons = {{{ctx.tr("buttons.stop"), "cmd:/stop"}, {ctx.tr("buttons.status"), "cmd:/status"}}};
+            ctx.sendMessageWithButtons(chatId, ctx.tr("surveillance.started"), buttons);
         } else {
-            ctx.sendMessage(chatId, "⚠️ Failed to start surveillance");
+            ctx.sendMessage(chatId, ctx.tr("surveillance.start_failed"));
         }
     }
     
     private void handleStop(long chatId, CommandContext ctx) {
         JSONObject response = sendSurveillanceCommand("STOP", ctx);
         if (response != null && response.optBoolean("success", false)) {
-            String[][][] buttons = {{{"✅ Start", "cmd:/start"}, {"📊 Status", "cmd:/status"}}};
-            ctx.sendMessageWithButtons(chatId, "⛔ Surveillance stopped", buttons);
+            String[][][] buttons = {{{ctx.tr("buttons.start"), "cmd:/start"}, {ctx.tr("buttons.status"), "cmd:/status"}}};
+            ctx.sendMessageWithButtons(chatId, ctx.tr("surveillance.stopped"), buttons);
         } else {
-            ctx.sendMessage(chatId, "⚠️ Failed to stop surveillance");
+            ctx.sendMessage(chatId, ctx.tr("surveillance.stop_failed"));
         }
     }
     
     private void handleStatus(long chatId, CommandContext ctx) {
         StringBuilder sb = new StringBuilder();
-        sb.append("📊 *Status*\n\n");
+        sb.append(ctx.tr("surveillance.status_title"));
         
         // Surveillance status
         JSONObject survStatus = sendSurveillanceCommand("STATUS", ctx);
         boolean survEnabled = survStatus != null && survStatus.optBoolean("enabled", false);
-        sb.append("*Surveillance:* ").append(survEnabled ? "✅ Active" : "⛔ Inactive").append("\n");
+        sb.append(ctx.tr(survEnabled
+                ? "surveillance.status_active"
+                : "surveillance.status_inactive"));
         
         // Temperature
-        sb.append("*Temp:* ").append(getTemperature(ctx)).append("\n\n");
+        sb.append(ctx.tr("surveillance.temperature", getTemperature(ctx)));
         
         // All daemons - check all known process names
-        sb.append("*Daemons:*\n");
+        sb.append(ctx.tr("surveillance.daemons_heading"));
         String[][] allDaemons = {
-            {"byd_cam_daemon", "Camera"},
-            {"acc_sentry_daemon", "ACC Sentry"},
-            {"sentry_daemon", "Sentry"},
-            {"telegram_bot_daemon", "Telegram"},
-            {"SurveillanceDaemon", "Surveillance"},
-            {"cloudflared", "Cloudflare Tunnel"},
-            {"zrok", "Zrok Tunnel"},
-            {"sing-box", "Sing-Box"}
+            {"byd_cam_daemon", "daemon_names.camera"},
+            {"acc_sentry_daemon", "daemon_names.acc_sentry"},
+            {"sentry_daemon", "daemon_names.sentry"},
+            {"telegram_bot_daemon", "daemon_names.telegram"},
+            {"SurveillanceDaemon", "daemon_names.surveillance"},
+            {"cloudflared", "daemon_names.cloudflare_tunnel"},
+            {"zrok", "daemon_names.zrok_tunnel"},
+            {"sing-box", "daemon_names.sing_box"}
         };
         
         int runningCount = 0;
         for (String[] d : allDaemons) {
             if (isDaemonRunning(d[0], ctx)) {
-                sb.append("✅ ").append(d[1]).append("\n");
+                sb.append(ctx.tr("surveillance.daemon_running", ctx.tr(d[1])));
                 runningCount++;
             }
         }
         
         if (runningCount == 0) {
-            sb.append("_No daemons running_\n");
+            sb.append(ctx.tr("surveillance.no_daemons_running"));
         }
         
         // Buttons
         String[][][] buttons;
         if (survEnabled) {
-            buttons = new String[][][]{{{"⛔ Stop Surveillance", "cmd:/stop"}, {"📹 Events", "cmd:/events"}}};
+            buttons = new String[][][]{{{ctx.tr("buttons.stop_surveillance"), "cmd:/stop"}, {ctx.tr("buttons.events"), "cmd:/events"}}};
         } else {
-            buttons = new String[][][]{{{"✅ Start Surveillance", "cmd:/start"}, {"📹 Events", "cmd:/events"}}};
+            buttons = new String[][][]{{{ctx.tr("buttons.start_surveillance"), "cmd:/start"}, {ctx.tr("buttons.events"), "cmd:/events"}}};
         }
         
         ctx.sendMessageWithButtons(chatId, sb.toString(), buttons);
@@ -117,7 +121,7 @@ public class SurveillanceCommandHandler implements TelegramCommandHandler {
 
     private String getTemperature(CommandContext ctx) {
         double c = readCpuTemperatureCelsius();
-        if (c <= 0) return "N/A";
+        if (c <= 0) return ctx.tr("surveillance.not_available");
         String emoji = c > 60 ? "🔥" : (c > 45 ? "🌡️" : "✅");
         return String.format("%s %.0f°C", emoji, c);
     }

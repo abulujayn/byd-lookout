@@ -1,6 +1,7 @@
 package com.overdrive.app.telegram.event;
 
 import androidx.annotation.Nullable;
+import com.overdrive.app.telegram.TelegramMessages;
 
 /**
  * Event emitted when motion is detected.
@@ -21,14 +22,24 @@ public class MotionEvent extends SystemEvent {
     @Override
     public String getMessage() {
         if (aiDetection != null) {
-            return "🚨 " + capitalize(aiDetection) + " detected (" + Math.round(confidence * 100) + "%)";
+            return TelegramMessages.get("legacy.motion.detected_actor",
+                    localizedDetection(aiDetection),
+                    String.valueOf(Math.round(confidence * 100)));
         } else {
-            return "👁 Motion detected";
+            return TelegramMessages.get("legacy.motion.detected");
         }
     }
     
-    private String capitalize(String s) {
-        if (s == null || s.isEmpty()) return s;
-        return Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    private String localizedDetection(String value) {
+        switch (value.toLowerCase(java.util.Locale.ROOT)) {
+            case "person": return TelegramMessages.get("motion.actor.person");
+            case "bike":
+            case "bicycle": return TelegramMessages.get("motion.actor.bike");
+            case "car":
+            case "vehicle": return TelegramMessages.get("motion.actor.vehicle");
+            case "animal": return TelegramMessages.get("motion.actor.animal");
+            case "motion": return TelegramMessages.get("motion.actor.motion");
+            default: return value;
+        }
     }
 }

@@ -5,6 +5,8 @@ import android.os.Looper;
 import com.overdrive.app.daemon.telegram.CommandContext;
 import com.overdrive.app.daemon.telegram.CommandRouter;
 import com.overdrive.app.logging.DaemonLogger;
+import com.overdrive.app.server.LocaleManager;
+import com.overdrive.app.telegram.TelegramMessages;
 
 import org.json.JSONArray;
 import org.json.JSONObject;
@@ -42,6 +44,10 @@ public class TelegramBotDaemon {
     
     private static final String TAG = "TelegramBotDaemon";
     private static DaemonLogger logger;
+
+    private static String tr(String key, Object... args) {
+        return TelegramMessages.get(key, args);
+    }
     
     // ==================== ENCRYPTED CONSTANTS (SOTA Java obfuscation) ====================
     // Decrypted at runtime via Safe.s() - AES-256-CBC with stack-based key reconstruction
@@ -1322,9 +1328,8 @@ public class TelegramBotDaemon {
                             // URL. Mirrors the web (toast install_failed) and app
                             // (showError) failure surfaces.
                             if (installFailedReason != null) {
-                                String failMsg = "⚠️ *Overdrive update failed*\n"
-                                        + "The device is still on the previous version.\n"
-                                        + "Reason: " + mdEscape(installFailedReason);
+                                String failMsg = tr("update.install_failed",
+                                        TelegramMessages.technicalDetail(installFailedReason));
                                 boolean failOk = sendMessage(ownerChatId, failMsg);
                                 log("notifyTunnel install-failed message sent: " + failOk);
                             }
@@ -1336,15 +1341,15 @@ public class TelegramBotDaemon {
                                 // named cloudflared tunnels keep the same URL. Only
                                 // call out the rotation when it actually happened.
                                 boolean rotates = url.contains(".trycloudflare.com");
-                                msg = "🔄 *Overdrive updated to " + postUpdateVersion + "*\n" +
-                                      (rotates ? "New tunnel URL:\n" : "Tunnel back online:\n") + url;
-                                if (rotates) {
-                                    msg += "\n\n_The cloudflared link rotates after every install._";
-                                }
+                                msg = rotates
+                                        ? tr("update.installed_new_tunnel",
+                                                mdEscape(postUpdateVersion), url)
+                                        : tr("update.installed_tunnel_online",
+                                                mdEscape(postUpdateVersion), url);
                             } else if (isNew) {
-                                msg = "🌐 *Tunnel URL*\n" + url;
+                                msg = tr("tunnel.notification_url", url);
                             } else {
-                                msg = "🔄 *Tunnel URL Changed*\n" + url;
+                                msg = tr("tunnel.notification_url_changed", url);
                             }
                             boolean ok = sendMessage(ownerChatId, msg);
                             log("notifyTunnel message sent: " + ok +
@@ -1433,8 +1438,11 @@ public class TelegramBotDaemon {
                     String criticalType = cmd.optString("type", "");
                     String details = cmd.optString("details", "");
                     if (ownerChatId > 0) {
-                        String msg = "⚠️ *Critical Alert*\n" + criticalType;
-                        if (!details.isEmpty()) msg += "\n" + details;
+                        String localizedType = criticalTypeLabel(criticalType);
+                        String msg = details.isEmpty()
+                                ? tr("critical.message", localizedType)
+                                : tr("critical.message_with_details", localizedType,
+                                        TelegramMessages.technicalDetail(details));
                         boolean ok = sendMessage(ownerChatId, msg);
                         response.put("status", ok ? "ok" : "error");
                     } else {
@@ -1627,9 +1635,8 @@ public class TelegramBotDaemon {
                 String installFailedReason = consumeInstallFailedHint();
                 if (installFailedReason != null) {
                     if (criticalAlertsEnabled) {
-                        String failMsg = "⚠️ *Overdrive update failed*\n"
-                                + "The device is still on the previous version.\n"
-                                + "Reason: " + mdEscape(installFailedReason);
+                        String failMsg = tr("update.install_failed",
+                                TelegramMessages.technicalDetail(installFailedReason));
                         boolean ok = sendMessage(ownerChatId, failMsg);
                         log("Startup install-failed message sent: " + ok);
                     } else {
@@ -1641,7 +1648,8 @@ public class TelegramBotDaemon {
                 String postUpdateVersion = consumePostUpdateHint();
                 if (postUpdateVersion != null) {
                     if (criticalAlertsEnabled) {
-                        String msg = "🔄 *Overdrive updated to " + mdEscape(postUpdateVersion) + "*";
+                        String msg = tr("update.installed",
+                                mdEscape(postUpdateVersion));
                         boolean ok = sendMessage(ownerChatId, msg);
                         log("Startup update-success message sent: " + ok);
                     } else {
@@ -1905,13 +1913,13 @@ public class TelegramBotDaemon {
         }
 
         try {
-            String greeting = "🤖 *Surveillance Bot Online*\n\n" +
-                    "Bot daemon started and ready.\n" +
-                    "Use /help for available commands.";
+            String greeting = tr("greeting.online");
 
             String[][][] buttons = {
-                {{"📊 Status", "cmd:/status"}, {"🤖 Daemons", "cmd:/daemons"}},
-                {{"📹 Events", "cmd:/events"}, {"🌐 Tunnel URL", "cmd:/url"}}
+                {{tr("buttons.status"), "cmd:/status"},
+                        {tr("buttons.daemons"), "cmd:/daemons"}},
+                {{tr("buttons.events"), "cmd:/events"},
+                        {tr("buttons.tunnel_url"), "cmd:/url"}}
             };
 
             boolean sent = sendMessageWithButtons(ownerChatId, greeting, buttons);
@@ -2056,7 +2064,7 @@ public class TelegramBotDaemon {
             
             // Owner-only commands
             if (ownerChatId <= 0) {
-                sendMessage(chatId, "⚠️ No owner paired. Use /pair <PIN> to pair.");
+                sendMessage(chatId, tr("pair.no_owner"));
                 return;
             }
             
@@ -2090,14 +2098,14 @@ public class TelegramBotDaemon {
             
             // Only allow owner
             if (userId != ownerChatId) {
-                answerCallbackQuery(callbackId, "⚠️ Not authorized");
+                answerCallbackQuery(callbackId, tr("callback.not_authorized"));
                 return;
             }
             
             // Handle download callback: "dl:filename.mp4"
             if (data.startsWith("dl:")) {
                 String filename = data.substring(3);
-                answerCallbackQuery(callbackId, "📥 Downloading...");
+                answerCallbackQuery(callbackId, tr("callback.downloading"));
                 commandRouter.route(ownerChatId, "/download " + filename);
             }
             // Handle events pagination: "ev:hours:page"
@@ -2118,12 +2126,21 @@ public class TelegramBotDaemon {
             else if (data.startsWith("dm:")) {
                 String[] parts = data.substring(3).split(":");
                 if (parts.length == 2) {
-                    answerCallbackQuery(callbackId, "⏳ " + parts[1] + "ing...");
+                    String action = parts[1];
+                    String callbackText;
+                    if ("start".equals(action)) {
+                        callbackText = tr("callback.starting");
+                    } else if ("stop".equals(action)) {
+                        callbackText = tr("callback.stopping");
+                    } else {
+                        callbackText = tr("callback.processing");
+                    }
+                    answerCallbackQuery(callbackId, callbackText);
                     commandRouter.route(ownerChatId, "/daemon " + parts[0] + " " + parts[1]);
                 }
             }
             else {
-                answerCallbackQuery(callbackId, "Unknown action");
+                answerCallbackQuery(callbackId, tr("callback.unknown_action"));
             }
             
         } catch (Exception e) {
@@ -2157,12 +2174,12 @@ public class TelegramBotDaemon {
     
     private static void handlePairCommand(long chatId, String username, String firstName, String pin) {
         if (ownerChatId > 0) {
-            sendMessage(chatId, "❌ Already paired with another owner.");
+            sendMessage(chatId, tr("pair.already_paired"));
             return;
         }
         
         if (pin.length() != 6 || !pin.matches("\\d+")) {
-            sendMessage(chatId, "❌ Invalid PIN format. Enter 6-digit PIN from app.");
+            sendMessage(chatId, tr("pair.invalid_format"));
             return;
         }
         
@@ -2181,19 +2198,19 @@ public class TelegramBotDaemon {
         }
         
         if (expectedPin == null || expectedPin.isEmpty()) {
-            sendMessage(chatId, "❌ No PIN generated. Generate a PIN from the app first.");
+            sendMessage(chatId, tr("pair.no_pin"));
             return;
         }
         
         if (System.currentTimeMillis() > pinExpiry) {
-            sendMessage(chatId, "❌ PIN expired. Generate a new PIN from the app.");
+            sendMessage(chatId, tr("pair.expired"));
             // Clear expired PIN from config
             clearPairPinFromConfig();
             return;
         }
         
         if (!pin.equals(expectedPin)) {
-            sendMessage(chatId, "❌ Invalid PIN. Check the PIN shown in the app.");
+            sendMessage(chatId, tr("pair.invalid"));
             return;
         }
         
@@ -2211,15 +2228,16 @@ public class TelegramBotDaemon {
             // every alert would silently drop. Surface the failure instead of
             // claiming a pairing that won't survive — the user can retry.
             ownerChatId = chatId;  // best-effort for THIS session's reply
-            sendMessage(chatId, "⚠️ Pairing could not be saved (storage error). "
-                    + "Please try /pair again; if it keeps failing, restart the app.");
+            sendMessage(chatId, tr("pair.storage_error"));
             log("handlePairCommand: owner persist FAILED for " + chatId + " — pairing not durable");
             return;
         }
         ownerChatId = chatId;
         clearPairPinFromConfig();
 
-        sendMessage(chatId, "✅ Paired successfully!\n\nWelcome, " + firstName + "!\nUse /help to see available commands.");
+        sendMessage(chatId, firstName == null || firstName.isEmpty()
+                ? tr("pair.success_no_name")
+                : tr("pair.success", mdEscape(firstName)));
     }
     
     private static void clearPairPinFromConfig() {
@@ -2532,31 +2550,41 @@ public class TelegramBotDaemon {
                 : null;
         String tierIcon;
         String tierWord;
-        if ("CRITICAL".equalsIgnoreCase(severity))    { tierIcon = "🚨"; tierWord = "CRITICAL"; }
-        else if ("ALERT".equalsIgnoreCase(severity))  { tierIcon = "⚠️"; tierWord = "Alert"; }
+        if ("CRITICAL".equalsIgnoreCase(severity)) {
+            tierIcon = "🚨";
+            tierWord = tr("motion.tier.critical");
+        }
+        else if ("ALERT".equalsIgnoreCase(severity)) {
+            tierIcon = "⚠️";
+            tierWord = tr("motion.tier.alert");
+        }
         else                                          { tierIcon = "👁"; tierWord = null; }
 
         // Camera is the only free-form interpolation outside backticks. Today
         // it's enum-bounded ("front"/"right"/"rear"/"left") so safe, but
         // mdEscape it defensively so a future user-supplied label can't break
         // Markdown rendering with a stray *, _, `, or [.
-        String safeCamera = camera.isEmpty() ? "" : mdEscape(camera);
-        msg.append(tierIcon).append(" *");
+        String safeCamera = camera.isEmpty() ? "" : mdEscape(cameraLabel(camera));
+        String title;
         if (tierWord != null && haveActorInfo) {
-            msg.append(tierWord).append(" · ").append(primary);
-            if (!safeCamera.isEmpty()) msg.append(" at ").append(safeCamera);
+            title = safeCamera.isEmpty()
+                    ? tr("motion.title.tier_actor", tierIcon, tierWord, primary)
+                    : tr("motion.title.tier_actor_camera", tierIcon, tierWord,
+                            primary, safeCamera);
         } else if (tierWord != null) {
-            msg.append(tierWord);
-            if (!safeCamera.isEmpty()) msg.append(" at ").append(safeCamera);
+            title = safeCamera.isEmpty()
+                    ? tr("motion.title.tier", tierIcon, tierWord)
+                    : tr("motion.title.tier_camera", tierIcon, tierWord, safeCamera);
         } else if (haveActorInfo) {
-            msg.append(primary);
-            if (!safeCamera.isEmpty()) msg.append(" at ").append(safeCamera);
+            title = safeCamera.isEmpty()
+                    ? tr("motion.title.actor", tierIcon, primary)
+                    : tr("motion.title.actor_camera", tierIcon, primary, safeCamera);
         } else if (!safeCamera.isEmpty()) {
-            msg.append("Motion at ").append(safeCamera);
+            title = tr("motion.title.camera", tierIcon, safeCamera);
         } else {
-            msg.append("Motion detected");
+            title = tr("motion.title.detected", tierIcon);
         }
-        msg.append("*\n");
+        msg.append(title).append("\n");
 
         // ---- Body line ----
         if (finalized) {
@@ -2573,7 +2601,7 @@ public class TelegramBotDaemon {
         } else {
             // Start-stage: minimal "in progress" line, mirrors the PWA
             // "Recording in progress" body.
-            msg.append("_Recording in progress_\n");
+            msg.append(tr("motion.recording_in_progress")).append("\n");
         }
 
         // ---- Footer ----
@@ -2594,15 +2622,15 @@ public class TelegramBotDaemon {
             long lagMs = System.currentTimeMillis() - eventTimeMs;
             if (lagMs > STALE_NOTICE_MS) {
                 java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat(
-                        "HH:mm:ss", java.util.Locale.US);
+                        "HH:mm:ss", java.util.Locale.forLanguageTag(LocaleManager.get()));
                 // Separate from the preceding line only when there IS one and it
                 // doesn't already end in a newline — avoids a leading blank line
                 // when the body + filename were both empty.
                 if (msg.length() > 0 && msg.charAt(msg.length() - 1) != '\n') {
                     msg.append("\n");
                 }
-                msg.append("🕒 _Detected ").append(sdf.format(new java.util.Date(eventTimeMs)))
-                        .append("_");
+                msg.append(tr("motion.detected_at",
+                        sdf.format(new java.util.Date(eventTimeMs))));
             }
         }
         return msg.toString();
@@ -2632,21 +2660,32 @@ public class TelegramBotDaemon {
         // Match the engine-side classRank: PERSON > BIKE > VEHICLE > ANIMAL.
         // Single-actor case shows just the class word; the body line carries
         // the count breakdown when there's more than one actor.
-        if (p > 0) return "Person";
-        if (b > 0) return "Bike";
-        if (v > 0) return "Vehicle";
-        if (a > 0) return "Animal";
-        return "Motion";
+        if (p > 0) return tr("motion.actor.person");
+        if (b > 0) return tr("motion.actor.bike");
+        if (v > 0) return tr("motion.actor.vehicle");
+        if (a > 0) return tr("motion.actor.animal");
+        return tr("motion.actor.motion");
+    }
+
+    private static String cameraLabel(String camera) {
+        if (camera == null || camera.isEmpty()) return "";
+        switch (camera.toLowerCase(java.util.Locale.ROOT)) {
+            case "front": return tr("motion.camera.front");
+            case "right": return tr("motion.camera.right");
+            case "rear":  return tr("motion.camera.rear");
+            case "left":  return tr("motion.camera.left");
+            default:      return camera;
+        }
     }
 
     /** Capitalised proximity phrase for the body's lead clause. */
     private static String proximityPhraseTelegram(String enumName) {
         if (enumName == null) return "";
         switch (enumName) {
-            case "VERY_CLOSE": return "Very close";
-            case "CLOSE":      return "Close";
-            case "MID":        return "Mid range";
-            case "FAR":        return "Far";
+            case "VERY_CLOSE": return tr("motion.proximity.very_close");
+            case "CLOSE":      return tr("motion.proximity.close");
+            case "MID":        return tr("motion.proximity.mid");
+            case "FAR":        return tr("motion.proximity.far");
             default:           return "";
         }
     }
@@ -2654,11 +2693,28 @@ public class TelegramBotDaemon {
     /** Pluralised count list: "1 person, 2 vehicles" — drops "× n" formatter. */
     private static String formatTelegramCounts(int p, int v, int b, int a) {
         java.util.List<String> parts = new java.util.ArrayList<>(4);
-        if (p > 0) parts.add(p + " " + (p == 1 ? "person"  : "people"));
-        if (v > 0) parts.add(v + " " + (v == 1 ? "vehicle" : "vehicles"));
-        if (b > 0) parts.add(b + " " + (b == 1 ? "bike"    : "bikes"));
-        if (a > 0) parts.add(a + " " + (a == 1 ? "animal"  : "animals"));
+        if (p > 0) parts.add(tr(p == 1 ? "motion.count.person_one" : "motion.count.person_many",
+                String.valueOf(p)));
+        if (v > 0) parts.add(tr(v == 1 ? "motion.count.vehicle_one" : "motion.count.vehicle_many",
+                String.valueOf(v)));
+        if (b > 0) parts.add(tr(b == 1 ? "motion.count.bike_one" : "motion.count.bike_many",
+                String.valueOf(b)));
+        if (a > 0) parts.add(tr(a == 1 ? "motion.count.animal_one" : "motion.count.animal_many",
+                String.valueOf(a)));
         return String.join(", ", parts);
+    }
+
+    private static String criticalTypeLabel(String type) {
+        if (type == null || type.isEmpty()) return tr("critical.type.system_error");
+        switch (type.toUpperCase(java.util.Locale.ROOT)) {
+            case "LOW_BATTERY": return tr("critical.type.low_battery");
+            case "STORAGE_FULL": return tr("critical.type.storage_full");
+            case "DAEMON_CRASH": return tr("critical.type.daemon_crash");
+            case "SYSTEM_REBOOT": return tr("critical.type.system_reboot");
+            case "SYSTEM_ERROR": return tr("critical.type.system_error");
+            default: return TelegramMessages.isPortuguese()
+                    ? tr("critical.type.unknown") : mdEscape(type);
+        }
     }
 
     /** Telegram bot API file-upload ceiling. Above this, sendVideo/sendDocument 400. */
@@ -2684,9 +2740,8 @@ public class TelegramBotDaemon {
                 long mb = len / (1000L * 1000L);
                 log("Video " + videoFile.getName() + " is " + mb
                         + "MB > 50MB Telegram limit; sending text notice instead");
-                String notice = "📹 *Clip too large to send*\n`"
-                        + videoFile.getName() + "` (" + mb + " MB)\n"
-                        + "View it on the device — over Telegram's 50 MB limit.";
+                String notice = tr("media.video_too_large",
+                        videoFile.getName(), String.valueOf(mb));
                 return sendMessage(chatId, notice);
             }
 
@@ -2758,8 +2813,8 @@ public class TelegramBotDaemon {
                 long mb = len / (1000L * 1000L);
                 log("Document " + docFile.getName() + " is " + mb
                         + "MB > 50MB Telegram limit; sending text notice instead");
-                return sendMessage(chatId, "📄 *File too large to send*\n`"
-                        + docFile.getName() + "` (" + mb + " MB) — over Telegram's 50 MB limit.");
+                return sendMessage(chatId, tr("media.document_too_large",
+                        docFile.getName(), String.valueOf(mb)));
             }
 
             String url = TELEGRAM_API_BASE() + botToken + "/sendDocument";

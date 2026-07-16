@@ -116,6 +116,31 @@
     "charging_complete": "Charging complete",
     "charging_fault": "Charging fault",
     "battery_ready_to_unplug": "Battery at {0}% — ready to unplug",
+    "charging_state": {
+      "ready": "Ready",
+      "charging": "Charging",
+      "finished": "Charge finished",
+      "discharging": "Discharging",
+      "terminated": "Charge terminated",
+      "fault_c10": "Breakdown: C10",
+      "fault_gun": "Breakdown: charging gun",
+      "fault_ac": "Breakdown: AC",
+      "fault_charger": "Breakdown: charger",
+      "scheduled": "Scheduled",
+      "timeout": "Timeout",
+      "discharging_cbu": "Discharging CBU",
+      "discharge_finished": "Discharge finished",
+      "idle": "Idle",
+      "unknown": "Unknown ({0})"
+    },
+    "tyre_no_reading": "no reading",
+    "tyre_critically_low": "Tyre critically low",
+    "tyre_overpressure": "Overpressure",
+    "tyre_underpressure": "Underpressure",
+    "tyre_wheel_reading": "{0} — {1}",
+    "tyre_fast_leak": "Fast leak detected",
+    "tyre_slow_leak": "Slow leak detected",
+    "tyre_wheel_pressure": "{0} ({1} kPa)",
     "door_opened": "{0} door opened",
     "door_closed": "{0} door closed",
     "while_parked": "While parked",
@@ -134,7 +159,306 @@
   "telegram": {
     "recording_caption": "📹 Recording ({0}) - {1}s",
     "recording_caption_no_label": "📹 Recording - {0}s",
-    "proximity_alert": "🚨 Proximity Alert\nTime: {0}\nTrigger: {1} ({2})\nRecording started..."
+    "recording_label": {
+      "person": "person",
+      "bike": "bike",
+      "vehicle": "vehicle",
+      "animal": "animal",
+      "motion": "motion"
+    },
+    "proximity_alert": "🚨 *Proximity Alert*\nTime: {0}\nTrigger: {1} ({2})\nRecording started…",
+    "proximity": {
+      "trigger": {
+        "red": "Red",
+        "yellow": "Yellow"
+      }
+    },
+    "common": {
+      "cancel_button": "❌ Cancel",
+      "unknown_error": "unknown error"
+    },
+    "error_details": {
+      "app_context_not_ready": "The app is not ready yet.",
+      "timeout": "The operation timed out.",
+      "public_mode": "Updates are disabled in public mode.",
+      "invalid_channel": "The update channel is invalid.",
+      "channel_save_failed": "The update channel could not be saved.",
+      "update_in_progress": "An update is already in progress.",
+      "inactive_channel": "This version is not available on the active channel.",
+      "no_update": "No update is available.",
+      "unavailable_build": "This feature is not available in this build.",
+      "permission_denied": "The device denied permission for this operation.",
+      "storage_full": "The device does not have enough free storage.",
+      "http_status": "The service returned HTTP {0}.",
+      "network": "A network connection could not be established.",
+      "download_failed": "The download failed.",
+      "verification_failed": "Package verification failed.",
+      "install_failed": "The installation failed.",
+      "unknown_daemon": "The requested daemon is unknown.",
+      "generic": "See the device logs for details."
+    },
+    "router": {
+      "unknown_command": "Unknown command. Use /help for available commands."
+    },
+    "daemon_names": {
+      "camera": "Camera",
+      "acc_sentry": "ACC Sentry",
+      "sentry": "Sentry",
+      "telegram": "Telegram",
+      "surveillance": "Surveillance",
+      "cloudflare_tunnel": "Cloudflare Tunnel",
+      "zrok_tunnel": "Zrok Tunnel",
+      "tailscale_tunnel": "Tailscale Tunnel",
+      "sing_box": "Sing-Box"
+    },
+    "buttons": {
+      "stop_named": "⛔ Stop {0}",
+      "start_named": "✅ Start {0}",
+      "refresh": "🔄 Refresh",
+      "status": "📊 Status",
+      "events": "📹 Events",
+      "start_surveillance": "✅ Start Surveillance",
+      "stop_surveillance": "⛔ Stop Surveillance",
+      "daemons": "🤖 Daemons",
+      "tunnel_url": "🌐 Tunnel URL",
+      "check_update": "⬆️ Check Update",
+      "backup": "💾 Backup",
+      "stop": "⛔ Stop",
+      "start": "✅ Start"
+    },
+    "daemons": {
+      "title": "🤖 *Daemons*\n\n"
+    },
+    "url": {
+      "none_running": "⚠️ No tunnel running\n\nStart one with:\n`/daemon cloudflared start`\n`/daemon zrok start`\n`/daemon tailscale start`",
+      "title": "🌐 *Tunnel URLs*\n\n",
+      "resolved_line": "• *{0}:* {1}\n",
+      "pending_line": "• *{0}:* _starting, URL not available yet_\n",
+      "last_known": "\n_Last known:_ {0}\n",
+      "retry_pending": "\n_Try again in a few seconds for pending URLs._",
+      "error": "⚠️ Error: {0}"
+    },
+    "help": {
+      "text": "📖 *Commands*\n_OverDrive {0}_\n\n*Surveillance*\n`/start` - Start surveillance\n`/stop` - Stop surveillance\n`/status` - System status\n\n*Events*\n`/events [hours] [page]` - List recordings\n`/download <file>` - Download video\n\n*Daemons*\n`/daemons` - List all daemons\n`/daemon <name> start|stop`\n\n*System*\n`/url` - Tunnel URL\n`/update` - Check for app update\n`/backup` - Export settings backup\n`/backup trips` - Backup incl. trip history\n`/help` - This message"
+    },
+    "surveillance": {
+      "started": "✅ Surveillance started",
+      "start_failed": "⚠️ Failed to start surveillance",
+      "stopped": "⛔ Surveillance stopped",
+      "stop_failed": "⚠️ Failed to stop surveillance",
+      "status_title": "📊 *Status*\n\n",
+      "status_active": "*Surveillance:* ✅ Active\n",
+      "status_inactive": "*Surveillance:* ⛔ Inactive\n",
+      "temperature": "*Temp:* {0}\n\n",
+      "daemons_heading": "*Daemons:*\n",
+      "daemon_running": "✅ {0}\n",
+      "no_daemons_running": "_No daemons running_\n",
+      "not_available": "N/A"
+    },
+    "daemon": {
+      "usage": "Usage: /daemon <name> start|stop|status\n\nAvailable: {0}",
+      "unknown": "❌ Unknown daemon: {0}\n\nAvailable: {1}",
+      "cannot_control_telegram": "⚠️ The Telegram daemon cannot be controlled through Telegram.",
+      "already_running": "ℹ️ {0} is already running.",
+      "must_start_from_app": "⚠️ {0} must be started from the app interface.",
+      "started": "✅ {0} started.",
+      "start_failed": "⚠️ Failed to start {0}.",
+      "not_running": "ℹ️ {0} is not running.",
+      "stopped": "⛔ {0} stopped.",
+      "stop_failed": "⚠️ Failed to stop {0}.",
+      "status_running": "{0}: ✅ Running",
+      "status_stopped": "{0}: ⛔ Stopped",
+      "action_usage": "Usage: /daemon {0} start|stop|status",
+      "tunnel_url": "🌐 *Tunnel URL*\n{0}"
+    },
+    "events": {
+      "invalid_hours": "⚠️ Invalid hour value. Usage: `/events [hours] [page]`\nExample: `/events 12 2`",
+      "download_usage": "⚠️ Usage: `/download <filename>`\nExample: `/download event_20260113_143022.mp4`",
+      "directory_missing": "📁 Events directory not found",
+      "none_found": "📭 No event recordings found",
+      "none_recent": "📭 No events in the last {0} hours",
+      "header": "📹 *Events* ({0}h)",
+      "header_paged": "📹 *Events* ({0}h) {1}/{2}",
+      "download_button": "{0} {1} ({2})",
+      "previous_button": "◀️ Previous",
+      "next_button": "Next ▶️",
+      "legend": "⏺️ Recording  ⚠️ >50 MB  📥 Ready",
+      "invalid_filename": "⚠️ Invalid filename. It must match `event_*.mp4`.",
+      "file_not_found": "❌ File not found: `{0}`",
+      "recording_in_progress": "⏳ *Recording in progress*\n\nFile: `{0}`\nCurrent size: {1}\n\nWait 10–15 seconds and try again.",
+      "file_too_large": "❌ *File too large*\n\nFile: `{0}`\nSize: {1}\nLimit: 50 MB",
+      "uploading": "📤 Uploading `{0}` ({1})…",
+      "video_caption": "📹 {0}",
+      "upload_failed": "❌ Failed to upload the video. Try again later.",
+      "size_bytes": "{0} B",
+      "size_kb": "{0} KB",
+      "size_mb": "{0} MB"
+    },
+    "update": {
+      "checking": "🔍 Checking for updates…",
+      "service_unreachable": "⚠️ Could not reach the update service.\n\nThe camera daemon may not be running. Try `/daemon camera start`.",
+      "check_failed": "⚠️ Update check failed: {0}",
+      "switch_alpha_all_button": "📚 Switch to Alpha (all versions)",
+      "up_to_date": "✅ *Up to date*\n_OverDrive {0} · Braveheart_",
+      "available": "⬆️ *Update available* _(Braveheart)_\n\n*Current:* {0}\n*Latest:* {1}\n\n_Installation takes about 2 minutes. The bot will restart and send a new tunnel URL when it finishes._",
+      "available_with_notes": "⬆️ *Update available* _(Braveheart)_\n\n*Current:* {0}\n*Latest:* {1}\n\n*Release notes:*\n{2}\n\n_Installation takes about 2 minutes. The bot will restart and send a new tunnel URL when it finishes._",
+      "install_now_button": "🔄 Install Now",
+      "switch_alpha_button": "📚 Switch to Alpha",
+      "list_service_unreachable": "⚠️ Could not list versions because the update service is unreachable.",
+      "list_failed": "⚠️ Could not list versions: {0}",
+      "no_versions": "ℹ️ No versions have been published yet.",
+      "version_button": "{0}",
+      "version_installed_button": "✅ {0} (installed)",
+      "version_older_button": "⬇️ {0}",
+      "switch_braveheart_button": "🚀 Switch to Braveheart (latest only)",
+      "alpha_list": "📚 *Alpha — choose a version*\n_Installed: {0}_\n\n_Downgrades are allowed._",
+      "alpha_list_truncated": "📚 *Alpha — choose a version*\n_Installed: {0}_\n\n_Showing the newest {1} of {2}. Older builds remain available on GitHub Releases._\n_Downgrades are allowed._",
+      "channel_usage": "Usage: `/update channel alpha` or `/update channel braveheart`",
+      "channel_service_unreachable": "⚠️ Could not switch the update channel because the update service is unreachable.",
+      "channel_switch_failed": "⚠️ Could not switch the update channel: {0}",
+      "channel_set_braveheart": "✅ Update channel set to *Braveheart (latest only)*.\nSend /update to continue.",
+      "channel_set_alpha": "✅ Update channel set to *Alpha (all versions)*.\nSend /update to continue.",
+      "installing": "⏳ *Installing update…*\n\nThe daemons will stop, the APK will be installed, and the device will restart. This bot will be silent for about 2 minutes. A new tunnel URL message will arrive when it is back online.",
+      "install_service_unreachable": "⚠️ Could not start the installation because the camera daemon is unreachable.",
+      "install_rejected": "⚠️ Installation rejected: {0}",
+      "install_failed": "⚠️ *Overdrive update failed*\nThe device is still on the previous version.\nReason: {0}",
+      "unknown_reason": "unknown (see head unit)",
+      "installed": "🔄 *Overdrive updated to {0}*",
+      "installed_new_tunnel": "🔄 *Overdrive updated to {0}*\nNew tunnel URL:\n{1}\n\n_The cloudflared link rotates after every install._",
+      "installed_tunnel_online": "🔄 *Overdrive updated to {0}*\nTunnel back online:\n{1}"
+    },
+    "backup": {
+      "restore_unavailable": "ℹ️ *Restore is not available through Telegram.*\n\nOpen Overdrive on the head unit or in the app, then go to *Settings → Backup & Restore* and select the backup file. Backups can only be restored on the same device and require confirmation there.",
+      "building_with_trips": "💾 Building backup with settings and trip history…",
+      "building_settings": "💾 Building settings backup…",
+      "service_unreachable": "⚠️ Could not reach the backup service.\n\nThe camera daemon may not be running. Try `/daemon camera start`.",
+      "failed": "⚠️ Backup failed: {0}",
+      "no_data": "⚠️ The backup returned no data.",
+      "write_failed": "⚠️ Could not write the backup file: {0}",
+      "document_settings": "💾 Overdrive settings backup\n\n⚠️ This file contains credentials and the device key. Keep it private. Restore it on this same head unit from Settings → Backup & Restore.",
+      "document_settings_version": "💾 Overdrive settings backup · {0}\n\n⚠️ This file contains credentials and the device key. Keep it private. Restore it on this same head unit from Settings → Backup & Restore.",
+      "document_with_trips": "💾 Overdrive backup (settings + trip history: {0})\n\n⚠️ This file contains credentials, the device key, and location history. Keep it private. Restore it on this same head unit from Settings → Backup & Restore.",
+      "document_with_trips_version": "💾 Overdrive backup (settings + trip history: {0}) · {1}\n\n⚠️ This file contains credentials, the device key, and location history. Keep it private. Restore it on this same head unit from Settings → Backup & Restore.",
+      "upload_failed": "⚠️ Could not upload the backup file to Telegram."
+    },
+    "sendlog": {
+      "choose": "📄 *Send a daemon log*\n\nChoose a daemon or use `/sendlog <name>`:",
+      "daemon_button": "{0}",
+      "unknown_daemon": "❌ Unknown daemon `{0}`.\nTry: {1}",
+      "uploading": "⏳ Uploading the *{0}* log…",
+      "service_unreachable": "⚠️ Could not reach the log service. The camera daemon may not be running. Try `/daemon camera start`.",
+      "upload_failed": "⚠️ Log upload failed: {0}",
+      "upload_success": "✅ *{0}* log uploaded.\n\nShare this code with us and include a note describing what went wrong:\n`{1}`\n\nReport it on:\n• Discord: {2}\n• GitHub: {3}\n• WhatsApp: {4}\n\n_Secrets were removed before upload. The log expires automatically._"
+    },
+    "greeting": {
+      "online": "🤖 *Surveillance Bot Online*\n\nBot daemon started and ready.\nUse /help for available commands."
+    },
+    "callback": {
+      "not_authorized": "⚠️ Not authorized",
+      "downloading": "📥 Downloading…",
+      "starting": "⏳ Starting…",
+      "stopping": "⏳ Stopping…",
+      "processing": "⏳ Processing…",
+      "unknown_action": "Unknown action"
+    },
+    "pair": {
+      "no_owner": "⚠️ No owner paired. Use /pair <PIN> to pair.",
+      "already_paired": "❌ Already paired with another owner.",
+      "invalid_format": "❌ Invalid PIN format. Enter the 6-digit PIN from the app.",
+      "no_pin": "❌ No PIN generated. Generate a PIN from the app first.",
+      "expired": "❌ PIN expired. Generate a new PIN from the app.",
+      "invalid": "❌ Invalid PIN. Check the PIN shown in the app.",
+      "storage_error": "⚠️ Pairing could not be saved (storage error). Please try /pair again; if it keeps failing, restart the app.",
+      "success": "✅ Paired successfully!\n\nWelcome, {0}!\nUse /help to see available commands.",
+      "success_no_name": "✅ Paired successfully!\n\nUse /help to see available commands."
+    },
+    "tunnel": {
+      "notification_url": "🌐 *Tunnel URL*\n{0}",
+      "notification_url_changed": "🔄 *Tunnel URL Changed*\n{0}"
+    },
+    "critical": {
+      "message": "⚠️ *Critical Alert*\n{0}",
+      "message_with_details": "⚠️ *Critical Alert*\n{0}\n{1}",
+      "type": {
+        "low_battery": "🔋 Low battery",
+        "storage_full": "💾 Storage full",
+        "daemon_crash": "⚠️ Daemon crashed",
+        "system_error": "❌ System error",
+        "system_reboot": "🔄 System reboot",
+        "unknown": "❓ Unknown critical event"
+      }
+    },
+    "motion": {
+      "tier": {
+        "critical": "CRITICAL",
+        "alert": "Alert"
+      },
+      "actor": {
+        "person": "Person",
+        "bike": "Bike",
+        "vehicle": "Vehicle",
+        "animal": "Animal",
+        "motion": "Motion"
+      },
+      "camera": {
+        "front": "front",
+        "right": "right",
+        "rear": "rear",
+        "left": "left"
+      },
+      "title": {
+        "tier_actor_camera": "{0} *{1} · {2} at {3}*",
+        "tier_actor": "{0} *{1} · {2}*",
+        "tier_camera": "{0} *{1} at {2}*",
+        "tier": "{0} *{1}*",
+        "actor_camera": "{0} *{1} at {2}*",
+        "actor": "{0} *{1}*",
+        "camera": "{0} *Motion at {1}*",
+        "detected": "{0} *Motion detected*"
+      },
+      "proximity": {
+        "very_close": "Very close",
+        "close": "Close",
+        "mid": "Mid range",
+        "far": "Far"
+      },
+      "count": {
+        "person_one": "{0} person",
+        "person_many": "{0} people",
+        "vehicle_one": "{0} vehicle",
+        "vehicle_many": "{0} vehicles",
+        "bike_one": "{0} bike",
+        "bike_many": "{0} bikes",
+        "animal_one": "{0} animal",
+        "animal_many": "{0} animals"
+      },
+      "recording_in_progress": "_Recording in progress_",
+      "detected_at": "🕒 _Detected {0}_",
+      "cleared_no_event": "✅ Motion cleared — no event recorded (filtered as a non-actor false alert)."
+    },
+    "media": {
+      "video_too_large": "📹 *Clip too large to send*\n`{0}` ({1} MB)\nView it on the device — it exceeds the 50 MB Telegram limit.",
+      "document_too_large": "📄 *File too large to send*\n`{0}` ({1} MB) — it exceeds the 50 MB Telegram limit."
+    },
+    "legacy": {
+      "connectivity": {
+        "connected": "📶 Connected via {0}",
+        "disconnected": "📵 Disconnected from {0}"
+      },
+      "critical_with_details": "{0}: {1}",
+      "motion": {
+        "detected_actor": "🚨 {0} detected ({1}%)",
+        "detected": "👁 Motion detected"
+      },
+      "tunnel": {
+        "connected": "🌐 Tunnel connected:\n{0}",
+        "changed": "🔄 Tunnel URL changed:\n{0}"
+      },
+      "video": {
+        "saved_with_detection": "🎬 Recording saved ({0} detected) - {1}s",
+        "saved": "🎬 Recording saved - {0}s"
+      }
+    }
   },
   "vehicle_control": {
     "cloud_required": "Connect a BYD account in Settings to use this control",

@@ -1,7 +1,11 @@
 package com.overdrive.app.daemon.telegram;
 
+import com.overdrive.app.telegram.TelegramMessages;
+
 import org.json.JSONArray;
 import org.json.JSONObject;
+
+import java.util.Locale;
 
 /**
  * Handles /update — channel-aware, mirroring the web update flow.
@@ -43,7 +47,7 @@ public class UpdateCommandHandler implements TelegramCommandHandler {
     public void handle(long chatId, String[] args, CommandContext ctx) {
         // /update channel <alpha|braveheart>
         if (args.length > 1 && "channel".equalsIgnoreCase(args[1])) {
-            String target = args.length > 2 ? args[2].toLowerCase() : "";
+            String target = args.length > 2 ? args[2].toLowerCase(Locale.ROOT) : "";
             handleSwitchChannel(chatId, target, ctx);
             return;
         }
@@ -57,20 +61,19 @@ public class UpdateCommandHandler implements TelegramCommandHandler {
     }
 
     private void handleCheck(long chatId, CommandContext ctx) {
-        ctx.sendMessage(chatId, "🔍 Checking for updates…");
+        ctx.sendMessage(chatId, ctx.tr("update.checking"));
 
         JSONObject req = new JSONObject();
         try { req.put("command", "CHECK_UPDATE"); } catch (Exception ignored) {}
 
         JSONObject resp = ctx.sendIpcCommand(CAMERA_IPC_PORT, req, CHECK_TIMEOUT_MS);
         if (resp == null) {
-            ctx.sendMessage(chatId, "⚠️ Could not reach update service.\n\n" +
-                    "The camera daemon may not be running. Try `/daemon camera start`.");
+            ctx.sendMessage(chatId, ctx.tr("update.service_unreachable"));
             return;
         }
         if (!resp.optBoolean("success", false)) {
-            ctx.sendMessage(chatId, "⚠️ Update check failed: " +
-                    resp.optString("error", "unknown"));
+            ctx.sendMessage(chatId, ctx.tr("update.check_failed",
+                    ctx.technicalDetail(resp.optString("error", ""))));
             return;
         }
 
@@ -88,38 +91,38 @@ public class UpdateCommandHandler implements TelegramCommandHandler {
         String remoteVersion = resp.optString("remoteVersion", "?");
 
         if (resp.has("error")) {
-            ctx.sendMessage(chatId, "⚠️ Update check error: " + resp.optString("error"));
+            ctx.sendMessage(chatId, ctx.tr("update.check_failed",
+                    ctx.technicalDetail(resp.optString("error"))));
             return;
         }
 
         if (!available) {
             String[][][] buttons = {
-                    {{"📚 Switch to Alpha (all versions)", "cmd:/update channel alpha"}}
+                    {{ctx.tr("update.switch_alpha_all_button"), "cmd:/update channel alpha"}}
             };
             ctx.sendMessageWithButtons(chatId,
-                    "✅ *Up to date*\n_OverDrive " + currentVersion + " · Braveheart_", buttons);
+                    ctx.tr("update.up_to_date", currentVersion), buttons);
             return;
         }
 
         String releaseNotes = resp.optString("releaseNotes", "").trim();
-        StringBuilder sb = new StringBuilder();
-        sb.append("⬆️ *Update available* _(Braveheart)_\n\n")
-          .append("*Current:* ").append(currentVersion).append("\n")
-          .append("*Latest:* ").append(remoteVersion).append("\n");
-        if (!releaseNotes.isEmpty()) {
+        String text;
+        if (!releaseNotes.isEmpty() && !TelegramMessages.isPortuguese()) {
             String trimmed = releaseNotes.length() > 600
                     ? releaseNotes.substring(0, 600) + "…"
                     : releaseNotes;
-            sb.append("\n*Release notes:*\n").append(stripMarkdown(trimmed)).append("\n");
+            text = ctx.tr("update.available_with_notes",
+                    currentVersion, remoteVersion, stripMarkdown(trimmed));
+        } else {
+            text = ctx.tr("update.available", currentVersion, remoteVersion);
         }
-        sb.append("\n_Install takes ~2 minutes. The bot will restart and post a new tunnel URL when done._");
 
         String[][][] buttons = {
-                {{"🔄 Install Now", "cmd:/update install"}},
-                {{"📚 Switch to Alpha", "cmd:/update channel alpha"}},
-                {{"❌ Cancel", "cmd:/help"}}
+                {{ctx.tr("update.install_now_button"), "cmd:/update install"}},
+                {{ctx.tr("update.switch_alpha_button"), "cmd:/update channel alpha"}},
+                {{ctx.tr("common.cancel_button"), "cmd:/help"}}
         };
-        ctx.sendMessageWithButtons(chatId, sb.toString(), buttons);
+        ctx.sendMessageWithButtons(chatId, text, buttons);
     }
 
     /**
@@ -133,14 +136,18 @@ public class UpdateCommandHandler implements TelegramCommandHandler {
 
         JSONObject resp = ctx.sendIpcCommand(CAMERA_IPC_PORT, req, CHECK_TIMEOUT_MS);
         if (resp == null || !resp.optBoolean("success", false)) {
-            ctx.sendMessage(chatId, "⚠️ Could not list versions: " +
-                    (resp != null ? resp.optString("error", "unknown") : "update service unreachable"));
+            if (resp == null) {
+                ctx.sendMessage(chatId, ctx.tr("update.list_service_unreachable"));
+            } else {
+                ctx.sendMessage(chatId, ctx.tr("update.list_failed",
+                        ctx.technicalDetail(resp.optString("error", ""))));
+            }
             return;
         }
         JSONArray versions = resp.optJSONArray("versions");
         String current = resp.optString("currentVersion", "?");
         if (versions == null || versions.length() == 0) {
-            ctx.sendMessage(chatId, "ℹ️ No versions published yet.");
+            ctx.sendMessage(chatId, ctx.tr("update.no_versions"));
             return;
         }
 
@@ -159,27 +166,30 @@ public class UpdateCommandHandler implements TelegramCommandHandler {
             // alpha-v<semver> tags are ~12 bytes, so this never trips in
             // practice — it's a guard against a pathological tag).
             if (callback.getBytes(java.nio.charset.StandardCharsets.UTF_8).length > 64) continue;
-            String label = version;
-            if ("current".equals(relation)) label = "✅ " + version + " (installed)";
-            else if ("older".equals(relation)) label = "⬇️ " + version;
+            String label = ctx.tr("update.version_button", version);
+            if ("current".equals(relation)) {
+                label = ctx.tr("update.version_installed_button", version);
+            } else if ("older".equals(relation)) {
+                label = ctx.tr("update.version_older_button", version);
+            }
             rows.add(new String[][] {{label, callback}});
         }
-        rows.add(new String[][] {{"🚀 Switch to Braveheart (latest only)", "cmd:/update channel braveheart"}});
+        rows.add(new String[][] {{ctx.tr("update.switch_braveheart_button"),
+                "cmd:/update channel braveheart"}});
 
-        StringBuilder sb = new StringBuilder();
-        sb.append("📚 *Alpha — choose a version*\n_Installed: ").append(current).append("_\n");
+        String text;
         if (versions.length() > max) {
-            sb.append("\n_Showing newest ").append(max).append(" of ")
-              .append(versions.length()).append(". Older builds remain on GitHub Releases._");
+            text = ctx.tr("update.alpha_list_truncated", current, max, versions.length());
+        } else {
+            text = ctx.tr("update.alpha_list", current);
         }
-        sb.append("\n_Downgrades are allowed._");
 
-        ctx.sendMessageWithButtons(chatId, sb.toString(), rows.toArray(new String[0][][]));
+        ctx.sendMessageWithButtons(chatId, text, rows.toArray(new String[0][][]));
     }
 
     private void handleSwitchChannel(long chatId, String target, CommandContext ctx) {
         if (!CHANNEL_ALPHA.equals(target) && !CHANNEL_BRAVEHEART.equals(target)) {
-            ctx.sendMessage(chatId, "Usage: `/update channel alpha` or `/update channel braveheart`");
+            ctx.sendMessage(chatId, ctx.tr("update.channel_usage"));
             return;
         }
         JSONObject req = new JSONObject();
@@ -190,13 +200,19 @@ public class UpdateCommandHandler implements TelegramCommandHandler {
 
         JSONObject resp = ctx.sendIpcCommand(CAMERA_IPC_PORT, req, CHANNEL_TIMEOUT_MS);
         if (resp == null || !resp.optBoolean("success", false)) {
-            ctx.sendMessage(chatId, "⚠️ Could not switch channel: " +
-                    (resp != null ? resp.optString("error", "unknown") : "update service unreachable"));
+            if (resp == null) {
+                ctx.sendMessage(chatId, ctx.tr("update.channel_service_unreachable"));
+            } else {
+                ctx.sendMessage(chatId, ctx.tr("update.channel_switch_failed",
+                        ctx.technicalDetail(resp.optString("error", ""))));
+            }
             return;
         }
-        String label = CHANNEL_BRAVEHEART.equals(target) ? "Braveheart (latest only)"
-                                                         : "Alpha (all versions)";
-        ctx.sendMessage(chatId, "✅ Update channel set to *" + label + "*.\nSend /update to continue.");
+        if (CHANNEL_BRAVEHEART.equals(target)) {
+            ctx.sendMessage(chatId, ctx.tr("update.channel_set_braveheart"));
+        } else {
+            ctx.sendMessage(chatId, ctx.tr("update.channel_set_alpha"));
+        }
     }
 
     private void handleInstall(long chatId, String tag, CommandContext ctx) {
@@ -212,11 +228,7 @@ public class UpdateCommandHandler implements TelegramCommandHandler {
         // verify failure), permanently blocking future /update installs from
         // Telegram while web/app could retry immediately — a real cross-surface
         // divergence. Relying on the shared gate removes it.
-        ctx.sendMessage(chatId,
-                "⏳ *Installing update…*\n\n" +
-                "Daemons will stop, the APK will install, and the device will\n" +
-                "relaunch. This bot will go silent for ~2 minutes; you'll get a\n" +
-                "fresh tunnel URL message once it's back.");
+        ctx.sendMessage(chatId, ctx.tr("update.installing"));
 
         JSONObject req = new JSONObject();
         try {
@@ -228,13 +240,12 @@ public class UpdateCommandHandler implements TelegramCommandHandler {
 
         JSONObject resp = ctx.sendIpcCommand(CAMERA_IPC_PORT, req, INSTALL_TIMEOUT_MS);
         if (resp == null) {
-            ctx.sendMessage(chatId,
-                    "⚠️ Could not start install — camera daemon unreachable.");
+            ctx.sendMessage(chatId, ctx.tr("update.install_service_unreachable"));
             return;
         }
         if (!resp.optBoolean("success", false)) {
-            ctx.sendMessage(chatId,
-                    "⚠️ Install rejected: " + resp.optString("error", "unknown"));
+            ctx.sendMessage(chatId, ctx.tr("update.install_rejected",
+                    ctx.technicalDetail(resp.optString("error", ""))));
             return;
         }
         // Success path: daemons are now dying. No further messages until the

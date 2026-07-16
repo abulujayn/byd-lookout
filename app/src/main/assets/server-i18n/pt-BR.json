@@ -115,7 +115,32 @@
     "charging_stopped": "Carregamento parado",
     "charging_complete": "Carregamento completo",
     "charging_fault": "Falha de carregamento",
-    "battery_ready_to_unplug": "Bateria em {0}%  pronta para desconectar",
+    "battery_ready_to_unplug": "Bateria em {0}% — pronta para desconectar",
+    "charging_state": {
+      "ready": "Pronto",
+      "charging": "Carregando",
+      "finished": "Carregamento concluído",
+      "discharging": "Descarregando",
+      "terminated": "Carregamento interrompido",
+      "fault_c10": "Falha: C10",
+      "fault_gun": "Falha: conector de carregamento",
+      "fault_ac": "Falha: corrente alternada",
+      "fault_charger": "Falha: carregador",
+      "scheduled": "Agendado",
+      "timeout": "Tempo limite excedido",
+      "discharging_cbu": "Descarregando pela CBU",
+      "discharge_finished": "Descarga concluída",
+      "idle": "Inativo",
+      "unknown": "Desconhecido ({0})"
+    },
+    "tyre_no_reading": "sem leitura",
+    "tyre_critically_low": "Pneu criticamente baixo",
+    "tyre_overpressure": "Pressão excessiva",
+    "tyre_underpressure": "Pressão baixa",
+    "tyre_wheel_reading": "{0} — {1}",
+    "tyre_fast_leak": "Vazamento rápido detectado",
+    "tyre_slow_leak": "Vazamento lento detectado",
+    "tyre_wheel_pressure": "{0} ({1} kPa)",
     "door_opened": "A porta {0} aberta",
     "door_closed": "Porta {0} fechada",
     "while_parked": "Enquanto estacionado",
@@ -132,9 +157,308 @@
     "soh_frame_mismatch_body": "O veículo informa {0} kWh com carga total, mas a capacidade de embalagem é definida para {1} kWh."
   },
   "telegram": {
-    "recording_caption": " Registo ({0}) - {1}s",
-    "recording_caption_no_label": " Registros - {0}s",
-    "proximity_alert": " Tempo de alerta de proximidade: {0} Trigger: {1} ({2}) A gravação começou..."
+    "recording_caption": "📹 Gravação ({0}) — {1}s",
+    "recording_caption_no_label": "📹 Gravação — {0}s",
+    "recording_label": {
+      "person": "pessoa",
+      "bike": "bicicleta",
+      "vehicle": "veículo",
+      "animal": "animal",
+      "motion": "movimento"
+    },
+    "proximity_alert": "🚨 *Alerta de proximidade*\nHorário: {0}\nNível: {1} ({2})\nGravação iniciada…",
+    "proximity": {
+      "trigger": {
+        "red": "Vermelho",
+        "yellow": "Amarelo"
+      }
+    },
+    "common": {
+      "cancel_button": "❌ Cancelar",
+      "unknown_error": "erro desconhecido"
+    },
+    "error_details": {
+      "app_context_not_ready": "O aplicativo ainda não está pronto.",
+      "timeout": "A operação excedeu o tempo limite.",
+      "public_mode": "As atualizações estão desativadas no modo público.",
+      "invalid_channel": "O canal de atualização é inválido.",
+      "channel_save_failed": "Não foi possível salvar o canal de atualização.",
+      "update_in_progress": "Já existe uma atualização em andamento.",
+      "inactive_channel": "Esta versão não está disponível no canal ativo.",
+      "no_update": "Não há atualização disponível.",
+      "unavailable_build": "Este recurso não está disponível nesta versão do aplicativo.",
+      "permission_denied": "O dispositivo negou permissão para esta operação.",
+      "storage_full": "O dispositivo não tem espaço livre suficiente.",
+      "http_status": "O serviço retornou o código HTTP {0}.",
+      "network": "Não foi possível estabelecer uma conexão de rede.",
+      "download_failed": "Falha ao baixar o arquivo.",
+      "verification_failed": "Falha ao verificar o pacote.",
+      "install_failed": "Falha na instalação.",
+      "unknown_daemon": "O daemon solicitado é desconhecido.",
+      "generic": "Consulte os logs do dispositivo para ver os detalhes."
+    },
+    "router": {
+      "unknown_command": "Comando desconhecido. Use /help para ver os comandos disponíveis."
+    },
+    "daemon_names": {
+      "camera": "Câmera",
+      "acc_sentry": "Vigilância ACC",
+      "sentry": "Sentry",
+      "telegram": "Telegram",
+      "surveillance": "Vigilância",
+      "cloudflare_tunnel": "Túnel Cloudflare",
+      "zrok_tunnel": "Túnel Zrok",
+      "tailscale_tunnel": "Túnel Tailscale",
+      "sing_box": "Sing-Box"
+    },
+    "buttons": {
+      "stop_named": "⛔ Parar {0}",
+      "start_named": "✅ Iniciar {0}",
+      "refresh": "🔄 Atualizar",
+      "status": "📊 Status",
+      "events": "📹 Eventos",
+      "start_surveillance": "✅ Iniciar vigilância",
+      "stop_surveillance": "⛔ Parar vigilância",
+      "daemons": "🤖 Serviços",
+      "tunnel_url": "🌐 URL do túnel",
+      "check_update": "⬆️ Verificar atualização",
+      "backup": "💾 Backup",
+      "stop": "⛔ Parar",
+      "start": "✅ Iniciar"
+    },
+    "daemons": {
+      "title": "🤖 *Serviços*\n\n"
+    },
+    "url": {
+      "none_running": "⚠️ Nenhum túnel em execução\n\nInicie um com:\n`/daemon cloudflared start`\n`/daemon zrok start`\n`/daemon tailscale start`",
+      "title": "🌐 *URLs dos túneis*\n\n",
+      "resolved_line": "• *{0}:* {1}\n",
+      "pending_line": "• *{0}:* _iniciando, URL ainda não disponível_\n",
+      "last_known": "\n_Última URL conhecida:_ {0}\n",
+      "retry_pending": "\n_Tente novamente em alguns segundos para consultar as URLs pendentes._",
+      "error": "⚠️ Erro: {0}"
+    },
+    "help": {
+      "text": "📖 *Comandos*\n_OverDrive {0}_\n\n*Vigilância*\n`/start` - Iniciar vigilância\n`/stop` - Parar vigilância\n`/status` - Exibir status do sistema\n\n*Eventos*\n`/events [horas] [página]` - Listar gravações\n`/download <arquivo>` - Baixar vídeo\n\n*Serviços*\n`/daemons` - Listar todos os serviços\n`/daemon <nome> start|stop`\n\n*Sistema*\n`/url` - Exibir URL do túnel\n`/update` - Verificar atualização do app\n`/backup` - Exportar backup das configurações\n`/backup trips` - Incluir histórico de viagens no backup\n`/help` - Exibir esta mensagem"
+    },
+    "surveillance": {
+      "started": "✅ Vigilância iniciada",
+      "start_failed": "⚠️ Não foi possível iniciar a vigilância",
+      "stopped": "⛔ Vigilância encerrada",
+      "stop_failed": "⚠️ Não foi possível encerrar a vigilância",
+      "status_title": "📊 *Status*\n\n",
+      "status_active": "*Vigilância:* ✅ Ativa\n",
+      "status_inactive": "*Vigilância:* ⛔ Inativa\n",
+      "temperature": "*Temperatura:* {0}\n\n",
+      "daemons_heading": "*Serviços:*\n",
+      "daemon_running": "✅ {0}\n",
+      "no_daemons_running": "_Nenhum serviço em execução_\n",
+      "not_available": "N/D"
+    },
+    "daemon": {
+      "usage": "Uso: /daemon <nome> start|stop|status\n\nDisponíveis: {0}",
+      "unknown": "❌ Serviço desconhecido: {0}\n\nDisponíveis: {1}",
+      "cannot_control_telegram": "⚠️ O daemon do Telegram não pode ser controlado pelo próprio Telegram.",
+      "already_running": "ℹ️ {0} já está em execução.",
+      "must_start_from_app": "⚠️ {0} precisa ser iniciado pela interface do aplicativo.",
+      "started": "✅ {0} iniciado.",
+      "start_failed": "⚠️ Não foi possível iniciar {0}.",
+      "not_running": "ℹ️ {0} não está em execução.",
+      "stopped": "⛔ {0} parado.",
+      "stop_failed": "⚠️ Não foi possível parar {0}.",
+      "status_running": "{0}: ✅ Em execução",
+      "status_stopped": "{0}: ⛔ Parado",
+      "action_usage": "Uso: /daemon {0} start|stop|status",
+      "tunnel_url": "🌐 *URL do túnel*\n{0}"
+    },
+    "events": {
+      "invalid_hours": "⚠️ Quantidade de horas inválida. Uso: `/events [horas] [página]`\nExemplo: `/events 12 2`",
+      "download_usage": "⚠️ Uso: `/download <arquivo>`\nExemplo: `/download event_20260113_143022.mp4`",
+      "directory_missing": "📁 Pasta de eventos não encontrada",
+      "none_found": "📭 Nenhuma gravação de evento encontrada",
+      "none_recent": "📭 Nenhum evento nas últimas {0} horas",
+      "header": "📹 *Eventos* ({0} h)",
+      "header_paged": "📹 *Eventos* ({0} h) {1}/{2}",
+      "download_button": "{0} {1} ({2})",
+      "previous_button": "◀️ Anterior",
+      "next_button": "Próxima ▶️",
+      "legend": "⏺️ Em gravação  ⚠️ >50 MB  📥 Disponível",
+      "invalid_filename": "⚠️ Nome de arquivo inválido. Use o formato `event_*.mp4`.",
+      "file_not_found": "❌ Arquivo não encontrado: `{0}`",
+      "recording_in_progress": "⏳ *Gravação em andamento*\n\nArquivo: `{0}`\nTamanho atual: {1}\n\nAguarde de 10 a 15 segundos e tente novamente.",
+      "file_too_large": "❌ *Arquivo muito grande*\n\nArquivo: `{0}`\nTamanho: {1}\nLimite: 50 MB",
+      "uploading": "📤 Enviando `{0}` ({1})…",
+      "video_caption": "📹 {0}",
+      "upload_failed": "❌ Não foi possível enviar o vídeo. Tente novamente mais tarde.",
+      "size_bytes": "{0} B",
+      "size_kb": "{0} KB",
+      "size_mb": "{0} MB"
+    },
+    "update": {
+      "checking": "🔍 Verificando atualizações…",
+      "service_unreachable": "⚠️ Não foi possível acessar o serviço de atualização.\n\nO daemon da câmera pode não estar em execução. Tente `/daemon camera start`.",
+      "check_failed": "⚠️ Falha ao verificar atualizações: {0}",
+      "switch_alpha_all_button": "📚 Mudar para Alpha (todas as versões)",
+      "up_to_date": "✅ *Tudo atualizado*\n_OverDrive {0} · Braveheart_",
+      "available": "⬆️ *Atualização disponível* _(Braveheart)_\n\n*Atual:* {0}\n*Mais recente:* {1}\n\n_A instalação leva cerca de 2 minutos. O bot será reiniciado e enviará uma nova URL do túnel ao concluir._",
+      "available_with_notes": "⬆️ *Atualização disponível* _(Braveheart)_\n\n*Atual:* {0}\n*Mais recente:* {1}\n\n*Notas da versão:*\n{2}\n\n_A instalação leva cerca de 2 minutos. O bot será reiniciado e enviará uma nova URL do túnel ao concluir._",
+      "install_now_button": "🔄 Instalar agora",
+      "switch_alpha_button": "📚 Mudar para Alpha",
+      "list_service_unreachable": "⚠️ Não foi possível listar as versões porque o serviço de atualização está inacessível.",
+      "list_failed": "⚠️ Não foi possível listar as versões: {0}",
+      "no_versions": "ℹ️ Nenhuma versão foi publicada ainda.",
+      "version_button": "{0}",
+      "version_installed_button": "✅ {0} (instalada)",
+      "version_older_button": "⬇️ {0}",
+      "switch_braveheart_button": "🚀 Mudar para Braveheart (somente a mais recente)",
+      "alpha_list": "📚 *Alpha — escolha uma versão*\n_Instalada: {0}_\n\n_É possível instalar versões anteriores._",
+      "alpha_list_truncated": "📚 *Alpha — escolha uma versão*\n_Instalada: {0}_\n\n_Exibindo as {1} mais recentes de {2}. As versões anteriores continuam disponíveis na página de lançamentos do GitHub._\n_É possível instalar versões anteriores._",
+      "channel_usage": "Uso: `/update channel alpha` ou `/update channel braveheart`",
+      "channel_service_unreachable": "⚠️ Não foi possível mudar o canal de atualização porque o serviço está inacessível.",
+      "channel_switch_failed": "⚠️ Não foi possível mudar o canal de atualização: {0}",
+      "channel_set_braveheart": "✅ Canal de atualização definido como *Braveheart (somente a versão mais recente)*.\nEnvie /update para continuar.",
+      "channel_set_alpha": "✅ Canal de atualização definido como *Alpha (todas as versões)*.\nEnvie /update para continuar.",
+      "installing": "⏳ *Instalando atualização…*\n\nOs daemons serão interrompidos, o APK será instalado e o dispositivo será reiniciado. Este bot ficará em silêncio por cerca de 2 minutos. Você receberá uma mensagem com a nova URL do túnel quando ele voltar a ficar online.",
+      "install_service_unreachable": "⚠️ Não foi possível iniciar a instalação porque o daemon da câmera está inacessível.",
+      "install_rejected": "⚠️ Instalação rejeitada: {0}",
+      "install_failed": "⚠️ *A atualização do Overdrive falhou*\nO dispositivo continua na versão anterior.\nMotivo: {0}",
+      "unknown_reason": "motivo desconhecido (consulte a central multimídia)",
+      "installed": "🔄 *Overdrive atualizado para {0}*",
+      "installed_new_tunnel": "🔄 *Overdrive atualizado para {0}*\nNova URL do túnel:\n{1}\n\n_O link do cloudflared muda após cada instalação._",
+      "installed_tunnel_online": "🔄 *Overdrive atualizado para {0}*\nTúnel novamente online:\n{1}"
+    },
+    "backup": {
+      "restore_unavailable": "ℹ️ *A restauração não está disponível pelo Telegram.*\n\nAbra o Overdrive na central multimídia ou no app, acesse *Configurações → Backup e restauração* e selecione o arquivo de backup. O backup só pode ser restaurado no mesmo dispositivo e exige confirmação nessa tela.",
+      "building_with_trips": "💾 Criando backup das configurações e do histórico de viagens…",
+      "building_settings": "💾 Criando backup das configurações…",
+      "service_unreachable": "⚠️ Não foi possível acessar o serviço de backup.\n\nO daemon da câmera pode não estar em execução. Tente `/daemon camera start`.",
+      "failed": "⚠️ Falha ao criar o backup: {0}",
+      "no_data": "⚠️ O backup não retornou dados.",
+      "write_failed": "⚠️ Não foi possível gravar o arquivo de backup: {0}",
+      "document_settings": "💾 Backup das configurações do Overdrive\n\n⚠️ Este arquivo contém credenciais e a chave do dispositivo. Mantenha-o em local seguro. Restaure-o nesta mesma central multimídia em Configurações → Backup e restauração.",
+      "document_settings_version": "💾 Backup das configurações do Overdrive · {0}\n\n⚠️ Este arquivo contém credenciais e a chave do dispositivo. Mantenha-o em local seguro. Restaure-o nesta mesma central multimídia em Configurações → Backup e restauração.",
+      "document_with_trips": "💾 Backup do Overdrive (configurações + histórico de viagens: {0})\n\n⚠️ Este arquivo contém credenciais, a chave do dispositivo e o histórico de localização. Mantenha-o em local seguro. Restaure-o nesta mesma central multimídia em Configurações → Backup e restauração.",
+      "document_with_trips_version": "💾 Backup do Overdrive (configurações + histórico de viagens: {0}) · {1}\n\n⚠️ Este arquivo contém credenciais, a chave do dispositivo e o histórico de localização. Mantenha-o em local seguro. Restaure-o nesta mesma central multimídia em Configurações → Backup e restauração.",
+      "upload_failed": "⚠️ Não foi possível enviar o arquivo de backup pelo Telegram."
+    },
+    "sendlog": {
+      "choose": "📄 *Enviar o log de um daemon*\n\nEscolha um daemon ou use `/sendlog <nome>`:",
+      "daemon_button": "{0}",
+      "unknown_daemon": "❌ Daemon desconhecido: `{0}`.\nTente: {1}",
+      "uploading": "⏳ Enviando o log de *{0}*…",
+      "service_unreachable": "⚠️ Não foi possível acessar o serviço de logs. O daemon da câmera pode não estar em execução. Tente `/daemon camera start`.",
+      "upload_failed": "⚠️ Falha ao enviar o log: {0}",
+      "upload_success": "✅ Log de *{0}* enviado.\n\nCompartilhe este código conosco e inclua uma breve descrição do problema:\n`{1}`\n\nEnvie o relato por:\n• Discord: {2}\n• GitHub: {3}\n• WhatsApp: {4}\n\n_Dados sigilosos foram removidos antes do envio. O log expira automaticamente._"
+    },
+    "greeting": {
+      "online": "🤖 *Bot de vigilância online*\n\nO daemon do bot foi iniciado e está pronto.\nUse /help para ver os comandos disponíveis."
+    },
+    "callback": {
+      "not_authorized": "⚠️ Não autorizado",
+      "downloading": "📥 Baixando…",
+      "starting": "⏳ Iniciando…",
+      "stopping": "⏳ Parando…",
+      "processing": "⏳ Processando…",
+      "unknown_action": "Ação desconhecida"
+    },
+    "pair": {
+      "no_owner": "⚠️ Nenhum proprietário pareado. Use /pair <PIN> para parear.",
+      "already_paired": "❌ O bot já está pareado com outro proprietário.",
+      "invalid_format": "❌ Formato de PIN inválido. Digite o PIN de 6 dígitos exibido no app.",
+      "no_pin": "❌ Nenhum PIN foi gerado. Gere primeiro um PIN no app.",
+      "expired": "❌ O PIN expirou. Gere um novo PIN no app.",
+      "invalid": "❌ PIN inválido. Confira o PIN exibido no app.",
+      "storage_error": "⚠️ Não foi possível salvar o pareamento (erro de armazenamento). Tente /pair novamente; se o problema continuar, reinicie o app.",
+      "success": "✅ Pareamento concluído!\n\nBoas-vindas, {0}!\nUse /help para ver os comandos disponíveis.",
+      "success_no_name": "✅ Pareamento concluído!\n\nUse /help para ver os comandos disponíveis."
+    },
+    "tunnel": {
+      "notification_url": "🌐 *URL do túnel*\n{0}",
+      "notification_url_changed": "🔄 *URL do túnel alterada*\n{0}"
+    },
+    "critical": {
+      "message": "⚠️ *Alerta crítico*\n{0}",
+      "message_with_details": "⚠️ *Alerta crítico*\n{0}\n{1}",
+      "type": {
+        "low_battery": "🔋 Bateria fraca",
+        "storage_full": "💾 Armazenamento cheio",
+        "daemon_crash": "⚠️ Falha em um daemon",
+        "system_error": "❌ Erro do sistema",
+        "system_reboot": "🔄 Reinicialização do sistema",
+        "unknown": "❓ Evento crítico desconhecido"
+      }
+    },
+    "motion": {
+      "tier": {
+        "critical": "CRÍTICO",
+        "alert": "Alerta"
+      },
+      "actor": {
+        "person": "Pessoa",
+        "bike": "Bicicleta",
+        "vehicle": "Veículo",
+        "animal": "Animal",
+        "motion": "Movimento"
+      },
+      "camera": {
+        "front": "dianteira",
+        "right": "direita",
+        "rear": "traseira",
+        "left": "esquerda"
+      },
+      "title": {
+        "tier_actor_camera": "{0} *{1} · {2} na câmera {3}*",
+        "tier_actor": "{0} *{1} · {2}*",
+        "tier_camera": "{0} *{1} na câmera {2}*",
+        "tier": "{0} *{1}*",
+        "actor_camera": "{0} *{1} na câmera {2}*",
+        "actor": "{0} *{1}*",
+        "camera": "{0} *Movimento na câmera {1}*",
+        "detected": "{0} *Movimento detectado*"
+      },
+      "proximity": {
+        "very_close": "Muito perto",
+        "close": "Perto",
+        "mid": "Distância média",
+        "far": "Longe"
+      },
+      "count": {
+        "person_one": "{0} pessoa",
+        "person_many": "{0} pessoas",
+        "vehicle_one": "{0} veículo",
+        "vehicle_many": "{0} veículos",
+        "bike_one": "{0} bicicleta",
+        "bike_many": "{0} bicicletas",
+        "animal_one": "{0} animal",
+        "animal_many": "{0} animais"
+      },
+      "recording_in_progress": "_Gravação em andamento_",
+      "detected_at": "🕒 _Detectado às {0}_",
+      "cleared_no_event": "✅ Movimento descartado — nenhum evento foi gravado (alerta falso sem pessoa, veículo ou animal)."
+    },
+    "media": {
+      "video_too_large": "📹 *Vídeo grande demais para enviar*\n`{0}` ({1} MB)\nVeja o arquivo no dispositivo — ele excede o limite de 50 MB do Telegram.",
+      "document_too_large": "📄 *Arquivo grande demais para enviar*\n`{0}` ({1} MB) — excede o limite de 50 MB do Telegram."
+    },
+    "legacy": {
+      "connectivity": {
+        "connected": "📶 Conectado por {0}",
+        "disconnected": "📵 Desconectado de {0}"
+      },
+      "critical_with_details": "{0}: {1}",
+      "motion": {
+        "detected_actor": "🚨 Detecção: {0} ({1}%)",
+        "detected": "👁 Movimento detectado"
+      },
+      "tunnel": {
+        "connected": "🌐 Túnel conectado:\n{0}",
+        "changed": "🔄 URL do túnel alterada:\n{0}"
+      },
+      "video": {
+        "saved_with_detection": "🎬 Gravação salva (detecção: {0}) — {1}s",
+        "saved": "🎬 Gravação salva — {0}s"
+      }
+    }
   },
   "vehicle_control": {
     "cloud_required": "Conectar uma conta BYD em Configurações para usar este controle",

@@ -1,5 +1,7 @@
 package com.overdrive.app.telegram.event;
 
+import com.overdrive.app.telegram.TelegramMessages;
+
 /**
  * Event emitted when Cloudflare tunnel URL is created or changed.
  */
@@ -18,10 +20,7 @@ public class TunnelEvent extends SystemEvent {
     
     @Override
     public String getMessage() {
-        if (isNew) {
-            return "🌐 Tunnel connected:\n" + url;
-        } else {
-            return "🔄 Tunnel URL changed:\n" + url;
-        }
+        return TelegramMessages.get(isNew
+                ? "legacy.tunnel.connected" : "legacy.tunnel.changed", url);
     }
 }

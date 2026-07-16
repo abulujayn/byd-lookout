@@ -3,7 +3,7 @@ package com.overdrive.app.telegram;
 import android.util.Log;
 
 import com.overdrive.app.config.UnifiedConfigManager;
-import com.overdrive.app.server.Messages;
+import com.overdrive.app.server.LocaleManager;
 import com.overdrive.app.telegram.config.UnifiedTelegramConfig;
 import com.overdrive.app.telegram.event.CriticalEvent;
 import com.overdrive.app.telegram.event.MotionEvent;
@@ -135,8 +135,9 @@ public class TelegramNotifier {
                 cmd.put("cmd", "sendVideo");
                 cmd.put("path", filePath);
                 String caption = (aiDetection != null)
-                        ? Messages.get("telegram.recording_caption", aiDetection, durationSeconds)
-                        : Messages.get("telegram.recording_caption_no_label", durationSeconds);
+                        ? TelegramMessages.get("recording_caption",
+                                localizedDetection(aiDetection), durationSeconds)
+                        : TelegramMessages.get("recording_caption_no_label", durationSeconds);
                 cmd.put("caption", caption);
                 // Fire-and-forget: the response is unused, and the upload can
                 // take tens of seconds — don't tie up even this lane waiting on
@@ -345,6 +346,20 @@ public class TelegramNotifier {
         if (a > 0) return "animal";
         return "motion";
     }
+
+    private static String localizedDetection(String detection) {
+        if (detection == null || detection.isEmpty()) return "";
+        switch (detection.toLowerCase(java.util.Locale.ROOT)) {
+            case "person": return TelegramMessages.get("recording_label.person");
+            case "bike":
+            case "bicycle": return TelegramMessages.get("recording_label.bike");
+            case "car":
+            case "vehicle": return TelegramMessages.get("recording_label.vehicle");
+            case "animal": return TelegramMessages.get("recording_label.animal");
+            case "motion": return TelegramMessages.get("recording_label.motion");
+            default: return detection;
+        }
+    }
     
     /**
      * Notify critical system event.
@@ -446,14 +461,19 @@ public class TelegramNotifier {
                     Log.d(TAG, "sendProximityAlert skipped — critical alerts disabled");
                     return;
                 }
+                String language = LocaleManager.get();
+                String pattern = language.startsWith("pt")
+                        ? "dd/MM/yyyy HH:mm:ss" : "yyyy-MM-dd HH:mm:ss";
                 java.text.SimpleDateFormat sdf = new java.text.SimpleDateFormat(
-                    "yyyy-MM-dd HH:mm:ss", java.util.Locale.US);
+                        pattern, java.util.Locale.forLanguageTag(language));
                 String timeStr = sdf.format(new java.util.Date(timestamp));
 
                 String distance = triggerLevel.equals("RED") ? "0-0.5m" : "0-0.8m";
+                String triggerKey = "RED".equals(triggerLevel)
+                        ? "proximity.trigger.red" : "proximity.trigger.yellow";
 
-                String message = Messages.get("telegram.proximity_alert",
-                        timeStr, triggerLevel, distance);
+                String message = TelegramMessages.get("proximity_alert",
+                        timeStr, TelegramMessages.get(triggerKey), distance);
 
                 JSONObject cmd = new JSONObject();
                 cmd.put("cmd", "sendMessage");

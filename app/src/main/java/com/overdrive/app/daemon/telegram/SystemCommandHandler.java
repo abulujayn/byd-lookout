@@ -4,6 +4,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.InputStreamReader;
+import java.util.Locale;
 
 /**
  * Handles system commands: /daemons, /url, /help
@@ -17,7 +18,7 @@ public class SystemCommandHandler implements TelegramCommandHandler {
     
     @Override
     public void handle(long chatId, String[] args, CommandContext ctx) {
-        String cmd = args[0].toLowerCase();
+        String cmd = args[0].toLowerCase(Locale.ROOT);
         
         switch (cmd) {
             case "/daemons":
@@ -34,21 +35,21 @@ public class SystemCommandHandler implements TelegramCommandHandler {
     
     private void handleDaemons(long chatId, CommandContext ctx) {
         StringBuilder sb = new StringBuilder();
-        sb.append("🤖 *Daemons*\n\n");
+        sb.append(ctx.tr("daemons.title"));
         
         // All known daemons: {cmdName, processName, displayName, canStart, canStop}
         // cmdName is used for /daemon <name> start|stop
         // canStart: "yes" if can be started via telegram, "no" if must use app UI
         // canStop: "yes" if can be stopped via telegram, "no" if should not be stopped remotely
         String[][] allDaemons = {
-            {"camera", "byd_cam_daemon", "Camera", "yes", "yes"},
-            {"acc", "acc_sentry_daemon", "ACC Sentry", "yes", "yes"},
-            {"sentry", "sentry_daemon", "Sentry", "yes", "yes"},
-            {"telegram", "telegram_bot_daemon", "Telegram", "no", "no"},
-            {"cloudflared", "cloudflared", "Cloudflare Tunnel", "yes", "yes"},
-            {"zrok", "zrok", "Zrok Tunnel", "yes", "yes"},
-            {"tailscale", "tailscaled", "Tailscale Tunnel", "yes", "yes"},
-            {"singbox", "sing-box", "Sing-Box", "yes", "no"}
+            {"camera", "byd_cam_daemon", "daemon_names.camera", "yes", "yes"},
+            {"acc", "acc_sentry_daemon", "daemon_names.acc_sentry", "yes", "yes"},
+            {"sentry", "sentry_daemon", "daemon_names.sentry", "yes", "yes"},
+            {"telegram", "telegram_bot_daemon", "daemon_names.telegram", "no", "no"},
+            {"cloudflared", "cloudflared", "daemon_names.cloudflare_tunnel", "yes", "yes"},
+            {"zrok", "zrok", "daemon_names.zrok_tunnel", "yes", "yes"},
+            {"tailscale", "tailscaled", "daemon_names.tailscale_tunnel", "yes", "yes"},
+            {"singbox", "sing-box", "daemon_names.sing_box", "yes", "no"}
         };
         
         java.util.List<String[][]> buttonRows = new java.util.ArrayList<>();
@@ -59,7 +60,7 @@ public class SystemCommandHandler implements TelegramCommandHandler {
         for (String[] d : allDaemons) {
             String cmdName = d[0];
             String processName = d[1];
-            String displayName = d[2];
+            String displayName = ctx.tr(d[2]);
             boolean canStart = "yes".equals(d[3]);
             boolean canStop = "yes".equals(d[4]);
             boolean running = isDaemonRunning(processName, ctx);
@@ -70,7 +71,7 @@ public class SystemCommandHandler implements TelegramCommandHandler {
                 
                 // Add stop button if allowed
                 if (canStop) {
-                    buttonRows.add(new String[][]{{"⛔ Stop " + displayName, "dm:" + cmdName + ":stop"}});
+                    buttonRows.add(new String[][]{{ctx.tr("buttons.stop_named", displayName), "dm:" + cmdName + ":stop"}});
                 }
             } else {
                 sb.append("⛔ ").append(displayName).append("\n");
@@ -78,13 +79,13 @@ public class SystemCommandHandler implements TelegramCommandHandler {
                 
                 // Add start button for startable daemons
                 if (canStart) {
-                    buttonRows.add(new String[][]{{"✅ Start " + displayName, "dm:" + cmdName + ":start"}});
+                    buttonRows.add(new String[][]{{ctx.tr("buttons.start_named", displayName), "dm:" + cmdName + ":start"}});
                 }
             }
         }
         
         // Add refresh button
-        buttonRows.add(new String[][]{{"🔄 Refresh", "cmd:/daemons"}});
+        buttonRows.add(new String[][]{{ctx.tr("buttons.refresh"), "cmd:/daemons"}});
         
         String[][][] buttons = buttonRows.toArray(new String[0][][]);
         ctx.sendMessageWithButtons(chatId, sb.toString(), buttons);
@@ -102,12 +103,12 @@ public class SystemCommandHandler implements TelegramCommandHandler {
             boolean tailscaleUp = tailscaleRunning != null && !tailscaleRunning.trim().isEmpty();
 
             if (!cfUp && !zrokUp && !tailscaleUp) {
-                ctx.sendMessage(chatId, "⚠️ No tunnel running\n\nStart one with:\n`/daemon cloudflared start`\n`/daemon zrok start`\n`/daemon tailscale start`");
+                ctx.sendMessage(chatId, ctx.tr("url.none_running"));
                 return;
             }
 
             StringBuilder sb = new StringBuilder();
-            sb.append("🌐 *Tunnel URLs*\n\n");
+            sb.append(ctx.tr("url.title"));
             int resolved = 0;
             int pending = 0;
 
@@ -128,10 +129,12 @@ public class SystemCommandHandler implements TelegramCommandHandler {
                     }
                 }
                 if (url != null) {
-                    sb.append("• *Cloudflared:* ").append(url).append("\n");
+                    sb.append(ctx.tr("url.resolved_line",
+                            ctx.tr("daemon_names.cloudflare_tunnel"), url));
                     resolved++;
                 } else {
-                    sb.append("• *Cloudflared:* _starting, URL not available yet_\n");
+                    sb.append(ctx.tr("url.pending_line",
+                            ctx.tr("daemon_names.cloudflare_tunnel")));
                     pending++;
                 }
             }
@@ -143,10 +146,12 @@ public class SystemCommandHandler implements TelegramCommandHandler {
                     url = grepResult.trim();
                 }
                 if (url != null) {
-                    sb.append("• *Zrok:* ").append(url).append("\n");
+                    sb.append(ctx.tr("url.resolved_line",
+                            ctx.tr("daemon_names.zrok_tunnel"), url));
                     resolved++;
                 } else {
-                    sb.append("• *Zrok:* _starting, URL not available yet_\n");
+                    sb.append(ctx.tr("url.pending_line",
+                            ctx.tr("daemon_names.zrok_tunnel")));
                     pending++;
                 }
             }
@@ -158,10 +163,12 @@ public class SystemCommandHandler implements TelegramCommandHandler {
                     url = "http://" + getIpResult.trim() + ":8080";
                 }
                 if (url != null) {
-                    sb.append("• *Tailscale:* ").append(url).append("\n");
+                    sb.append(ctx.tr("url.resolved_line",
+                            ctx.tr("daemon_names.tailscale_tunnel"), url));
                     resolved++;
                 } else {
-                    sb.append("• *Tailscale:* _starting, URL not available yet_\n");
+                    sb.append(ctx.tr("url.pending_line",
+                            ctx.tr("daemon_names.tailscale_tunnel")));
                     pending++;
                 }
             }
@@ -174,18 +181,19 @@ public class SystemCommandHandler implements TelegramCommandHandler {
                     String saved = reader.readLine();
                     reader.close();
                     if (saved != null && !saved.isEmpty()) {
-                        sb.append("\n_Last known:_ ").append(saved.trim()).append("\n");
+                        sb.append(ctx.tr("url.last_known", saved.trim()));
                     }
                 }
             }
 
             if (pending > 0) {
-                sb.append("\n_Try again in a few seconds for pending URLs._");
+                sb.append(ctx.tr("url.retry_pending"));
             }
 
             ctx.sendMessage(chatId, sb.toString());
         } catch (Exception e) {
-            ctx.sendMessage(chatId, "⚠️ Error: " + e.getMessage());
+            ctx.sendMessage(chatId, ctx.tr("url.error",
+                    ctx.technicalDetail(e.getMessage())));
         }
     }
     
@@ -197,30 +205,13 @@ public class SystemCommandHandler implements TelegramCommandHandler {
         // absent, malformed, or a stale cross-channel label.
         String version = com.overdrive.app.updater.AppUpdater.getDisplayVersionFromFile();
 
-        String text = "📖 *Commands*\n" +
-                "_OverDrive " + version + "_\n\n" +
-                "*Surveillance*\n" +
-                "`/start` - Start surveillance\n" +
-                "`/stop` - Stop surveillance\n" +
-                "`/status` - System status\n\n" +
-                "*Events*\n" +
-                "`/events [hours] [page]` - List recordings\n" +
-                "`/download <file>` - Download video\n\n" +
-                "*Daemons*\n" +
-                "`/daemons` - List all daemons\n" +
-                "`/daemon <name> start|stop`\n\n" +
-                "*System*\n" +
-                "`/url` - Tunnel URL\n" +
-                "`/update` - Check for app update\n" +
-                "`/backup` - Export settings backup\n" +
-                "`/backup trips` - Backup incl. trip history\n" +
-                "`/help` - This message";
+        String text = ctx.tr("help.text", version);
 
         String[][][] buttons = {
-            {{"📊 Status", "cmd:/status"}, {"📹 Events", "cmd:/events"}},
-            {{"✅ Start Surveillance", "cmd:/start"}, {"⛔ Stop Surveillance", "cmd:/stop"}},
-            {{"🤖 Daemons", "cmd:/daemons"}, {"🌐 Tunnel URL", "cmd:/url"}},
-            {{"⬆️ Check Update", "cmd:/update"}, {"💾 Backup", "cmd:/backup"}}
+            {{ctx.tr("buttons.status"), "cmd:/status"}, {ctx.tr("buttons.events"), "cmd:/events"}},
+            {{ctx.tr("buttons.start_surveillance"), "cmd:/start"}, {ctx.tr("buttons.stop_surveillance"), "cmd:/stop"}},
+            {{ctx.tr("buttons.daemons"), "cmd:/daemons"}, {ctx.tr("buttons.tunnel_url"), "cmd:/url"}},
+            {{ctx.tr("buttons.check_update"), "cmd:/update"}, {ctx.tr("buttons.backup"), "cmd:/backup"}}
         };
         
         ctx.sendMessageWithButtons(chatId, text, buttons);

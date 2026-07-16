@@ -297,7 +297,40 @@ public final class ChargingEventNotifier {
     }
 
     private static String stateLabel(int stateCode) {
-        return new ChargingStateData(stateCode).stateName;
+        String key;
+        switch (stateCode) {
+            case ChargingStateData.CHARGING_BATTERY_STATE_READY:
+                key = "ready"; break;
+            case ChargingStateData.CHARGING_BATTERY_STATE_CHARGING:
+                key = "charging"; break;
+            case ChargingStateData.CHARGING_BATTERY_STATE_CHARG_FINISH:
+                key = "finished"; break;
+            case ChargingStateData.CHARGING_BATTERY_STATE_DISCHARG:
+                key = "discharging"; break;
+            case ChargingStateData.CHARGING_BATTERY_STATE_CHARG_TERMINATE:
+                key = "terminated"; break;
+            case ChargingStateData.CHARGING_BATTERY_STATE_BREAKDOWN_C10:
+                key = "fault_c10"; break;
+            case ChargingStateData.CHARGING_BATTERY_STATE_BREAKDOWN_CHARGING_GUN:
+                key = "fault_gun"; break;
+            case ChargingStateData.CHARGING_BATTERY_STATE_BREAKDOWN_AC:
+                key = "fault_ac"; break;
+            case ChargingStateData.CHARGING_BATTERY_STATE_BREAKDOWN_CHARGER:
+                key = "fault_charger"; break;
+            case ChargingStateData.CHARGING_BATTERY_STATE_SCHEDULE:
+                key = "scheduled"; break;
+            case ChargingStateData.CHARGING_BATTERY_STATE_TIMEOUT:
+                key = "timeout"; break;
+            case ChargingStateData.CHARGING_BATTERY_STATE_DISCHARG_CBU:
+                key = "discharging_cbu"; break;
+            case ChargingStateData.CHARGING_BATTERY_STATE_DISCHARG_FINISH:
+                key = "discharge_finished"; break;
+            case ChargingStateData.CHARGING_BATTERY_STATE_IDLE:
+                key = "idle"; break;
+            default:
+                return Messages.get("notifications.charging_state.unknown", stateCode);
+        }
+        return Messages.get("notifications.charging_state." + key);
     }
 
     private static boolean isFinite(double v) {

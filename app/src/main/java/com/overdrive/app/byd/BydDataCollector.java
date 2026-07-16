@@ -3,6 +3,7 @@ package com.overdrive.app.byd;
 import android.content.Context;
 
 import com.overdrive.app.logging.DaemonLogger;
+import com.overdrive.app.server.Messages;
 
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -2973,8 +2974,15 @@ public class BydDataCollector {
         logger.info(sb.toString());
     }
 
-    private static final String[] TYRE_WHEEL_LABELS =
-            {"Front-left", "Front-right", "Rear-left", "Rear-right"};
+    private static String tyreWheelLabel(int wheel) {
+        switch (wheel) {
+            case 0: return Messages.get("notifications.area_front_left");
+            case 1: return Messages.get("notifications.area_front_right");
+            case 2: return Messages.get("notifications.area_rear_left");
+            case 3: return Messages.get("notifications.area_rear_right");
+            default: return Messages.get("notifications.area_door_n", wheel + 1);
+        }
+    }
 
     /**
      * Per-corner latched tyre-alarm evaluator. Called on every tyre read (poll
@@ -3080,7 +3088,7 @@ public class BydDataCollector {
                 if (++tyrePressureNormalStreak[i] >= TYRE_ALARM_REARM_STREAK) {
                     tyrePressureLatchedLevel[i] = 0;
                     tyrePressureNormalStreak[i] = 0;
-                    logger.info("Tyre pressure re-armed (normal): " + TYRE_WHEEL_LABELS[i]
+                    logger.info("Tyre pressure re-armed (normal): " + tyreWheelLabel(i)
                             + (kPaValid ? " " + kPa + " kPa" : ""));
                 }
             }
@@ -3119,10 +3127,13 @@ public class BydDataCollector {
         // — stay silent.
         if (fireLevel > tyrePressureLatchedLevel[i]) {
             tyrePressureLatchedLevel[i] = fireLevel;
-            String kPaText = kPaValid ? (kPa + " kPa") : "no reading";
+            String kPaText = kPaValid ? (kPa + " kPa")
+                    : Messages.get("notifications.tyre_no_reading");
             String title = fireLevel >= 2
-                    ? "Tyre critically low"
-                    : (over ? "Overpressure" : "Underpressure");
+                    ? Messages.get("notifications.tyre_critically_low")
+                    : Messages.get(over
+                            ? "notifications.tyre_overpressure"
+                            : "notifications.tyre_underpressure");
             com.overdrive.app.notifications.NotificationEvent.Severity sev = fireLevel >= 2
                     ? com.overdrive.app.notifications.NotificationEvent.Severity.CRITICAL
                     : com.overdrive.app.notifications.NotificationEvent.Severity.WARN;
@@ -3137,7 +3148,8 @@ public class BydDataCollector {
                                 "vehicle.health.tyre.pressure",
                                 sev,
                                 title,
-                                TYRE_WHEEL_LABELS[i] + " — " + kPaText,
+                                Messages.get("notifications.tyre_wheel_reading",
+                                        tyreWheelLabel(i), kPaText),
                                 "tyre-pressure-" + i,
                                 null,
                                 data));
@@ -3159,7 +3171,7 @@ public class BydDataCollector {
                 if (++tyreLeakNormalStreak[i] >= TYRE_ALARM_REARM_STREAK) {
                     tyreLeakLatchedSeverity[i] = 0;
                     tyreLeakNormalStreak[i] = 0;
-                    logger.info("Tyre leak re-armed (normal): " + TYRE_WHEEL_LABELS[i]);
+                    logger.info("Tyre leak re-armed (normal): " + tyreWheelLabel(i));
                 }
             }
             return;
@@ -3183,9 +3195,13 @@ public class BydDataCollector {
                         new com.overdrive.app.notifications.NotificationEvent(
                                 "vehicle.health.tyre.leak",
                                 sev,
-                                leak == 2 ? "Fast leak detected" : "Slow leak detected",
-                                TYRE_WHEEL_LABELS[i]
-                                        + (kPaValid ? " (" + kPa + " kPa)" : ""),
+                                Messages.get(leak == 2
+                                        ? "notifications.tyre_fast_leak"
+                                        : "notifications.tyre_slow_leak"),
+                                kPaValid
+                                        ? Messages.get("notifications.tyre_wheel_pressure",
+                                                tyreWheelLabel(i), kPa)
+                                        : tyreWheelLabel(i),
                                 "tyre-leak-" + i,
                                 null,
                                 data));
