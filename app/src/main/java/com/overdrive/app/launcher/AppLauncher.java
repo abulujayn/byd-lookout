@@ -91,7 +91,20 @@ public final class AppLauncher {
                 // --windowingMode 3 = SPLIT_SCREEN_PRIMARY. The activity comes from
                 // the trusted PackageManager/cmd resolver and pkg is [A-Za-z0-9._];
                 // shell-quote the component defensively before dispatch.
-                if (runShell("am start --user 0 --windowingMode 3 -n " + shellQuote(component))) {
+
+
+                String cmdApp1 = "TASK_ID=$(dumpsys activity activities | awk '/TaskRecord|Task\\{/{t=$0} index($0, \"" + pkg + "\") > 0 {print t; exit}' | grep -oE \"#[0-9]+\" | head -n 1 | tr -d '#'); " +
+                        "if [ ! -z \"$TASK_ID\" ]; then " +
+                        "am start --user 0 --windowingMode 3 -n com.overdrive.app/.AppLauncherGhostActivity; " +
+                        "sleep 1; " +
+                        "STACK_ID=$(am stack list | awk '/Stack id=/ {split($2, a, \"=\"); id=a[2]} /mWindowingMode=split-screen-primary/ {print id; exit}'); " +
+                        "am stack move-task $TASK_ID $STACK_ID true; " +
+                        "else " +
+                        "am start --user 0 --windowingMode 3 -n $(cmd package resolve-activity --brief -c android.intent.category.LAUNCHER " + pkg + " | tail -n 1); " +
+                        "fi";
+
+
+                if (runShell(cmdApp1)) {
                     logger.info("openApp: launched " + pkg + " in split-screen (" + component + ")");
                     return true;
                 }
