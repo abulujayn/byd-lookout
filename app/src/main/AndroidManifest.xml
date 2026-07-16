@@ -371,6 +371,14 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".AppLauncherGhostActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:resizeableActivity="true"
+            android:launchMode="singleInstance"
+            android:excludeFromRecents="true"
+            android:exported="true" />
+
         <receiver
             android:name="com.overdrive.app.receiver.BootReceiver"
             android:enabled="true"
