@@ -7,6 +7,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import org.json.JSONException;
 import org.json.JSONObject;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -32,7 +33,7 @@ public class TelegramCatalogParityTest {
     private static Map<String, Object> portuguese;
 
     @BeforeClass
-    public static void loadCatalogs() throws IOException {
+    public static void loadCatalogs() throws IOException, JSONException {
         english = loadTelegramCatalog("en");
         portuguese = loadTelegramCatalog("pt-BR");
     }
@@ -86,7 +87,8 @@ public class TelegramCatalogParityTest {
                 text.contains("*Commands*"));
     }
 
-    private static Map<String, Object> loadTelegramCatalog(String locale) throws IOException {
+    private static Map<String, Object> loadTelegramCatalog(String locale)
+            throws IOException, JSONException {
         Path catalog = findCatalog(locale);
         String json = new String(Files.readAllBytes(catalog), StandardCharsets.UTF_8);
         JSONObject root = new JSONObject(json);
@@ -116,8 +118,17 @@ public class TelegramCatalogParityTest {
                 + ".json from working directory " + System.getProperty("user.dir"));
     }
 
-    private static void flatten(JSONObject object, String prefix, Map<String, Object> output) {
-        for (String name : object.keySet()) {
+    private static void flatten(JSONObject object, String prefix, Map<String, Object> output)
+            throws JSONException {
+        // keys() (Iterator), not keySet(): android.jar's org.json.JSONObject stub
+        // (present on the unit-test compile classpath alongside the real
+        // org.json:json test dependency) only declares keys() — keySet() is an
+        // upstream json.org addition Android's fork never picked up, so using it
+        // here made ./gradlew test fail to compile regardless of which
+        // JSONObject the classpath happened to resolve to.
+        java.util.Iterator<String> keys = object.keys();
+        while (keys.hasNext()) {
+            String name = keys.next();
             String path = prefix.isEmpty() ? name : prefix + "." + name;
             Object value = object.get(name);
             if (value instanceof JSONObject) {

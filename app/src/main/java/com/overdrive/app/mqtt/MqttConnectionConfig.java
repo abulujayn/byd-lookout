@@ -1,5 +1,7 @@
 package com.overdrive.app.mqtt;
 
+import com.overdrive.app.byd.cloud.crypto.CredentialCipher;
+
 import org.json.JSONObject;
 
 import java.util.UUID;
@@ -217,6 +219,11 @@ public class MqttConnectionConfig {
 
     /**
      * Serialize to JSON for storage.
+     *
+     * <p>username/password are encrypted at rest via {@link CredentialCipher} —
+     * every other field is non-secret config. The in-memory {@link #username}/
+     * {@link #password} stay plaintext (MqttPublisherService feeds {@link #password}
+     * straight into Paho's {@code setPassword()}); only this on-disk form is protected.
      */
     public JSONObject toJson() {
         JSONObject json = new JSONObject();
@@ -227,8 +234,8 @@ public class MqttConnectionConfig {
             json.put("port", port);
             json.put("topic", topic);
             json.put("clientId", clientId);
-            json.put("username", username);
-            json.put("password", password);
+            json.put("username", CredentialCipher.encrypt(username));
+            json.put("password", CredentialCipher.encrypt(password));
             json.put("qos", qos);
             json.put("enabled", enabled);
             json.put("publishIntervalSeconds", publishIntervalSeconds);
@@ -251,10 +258,16 @@ public class MqttConnectionConfig {
 
     /**
      * Serialize to JSON for API responses (masks password).
+     *
+     * <p>toJson() now encrypts username/password for on-disk storage, so both
+     * are put back here in their real (API-facing) form: username in the
+     * clear — callers display it for reference — and password masked, never
+     * echoed even in encrypted form.
      */
     public JSONObject toSafeJson() {
         JSONObject json = toJson();
         try {
+            json.put("username", username);
             json.put("password", getMaskedPassword());
             json.put("configured", isConfigured());
         } catch (Exception ignored) {}
@@ -272,8 +285,11 @@ public class MqttConnectionConfig {
         config.port = json.optInt("port", DEFAULT_PORT);
         config.topic = json.optString("topic", "overdrive/vehicle/telemetry");
         config.clientId = json.optString("clientId", "");
-        config.username = json.optString("username", "");
-        config.password = json.optString("password", "");
+        // decrypt() passes plaintext through unchanged (isEncrypted() check),
+        // so this also transparently migrates connections saved before
+        // username/password were encrypted — the next save() re-encrypts them.
+        config.username = CredentialCipher.decrypt(json.optString("username", ""));
+        config.password = CredentialCipher.decrypt(json.optString("password", ""));
         config.qos = json.optInt("qos", DEFAULT_QOS);
         config.enabled = json.optBoolean("enabled", false);
         config.publishIntervalSeconds = json.optInt("publishIntervalSeconds", DEFAULT_PUBLISH_INTERVAL);
