@@ -238,6 +238,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:persistent="true"
         android:requestLegacyExternalStorage="true"
+        android:supportsRtl="true"
         android:usesCleartextTraffic="true">
 
         <!-- New Modern UI Activity -->
