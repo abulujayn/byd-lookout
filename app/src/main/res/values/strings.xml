@@ -248,6 +248,12 @@
     <string name="onboarding_authorize_retry_body">The helper isn\'t running yet. The Android permission may have been dismissed. Try again and remember to check <b>Always allow</b>.</string>
     <string name="onboarding_authorize_retry_button">Try again</string>
 
+    <!-- Step: choose operating mode (Vehicle ON+OFF vs ON only) -->
+    <string name="onboarding_mode_title">When should Overdrive run?</string>
+    <string name="onboarding_mode_body">Choose how Overdrive behaves after you turn the car off.\n\n<b>On &amp; Off</b> keeps watching while parked — surveillance and background monitoring stay active, so the car draws a little power overnight.\n\n<b>On Only</b> fully shuts Overdrive down once you leave. Dashcam, trips and charging still work while you\'re driving, and everything starts back up automatically when you switch the car on. You can change this any time in Settings.</string>
+    <string name="onboarding_mode_on_off_button">On &amp; Off</string>
+    <string name="onboarding_mode_on_only_button">On Only</string>
+
     <!-- Camera mapping chapter -->
     <string name="onboarding_camera_step_label">Camera · step %1$d of %2$d</string>
     <string name="onboarding_camera_intro_title">Set up your cameras</string>
@@ -853,6 +859,7 @@
     <string name="rail_live">Live</string>
     <string name="rail_recordings">Recordings</string>
     <string name="rail_vehicle">Vehicle</string>
+    <string name="rail_projection">Projection</string>
     <string name="rail_trips">Trips</string>
     <string name="rail_charging">Charging</string>
     <string name="rail_automations">Automations</string>
@@ -1505,5 +1512,23 @@
     <string name="toast_cloudflared_token_cannot_be_empty">If you set the paid version the token cannot be empty</string>
     <string name="toast_cloudflared_token_invalid">Invalid token: use only letters, numbers and . _ - = characters</string>
     <string name="toast_cloudflared_saved_settings">Cloudflared settings saved</string>
+
+    <!-- Projection screen (cast an app to the driver cluster + live mirror) -->
+    <string name="projection_hero_title">Projection</string>
+    <string name="projection_hero_subtitle">Cast an app to the driver cluster and mirror it here.</string>
+    <string name="projection_pick_app">Choose an app to project</string>
+    <string name="projection_cast">Cast to cluster</string>
+    <string name="projection_stop">Stop</string>
+    <string name="projection_cast_failed">Couldn\'t cast that app to the cluster.</string>
+    <string name="projection_status_idle">Not projecting.</string>
+    <string name="projection_status_live">Live mirror — tap and swipe to control.</string>
+    <string name="projection_status_preview">Preview mode (reduced frame rate on this vehicle).</string>
+    <string name="projection_status_none">Nothing is projected yet — choose an app and cast.</string>
+    <string name="projection_status_unsupported">Live mirror isn\'t supported on this vehicle. The app is still projected on the cluster.</string>
+    <string name="projection_note_single_app">One app can be projected on the cluster at a time.</string>
+    <string name="projection_adjust_bounds">Adjust bounds</string>
+    <string name="projection_done_adjusting">Done</string>
+    <string name="projection_bounds_hint_idle">Mirror area</string>
+    <string name="projection_status_adjust">Drag to move · drag a corner to resize.</string>
 
 </resources>
