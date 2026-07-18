@@ -4933,10 +4933,9 @@ public class CameraDaemon {
             if (idFile.exists()) {
                 // Self-heal for older installs: the legacy saveDeviceId()
                 // didn't chmod the file, leaving it at the shell-UID-only
-                // mode 0600 default. The app UID couldn't read it, fell
-                // back to the "overdrive-default-device" sentinel, derived
-                // a different AES key, and silently failed to decrypt every
-                // stored credential. setReadable(true, false) is idempotent
+                // mode 0600 default. The app UID couldn't read it, so
+                // CredentialCipher.deriveKey() threw and every stored
+                // credential failed to decrypt. setReadable(true, false) is idempotent
                 // — no-op if it's already world-readable from a recent
                 // install. Apply on every daemon start so a re-deploy
                 // repairs older devices automatically.
@@ -4957,34 +4956,21 @@ public class CameraDaemon {
             log("WARN: Could not read device ID from file: " + e.getMessage());
         }
         
-        // Fallback: use serial number hash
-        try {
-            String serial = android.os.Build.SERIAL;
-            if (serial != null && !serial.equals("unknown")) {
-                deviceId = "byd-" + Integer.toHexString(serial.hashCode()).substring(0, 8);
-                saveDeviceId(deviceId);
-                log("Device ID generated from serial: " + deviceId);
-                return;
-            }
-        } catch (Exception e) {
-            log("WARN: Could not get serial: " + e.getMessage());
+        // No existing file: mint a fresh device id. This is the sole seed for
+        // CredentialCipher's AES key (protects the Telegram bot token, BYD
+        // Cloud password, NavMap routing key), so it must be unpredictable —
+        // NOT derived from Build.SERIAL (only a 32-bit hash, and the serial is
+        // often readable by other apps / shown on the vehicle's info screen)
+        // or Build.FINGERPRINT (identical across every unit running the same
+        // firmware build, so every car of that model+version would share the
+        // exact same derived key). SecureRandom removes both shortcuts.
+        byte[] randomBytes = new byte[16];
+        new java.security.SecureRandom().nextBytes(randomBytes);
+        StringBuilder hex = new StringBuilder("byd-");
+        for (byte b : randomBytes) {
+            hex.append(String.format(java.util.Locale.US, "%02x", b));
         }
-        
-        // Fallback: use build fingerprint hash
-        try {
-            String fingerprint = android.os.Build.FINGERPRINT;
-            if (fingerprint != null && !fingerprint.isEmpty()) {
-                deviceId = "byd-" + Integer.toHexString(fingerprint.hashCode()).substring(0, 8);
-                saveDeviceId(deviceId);
-                log("Device ID generated from fingerprint: " + deviceId);
-                return;
-            }
-        } catch (Exception e) {
-            log("WARN: Could not get fingerprint: " + e.getMessage());
-        }
-        
-        // Last resort: generate random ID
-        deviceId = "byd-" + Long.toHexString(System.currentTimeMillis()).substring(4);
+        deviceId = hex.toString();
         saveDeviceId(deviceId);
         log("Device ID generated randomly: " + deviceId);
     }
@@ -4997,10 +4983,9 @@ public class CameraDaemon {
             writer.close();
             // Files created in /data/local/tmp by the shell-UID daemon land
             // at mode 0600 owned by shell. The app UID can't read them at
-            // that mode, so CredentialCipher.readDid() falls through to the
-            // "overdrive-default-device" sentinel and derives a different
-            // AES key — every encrypted credential (telegram bot token,
-            // BYD-cloud password) decodes to "" in the app process.
+            // that mode, so CredentialCipher.readDid() returns null, deriveKey()
+            // throws, and every encrypted credential (telegram bot token,
+            // BYD-cloud password) fails to decrypt in the app process.
             // Set world-readable so both UIDs read the same DID and derive
             // the same key. setWritable too so the app can update the DID
             // if a future migration ever needs to.

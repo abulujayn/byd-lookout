@@ -177,11 +177,12 @@ public final class CredentialCipher {
         // a non-encrypted result over a working encrypted blob.
         if (!isEncrypted(reEncrypted)) return null;
         // Round-trip verify before committing: if the DID file flapped unreadable
-        // between the decrypt above and this encrypt, deriveKey would have used
-        // the sentinel DID, producing a valid-looking ENC: blob keyed to the
-        // WRONG key that decrypts to "" forever (and needsStableReEncrypt won't
-        // retry it). Confirm it actually round-trips back to the same plaintext;
-        // if not, leave the working legacy blob untouched for the next run.
+        // between the decrypt above and this encrypt, deriveKey throws and the
+        // isEncrypted() check above already catches that (encrypt() fails open
+        // to plaintext). This verifies the rarer case of a readable-but-CHANGED
+        // DID producing a validly-encrypted blob under the wrong key. Confirm it
+        // actually round-trips back to the same plaintext; if not, leave the
+        // working legacy blob untouched for the next run.
         if (!plain.equals(decrypt(reEncrypted))) return null;
         return reEncrypted;
     }
@@ -195,6 +196,15 @@ public final class CredentialCipher {
      */
     private static byte[] deriveKey(boolean includeFingerprint) throws Exception {
         String did = readDid();
+        if (did == null) {
+            // No fallback to a fixed sentinel here: this source is public, so a
+            // constant key material would let anyone decrypt any credential
+            // blob written while the DID was unreadable. Throwing forces
+            // encrypt() to fail-open to plaintext (visibly unprotected, not
+            // falsely "ENC:"-tagged) and decrypt() to fail-closed to "" —
+            // both already-handled paths in the callers below.
+            throw new IllegalStateException("device id unavailable at " + DID_PATH);
+        }
         MessageDigest d = MessageDigest.getInstance("SHA-256");
         String material = KD_SALT + ":" + did;
         if (includeFingerprint) {
@@ -209,6 +219,15 @@ public final class CredentialCipher {
         return d.digest(material.getBytes(StandardCharsets.UTF_8));
     }
 
+    /**
+     * Reads the cross-UID device id (app 10xxx + daemon 2000) that
+     * {@link #deriveKey} binds the credential key to. Returns {@code null} if
+     * the file doesn't exist or is empty/unreadable — callers must NOT
+     * substitute a fixed string here (see {@link #deriveKey}). The daemon
+     * ({@code CameraDaemon.generateDeviceId()}) is responsible for seeding
+     * this file with a {@code SecureRandom} value on first boot; this method
+     * only reads it.
+     */
     private static String readDid() {
         try {
             File f = new File(DID_PATH);
@@ -219,6 +238,6 @@ public final class CredentialCipher {
                 if (id != null && !id.trim().isEmpty()) return id.trim();
             }
         } catch (Exception ignored) {}
-        return "overdrive-default-device";
+        return null;
     }
 }
