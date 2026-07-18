@@ -648,13 +648,20 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
                 // Falls back to public mode only if no reserved token exists
                 String identityCheck = ctx.execShell("test -f /data/local/tmp/.zrok/environment.json && echo yes || echo no");
                 if (identityCheck == null || !identityCheck.trim().equals("yes")) {
-                    // Need to enable — read token from saved file (set via app UI)
+                    // Need to enable — read token from saved file (set via app UI).
+                    // The file is encrypted at rest (CredentialCipher) since it's
+                    // written by ZrokLauncher.saveEnableToken(); decrypt() passes
+                    // plaintext through unchanged for tokens saved before that.
                     String enableToken = ctx.execShell("cat /data/local/tmp/.zrok/enable_token 2>/dev/null");
                     if (enableToken == null || enableToken.trim().isEmpty() || enableToken.contains("No such file")) {
                         ctx.log("❌ No zrok enable token found. Set it from the app UI first.");
                         return false;
                     }
-                    enableToken = enableToken.trim();
+                    enableToken = com.overdrive.app.byd.cloud.crypto.CredentialCipher.decrypt(enableToken.trim());
+                    if (enableToken.isEmpty()) {
+                        ctx.log("❌ Zrok enable token could not be decrypted. Re-set it from the app UI.");
+                        return false;
+                    }
                     ctx.log("⚠️ Device not enabled. Registering now (uses 1 of 5 slots)...");
                     String enableCmd = "HOME=/data/local/tmp " +
                         "ALL_PROXY=socks5://127.0.0.1:8119 " +
@@ -669,11 +676,16 @@ public class DaemonCommandHandler implements TelegramCommandHandler {
                     ctx.log("✅ Device already enabled.");
                 }
                 
-                // Check for saved reserved token (from app UI's zrok reserve)
+                // Check for saved reserved token (from app UI's zrok reserve).
+                // Encrypted at rest by ZrokLauncher.saveReservedToken(); decrypt()
+                // passes plaintext through unchanged for pre-existing tokens.
                 String reservedToken = null;
                 String tokenRead = ctx.execShell("cat /data/local/tmp/.zrok/reserved_token 2>/dev/null");
                 if (tokenRead != null && !tokenRead.trim().isEmpty() && !tokenRead.contains("No such file")) {
-                    reservedToken = tokenRead.trim();
+                    String decrypted = com.overdrive.app.byd.cloud.crypto.CredentialCipher.decrypt(tokenRead.trim());
+                    if (!decrypted.isEmpty()) {
+                        reservedToken = decrypted;
+                    }
                 }
                 
                 // Also read saved unique name for logging

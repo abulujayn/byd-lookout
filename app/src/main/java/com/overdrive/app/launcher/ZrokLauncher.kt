@@ -1,6 +1,7 @@
 package com.overdrive.app.launcher
 
 import android.content.Context
+import com.overdrive.app.byd.cloud.crypto.CredentialCipher
 import com.overdrive.app.logging.LogManager
 
 /**
@@ -517,8 +518,9 @@ class ZrokLauncher(
     }
     
     private fun saveReservedToken(token: String) {
+        val encryptedToken = CredentialCipher.encrypt(token)
         adbShellExecutor.execute(
-            command = "echo '$token' > $ZROK_RESERVED_TOKEN_FILE",
+            command = "echo '$encryptedToken' > $ZROK_RESERVED_TOKEN_FILE",
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     logManager.info(TAG, "Reserved token saved to file")
@@ -538,8 +540,12 @@ class ZrokLauncher(
             command = "cat $ZROK_RESERVED_TOKEN_FILE 2>/dev/null",
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
-                    val token = output.trim()
-                    if (token.isNotEmpty() && !token.contains("No such file")) {
+                    val raw = output.trim()
+                    if (raw.isNotEmpty() && !raw.contains("No such file")) {
+                        // decrypt() passes plaintext through unchanged, so this also
+                        // transparently migrates tokens saved before this field was
+                        // encrypted — the next saveReservedToken() re-encrypts it.
+                        val token = CredentialCipher.decrypt(raw)
                         reservedShareToken = token
                         callback(token)
                     } else {
@@ -1903,9 +1909,10 @@ class ZrokLauncher(
         // Update in-memory token
         zrokToken = trimmedToken
         tokenLoaded = true
-        
+
+        val encryptedToken = CredentialCipher.encrypt(trimmedToken)
         adbShellExecutor.execute(
-            command = "mkdir -p /data/local/tmp/.zrok && echo '$trimmedToken' > $ZROK_ENABLE_TOKEN_FILE && chmod 666 $ZROK_ENABLE_TOKEN_FILE",
+            command = "mkdir -p /data/local/tmp/.zrok && echo '$encryptedToken' > $ZROK_ENABLE_TOKEN_FILE && chmod 666 $ZROK_ENABLE_TOKEN_FILE",
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
                     logManager.info(TAG, "Enable token saved to unified storage")
@@ -1928,8 +1935,12 @@ class ZrokLauncher(
             command = "cat $ZROK_ENABLE_TOKEN_FILE 2>/dev/null",
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
-                    val token = output.trim()
-                    if (token.isNotEmpty() && !token.contains("No such file")) {
+                    val raw = output.trim()
+                    if (raw.isNotEmpty() && !raw.contains("No such file")) {
+                        // decrypt() passes plaintext through unchanged, so this also
+                        // transparently migrates tokens saved before this field was
+                        // encrypted — the next saveEnableToken() re-encrypts it.
+                        val token = CredentialCipher.decrypt(raw)
                         zrokToken = token
                         tokenLoaded = true
                         logManager.info(TAG, "Enable token loaded from unified storage")
