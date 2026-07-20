@@ -37,7 +37,11 @@ class AppLauncherGhostActivity : Activity() {
 
     override fun onPause() {
         super.onPause()
-        handler.removeCallbacks(finishRunnable)
+
+//        It is unnecessary and prematurely cancels the ghostview's termination.
+//        It only needs to be called in onDestroy. The activity should pause when the app
+//        is injected on top of it in the stack.
+//        handler.removeCallbacks(finishRunnable)
     }
 
     override fun onDestroy() {
