@@ -566,8 +566,12 @@ public class TripDetector {
      */
     private void checkForOrphanedTrips() {
         logger.info("Checking for orphaned trips...");
-        // Actual DB recovery is done in TripAnalyticsManager.initComponents()
-        // since TripDatabase isn't available at TripDetector construction time.
+        // Recovery from orphaned .jsonl.gz files (surviving telemetry from a
+        // mid-drive daemon crash with no DB row) is handled by the auto-recovery
+        // hook in TripAnalyticsManager.initComponents() which calls
+        // TripDatabase.recoverTripsFromDisk() on a background thread at startup.
+        // TripDatabase isn't available at TripDetector construction time, and the
+        // scan involves FUSE I/O that shouldn't block detector readiness.
     }
 
     // ==================== UTILITY ====================

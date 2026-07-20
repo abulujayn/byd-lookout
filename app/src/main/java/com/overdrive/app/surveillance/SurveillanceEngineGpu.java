@@ -26,7 +26,26 @@ public class SurveillanceEngineGpu {
     // Motion detection buffers
     private ByteBuffer currentFrame;
     private long lastMotionTime = 0;
-    private long firstMotionTime = 0;  // When sustained motion started (for duration check)
+    // volatile: read cross-thread by hasActiveMotion() (RMM control thread) to
+    // drive the parked-idle fps ramp. Written only on the motion thread.
+    private volatile long firstMotionTime = 0;  // When sustained motion started (for duration check)
+
+    // Parked-idle throttle keyframe pulse: last time we forced an IDR while idle.
+    // At the low idle fps the encoder's frame-count GOP stretches past the
+    // pre-record window, so a periodic forced sync-frame keeps a valid keyframe
+    // in the ring for pre-roll. Motion-thread confined (read/written only in
+    // processFrameV2), so a plain long is sufficient — no separate timer thread
+    // and therefore no start/stop lifecycle races.
+    private long lastIdleKeyframePulseMs = 0;
+
+    // Parked-idle throttle fps-ramp edge detector. hasActiveMotion() is checked at
+    // the TOP of every processFrameV2 tick; when it changes vs this last-observed
+    // value we push a single RMM reconcile (ramp HAL up on the rising edge, down on
+    // the falling edge). Checking at the top of the tick (not per-write) makes it
+    // robust to ALL firstMotionTime reset paths — including the hard-ceiling stop
+    // that early-returns before the end of the method — at ~1 tick (200ms) latency,
+    // negligible for a power ramp. Motion-thread confined; -1 = "not yet observed".
+    private int lastReconciledActiveState = -1;
     
     // SUSTAINED MOTION: Base minimum before any trigger (prevents single-frame noise).
     // For THREAT_HIGH (loitering confirmed), this is the only delay needed.
@@ -343,7 +362,10 @@ public class SurveillanceEngineGpu {
     // State
     private volatile boolean active = false;
     private boolean inActiveMode = false;
-    private boolean recording = false;
+    // volatile: read cross-thread by hasActiveMotion()/isRecording() (RMM
+    // control thread) to drive the parked-idle fps ramp. Written on the
+    // motion/recording thread.
+    private volatile boolean recording = false;
     // True only when THIS engine's surveillance event opened the OEM
     // dashcam recording. Pre-fix the matching stop ran unconditionally,
     // finalizing a user-initiated continuous OEM recording mid-segment.
@@ -1422,6 +1444,24 @@ public class SurveillanceEngineGpu {
     private int[] prevDenseHash = null;
     
     private void processFrameV2(byte[] smallRgbFrame, long now) {
+        // Parked-idle throttle fps-ramp edge detector. Runs at the top of every
+        // tick so it observes the hasActiveMotion() transition left by the PREVIOUS
+        // tick — robust to every firstMotionTime reset path (including the
+        // hard-ceiling stop that early-returns). On a change, push one RMM reconcile:
+        // rising edge ramps the HAL up (motion began), falling edge ramps back to
+        // idle fps (event fully ended, firstMotionTime cleared). No-op when the
+        // throttle is off (reconcile returns the same intent). Cheap: one volatile
+        // read + an int compare per tick, one reconcile only on an actual edge.
+        if (com.overdrive.app.config.UnifiedConfigManager.isSurveillanceIdleThrottle()) {
+            int activeNow = hasActiveMotion() ? 1 : 0;
+            if (activeNow != lastReconciledActiveState) {
+                lastReconciledActiveState = activeNow;
+                notifySurveillanceActivityChanged();
+            }
+        } else {
+            lastReconciledActiveState = -1;  // re-arm so a re-enable pushes a fresh edge
+        }
+
         // Copy frame data into a direct ByteBuffer for JNI
         currentFrame.clear();
         currentFrame.put(smallRgbFrame);
@@ -1874,6 +1914,32 @@ public class SurveillanceEngineGpu {
             updateProximityState(q, results[q]);
         }
 
+        // Parked-idle throttle keyframe pulse. At the low idle fps the encoder's
+        // frame-count GOP (2s × KEY_FRAME_RATE) stretches past the pre-record
+        // window in wall-clock, so the ring can hold zero keyframes and the
+        // pre-roll flush is skipped. While idle (throttle on, armed, NOT recording,
+        // no active motion) force an IDR every ~preRecordSeconds/2 so the ring
+        // always contains a keyframe. Piggybacks on this motion tick (single
+        // thread, ~5 Hz) — no separate timer, so no cancellation races. Only adds
+        // IDRs (never removes), so pre-roll validity can only improve; at full fps
+        // / throttle-off it never runs (guarded), leaving today's behaviour intact.
+        if (com.overdrive.app.config.UnifiedConfigManager.isSurveillanceIdleThrottle()
+                && active && !recording && !continuousMode && firstMotionTime == 0) {
+            long pulsePeriodMs = Math.max(1000L, (preRecordMs / 2L));
+            if (lastIdleKeyframePulseMs == 0 || (now - lastIdleKeyframePulseMs) >= pulsePeriodMs) {
+                lastIdleKeyframePulseMs = now;
+                try {
+                    HardwareEventRecorderGpu enc = (recorder != null) ? recorder.getEncoder() : null;
+                    if (enc != null) enc.requestSyncFrame();
+                } catch (Throwable t) {
+                    logger.debug("Idle keyframe pulse failed: " + t.getMessage());
+                }
+            }
+        } else {
+            // Reset so the first idle tick after an event pulses immediately.
+            lastIdleKeyframePulseMs = 0;
+        }
+
         // --- Diagnostic: Log per-quadrant pipeline results every time motion is detected ---
         // This shows exactly what the pipeline saw and why it did/didn't trigger.
         if (anyMotion || filterDebugEnabled) {
@@ -2057,6 +2123,9 @@ public class SurveillanceEngineGpu {
             
             if (firstMotionTime == 0) {
                 firstMotionTime = now;
+                // (Parked-idle throttle ramp is driven by a hasActiveMotion() edge
+                // detector at the end of processFrameV2 — see maybeReconcileOnActivityEdge.
+                // Latching firstMotionTime here is the rising edge it observes.)
                 peakThreatDuringSequence = maxThreat;
                 // New sequence: clear the latched HIGH-trust flag. It is
                 // re-evaluated and re-latched below (and each subsequent frame)
@@ -5791,6 +5860,61 @@ public class SurveillanceEngineGpu {
     }
 
     /**
+     * Publish a just-finalized sentry event's verdict to the automation engine so a
+     * rule can trigger on what the guard saw ({@code surveillanceThreat} = severity,
+     * {@code surveillanceObject} = headline object class). Called once per event from
+     * {@link #publishMotionFinal} — a COLD path (the .mp4 has finalized), never the
+     * hot GL frame loop.
+     *
+     * <p>The automation state model is level-triggered (fires on value TRANSITIONS),
+     * so two consecutive events of the same severity would only fire the first. That's
+     * resolved by seeding an idle baseline: {@link #resetSurveillanceAutomationState}
+     * is called at each recording start (and at arm), so every event is a genuine
+     * "idle → X" transition and re-fires. Mirrors {@code SafeLocationManager}'s
+     * daemon-side {@code Automations.update} publisher — no local dedup latch, wrapped
+     * in try/catch so an automation-layer hiccup never disturbs surveillance.
+     */
+    private void publishSurveillanceAutomationEvent(Actor.Severity peakSev, Actor threat,
+                                                    int persons, int vehicles, int bikes, int animals) {
+        try {
+            String sev = (peakSev == Actor.Severity.CRITICAL) ? "critical"
+                    : (peakSev == Actor.Severity.ALERT) ? "alert" : "notice";
+            com.overdrive.app.automation.Automations.update(
+                    com.overdrive.app.automation.condition.BydEvent.SURVEILLANCE_THREAT, sev);
+            // Headline object by rank person > bike > vehicle > animal; "none" when the
+            // event recorded motion with no classified actor (threat == null).
+            String obj;
+            if (threat != null && threat.classGroup == Actor.ClassGroup.PERSON) obj = "person";
+            else if (bikes > 0) obj = "bike";
+            else if (persons > 0) obj = "person";
+            else if (vehicles > 0) obj = "vehicle";
+            else if (animals > 0) obj = "animal";
+            else obj = "none";
+            com.overdrive.app.automation.Automations.update(
+                    com.overdrive.app.automation.condition.BydEvent.SURVEILLANCE_OBJECT, obj);
+        } catch (Throwable t) {
+            logger.debug("publishSurveillanceAutomationEvent failed: " + t.getMessage());
+        }
+    }
+
+    /**
+     * Seed the sentry automation events back to an idle baseline so the NEXT event is a
+     * real transition (see {@link #publishSurveillanceAutomationEvent}). Called at each
+     * recording start and at arm. Publishing "notice"/"none" is the neutral floor; a
+     * genuine event then transitions up from it. try/catch — never disturbs recording.
+     */
+    private void resetSurveillanceAutomationState() {
+        try {
+            com.overdrive.app.automation.Automations.update(
+                    com.overdrive.app.automation.condition.BydEvent.SURVEILLANCE_THREAT, "notice");
+            com.overdrive.app.automation.Automations.update(
+                    com.overdrive.app.automation.condition.BydEvent.SURVEILLANCE_OBJECT, "none");
+        } catch (Throwable t) {
+            logger.debug("resetSurveillanceAutomationState failed: " + t.getMessage());
+        }
+    }
+
+    /**
      * Finalized rich notification fired from stopRecording AFTER the hero JPEG
      * has been written by ThumbnailBuffer. Uses the same tag as the initial
      * notification so the OS replaces the "Recording in progress…" banner
@@ -5886,6 +6010,11 @@ public class SurveillanceEngineGpu {
                     threat = a;
                 }
             }
+            // Publish this event's verdict to the automation engine (surveillanceThreat
+            // + surveillanceObject) so a rule can react to what the sentry saw. Cold
+            // per-event path (fires once as the .mp4 finalizes), never the GL loop.
+            publishSurveillanceAutomationEvent(peakSev, threat, persons, vehicles, bikes, animals);
+
             // camHint follows the threat actor so the title's "X at <camera>"
             // phrase names the camera that saw X, not whichever actor was closest.
             String camHint = cameraNameFor(threat);
@@ -6510,6 +6639,10 @@ public class SurveillanceEngineGpu {
         eventSawNightFpEvidence = false;
         eventSawUncharacterizedMotion = false;
         eventSegmentFiles.clear();
+        // Fresh event → seed the sentry automation events back to idle so this event's
+        // verdict (published at finalize) is a genuine transition and re-fires even if
+        // it matches the previous event's severity/object. See publishSurveillanceAutomationEvent.
+        resetSurveillanceAutomationState();
 
         // OEM Dashcam parallel event recording. When the user has opted into
         // surveillance-driven OEM clips (oemDashcam.surveillance.enabled),
@@ -7007,6 +7140,12 @@ public class SurveillanceEngineGpu {
             logger.warn("OEM dashcam stop on event end failed: " + t.getMessage());
         }
         recording = false;
+        // (Parked-idle throttle ramp-DOWN is handled by the hasActiveMotion() edge
+        // detector at the end of processFrameV2, which fires AFTER the caller resets
+        // firstMotionTime — so hasActiveMotion() is already false when the reconcile
+        // runs. Pushing here would be premature: firstMotionTime is still set at this
+        // point, so the idle rung would be skipped and the ramp-down lost until the
+        // 30s resync tick. Do NOT reconcile here.)
         lastRecordingStopTime = System.currentTimeMillis();  // Track when we stopped
         // Hygiene: clear the trigger-start clock on every stop path so a
         // stale value can never leak into the next event's hard-ceiling
@@ -7619,6 +7758,16 @@ public class SurveillanceEngineGpu {
             return;
         }
 
+        // Sentry armed → publish surveillanceArmed=on and seed the event verdicts to
+        // idle so the first real detection is a genuine transition. Both modes
+        // (continuous / smart) flow through here after the ACC guard. try/catch inside
+        // the helpers — never blocks arming.
+        try {
+            com.overdrive.app.automation.Automations.update(
+                    com.overdrive.app.automation.condition.BydEvent.SURVEILLANCE_ARMED, "on");
+        } catch (Throwable ignored) {}
+        resetSurveillanceAutomationState();
+
         // Latch ACC-OFF mode from unified config. forceReload because the
         // setter writes go through the app process; the daemon's UCM cache
         // would otherwise see a stale value on the first enable() after a
@@ -7784,6 +7933,12 @@ public class SurveillanceEngineGpu {
      * Disables surveillance (stops monitoring).
      */
     public void disable() {
+        // Sentry disarmed → publish surveillanceArmed=off (before the continuous-mode
+        // early return so both modes emit it). try/catch — never blocks teardown.
+        try {
+            com.overdrive.app.automation.Automations.update(
+                    com.overdrive.app.automation.condition.BydEvent.SURVEILLANCE_ARMED, "off");
+        } catch (Throwable ignored) {}
         if (continuousMode) {
             // Continuous-mode disable: no motion / YOLO state to drain and
             // no event-end baseline update to run. Just stop the recorder
@@ -7913,7 +8068,37 @@ public class SurveillanceEngineGpu {
     public boolean isRecording() {
         return recording;
     }
-    
+
+    /**
+     * @return true when surveillance has active motion in flight or is
+     * recording — i.e. the camera should be at full fps, not the parked-idle
+     * rate. Derived purely from the two existing single-writer fields so it is
+     * automatically correct across ALL firstMotionTime reset sites (no separate
+     * flag to keep in sync). Read cross-thread by RecordingModeManager to drive
+     * the idle↔active fps ramp.
+     */
+    public boolean hasActiveMotion() {
+        return firstMotionTime != 0 || recording;
+    }
+
+    /**
+     * Notify RecordingModeManager that surveillance motion activity changed so it
+     * can promptly ramp the camera fps between the parked-idle rate and full rate
+     * (parked-idle throttle). Fetches RMM via the same static registry the engine
+     * uses for the OEM pipeline. Fire-and-forget; fully guarded — a null RMM (not
+     * yet wired) or any failure is a silent no-op, and reconcile is a no-op when
+     * the throttle is off.
+     */
+    private void notifySurveillanceActivityChanged() {
+        try {
+            com.overdrive.app.recording.RecordingModeManager rmm =
+                com.overdrive.app.daemon.CameraDaemon.getRecordingModeManager();
+            if (rmm != null) rmm.onSurveillanceActivityChanged();
+        } catch (Throwable t) {
+            logger.debug("Surveillance activity reconcile push failed: " + t.getMessage());
+        }
+    }
+
     /**
      * Checks if in active mode (heavy AI).
      * 

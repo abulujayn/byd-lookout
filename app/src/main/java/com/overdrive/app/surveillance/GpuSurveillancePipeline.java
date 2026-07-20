@@ -99,6 +99,13 @@ public class GpuSurveillancePipeline {
     // position/size stay correct across portrait↔landscape. <=0 sizePct = unset.
     private volatile int bsSizePct = 40;
     private volatile String bsCorner = "tr";
+    // On-screen card rotation (0/90/180/270 degrees), applied by the SurfaceControl
+    // layer when it composites the fixed BS_WIDTH×BS_HEIGHT buffer. Only meaningful
+    // for the single-view merge modes (side/rear); the merged "both" view is not
+    // rotated (the stitched panorama is inherently landscape). Read from
+    // blindspot.rotation on enable + config change. resolveBsGeometry swaps the
+    // dest-rect aspect for the 90/270 cases so the scale stays uniform.
+    private volatile int bsRotationDeg = 0;
     private volatile int bsLastPanelW = -1, bsLastPanelH = -1;  // for rotation detect
     // Blind-spot DISPLAY TARGET: "head_unit" (default — the 15.6" center screen,
     // layerStack 0, byte-for-byte the shipping behaviour) or "cluster" (the driver
@@ -418,6 +425,19 @@ public class GpuSurveillancePipeline {
     public void setCameraTargetFps(int fps) {
         PanoramicCameraGpu cam = camera;
         if (cam != null) cam.setTargetFps(fps);
+    }
+
+    /**
+     * Pin the AI motion-readback cadence to a fixed wall-clock interval (ms),
+     * independent of the HAL rate; 0 restores the default frame-count modulo.
+     * Parked-idle throttle uses this to keep detection identical while the HAL
+     * fps is dropped for power. No-op if the camera isn't up (re-applied at the
+     * next AI-lane bring-up). Co-located with setCameraTargetFps because RMM
+     * sets the two together.
+     */
+    public void setAiReadbackMinIntervalMs(long ms) {
+        PanoramicCameraGpu cam = camera;
+        if (cam != null) cam.setAiReadbackMinIntervalMs(ms);
     }
 
     /**
@@ -4838,6 +4858,11 @@ public class GpuSurveillancePipeline {
             // Resolve the display target FIRST so panel + geometry-key pick the
             // right display. Default head_unit = byte-for-byte the shipping path.
             bsTarget = (bs != null) ? bs.optString("target", "head_unit") : "head_unit";
+            // Resolve the on-screen card rotation. Only the single-view modes
+            // (side/rear) may rotate; the merged panorama stays landscape. This makes
+            // the effective rotation self-correcting when the user switches back to
+            // "both" without having to clear the stored angle.
+            bsRotationDeg = resolveBsRotation(bs);
 
             android.graphics.Point panel = (ctx != null)
                 ? panelForTarget(ctx)
@@ -4882,10 +4907,50 @@ public class GpuSurveillancePipeline {
                 r = clampBsRect(r[0], r[1], r[2], r[3]);
             }
             bsGeomRect = new int[]{r[0], r[1], r[2], r[3]};   // atomic publish
+            // Push the resolved rotation onto the layer so the setGeometry calls that
+            // follow (enable / show / retarget) composite the buffer at the right
+            // angle. Cheap store; the rect above already matches the rotated aspect.
+            com.overdrive.app.surveillance.BsNativeLayer layer = bsLayer;
+            if (layer != null) layer.setBufferRotation(bsRotationDeg);
         } catch (Throwable t) {
             logger.warn("resolveBsGeometry failed: " + t.getMessage());
             if (bsGeomRect[2] <= 0) bsGeomRect = new int[]{24, 24, 640, 480};
         }
+    }
+
+    /** Resolve the effective on-screen card rotation from the blindspot config.
+     *  Rotation is honoured ONLY for the single-view merge modes (side/rear); the
+     *  merged "both" panorama is inherently landscape and always renders upright.
+     *
+     *  <p>The stored {@code rotation} is either a fixed quarter turn (int
+     *  0/90/180/270) or the string {@code "auto"}. In AUTO mode the on-screen angle
+     *  tracks the DIRECTION OF TRAVEL: it holds the configured base angle
+     *  ({@code rotationBase}) while moving forward and flips 180° in reverse gear,
+     *  so the view reads naturally when backing up. Gear is read live from the
+     *  daemon-local {@link com.overdrive.app.monitor.GearMonitor} (5 Hz), so no
+     *  cross-process hop is involved. Any non-multiple-of-90 value is snapped to the
+     *  nearest quarter turn. */
+    private int resolveBsRotation(org.json.JSONObject bs) {
+        if (bs == null) return 0;
+        String merge = bs.optString("mergeMode", "both");
+        if (!"side".equals(merge) && !"rear".equals(merge)) return 0;
+        Object rotVal = bs.opt("rotation");
+        if (rotVal instanceof String && "auto".equalsIgnoreCase((String) rotVal)) {
+            int base = snapDeg(bs.optInt("rotationBase", 0));
+            boolean reverse = false;
+            try {
+                reverse = com.overdrive.app.monitor.GearMonitor.getInstance().getCurrentGear()
+                        == com.overdrive.app.monitor.GearMonitor.GEAR_R;
+            } catch (Throwable ignored) {}
+            return reverse ? (base + 180) % 360 : base;
+        }
+        return snapDeg(bs.optInt("rotation", 0));
+    }
+
+    /** Normalise an angle into {0,90,180,270} (mod 360, nearest quarter turn). */
+    private static int snapDeg(int deg) {
+        deg = ((deg % 360) + 360) % 360;
+        return (Math.round(deg / 90f) * 90) % 360;
     }
 
     /** Update the on-screen geometry live (from /api/bs/geometry / settings UI).
@@ -4975,6 +5040,14 @@ public class GpuSurveillancePipeline {
         if (bsSizePct <= 0) return null;
         int p = Math.max(15, Math.min(bsSizePct, 90));
         int w = (int) (panel.x * (p / 100.0));
+        // The dest rect handed to setGeometry must keep the SOURCE buffer's 4:3 aspect
+        // for EVERY rotation. Android's Transaction.setGeometry computes the scale from
+        // the UN-swapped source dims (xScale=dstW/1280, yScale=dstH/960) and rotates the
+        // result AFTER scaling, so square (undistorted) pixels require dstW/dstH ==
+        // 1280/960. A 3:4 dst at a quarter turn makes xScale != yScale (~1.78x) => the
+        // anamorphic stretch that was the "distorted when rotated" half of issue #164.
+        // (Native then rotates the 4:3-scaled buffer; the card's VISIBLE footprint is
+        // portrait — that is the post-scale rotation, not the scale reference.)
         int h = (int) (w * (double) BS_HEIGHT / BS_WIDTH);
         int inset = 24;
         String corner = (bsCorner != null) ? bsCorner : "tr";
@@ -4998,11 +5071,15 @@ public class GpuSurveillancePipeline {
                 : new android.graphics.Point(1920, isClusterTarget() ? 720 : 1080);
             w = Math.max(160, Math.min(w, panel.x));
             h = Math.max(120, Math.min(h, panel.y));
-            // BS-GEO-4: keep the dest rect at the BS buffer's 4:3 ratio so the
-            // SurfaceControl scale stays UNIFORM — the rounded corners are baked
-            // into the fixed 1280×960 buffer at 4:3, so a non-4:3 dest would scale
-            // the circular corners into ellipses. Shrink the over-long axis.
-            double want = (double) BS_WIDTH / BS_HEIGHT;   // 4:3
+            // BS-GEO-4: keep the dest rect at the BS buffer's baked 4:3 aspect for ALL
+            // rotations so the SurfaceControl scale stays UNIFORM — the rounded corners
+            // are baked into the fixed 1280×960 buffer at 4:3, so a mismatched dest
+            // scales the circular corners into ellipses. Android's setGeometry computes
+            // the scale from the UN-swapped source dims and rotates AFTER scaling, so a
+            // uniform (undistorted) rotation needs dstW/dstH == 1280/960 REGARDLESS of
+            // the angle — a 3:4 dest at 90/270 gives xScale != yScale (~1.78x squish),
+            // the distortion half of issue #164. So NO per-angle aspect swap here.
+            double want = (double) BS_WIDTH / BS_HEIGHT;   // 4:3, all rotations
             if ((double) w / h > want) w = (int) (h * want);
             else                       h = (int) (w / want);
             x = Math.max(0, Math.min(x, panel.x - w));
@@ -5179,7 +5256,14 @@ public class GpuSurveillancePipeline {
         // running clusterLayerStack/resolveBsGeometry under the lock is legal here.
         bsLifecycleLock.lock();
         try {
-            if (!isClusterTarget()) return;
+            // Accept the ready callback for EITHER a blind-spot cluster session
+            // (bsTarget==cluster) OR a camera-view cluster session (camViewTarget==cluster).
+            // Without the camview arm, a camview-only cold open was skipped here — worse,
+            // resolveBsGeometry() below resets bsTarget to head_unit, so every subsequent
+            // re-notify then short-circuited on isClusterTarget() and the camview card never
+            // showed on the cluster at all.
+            boolean camViewCluster = camViewActive && !blindSpotEnabled && isCamViewClusterTarget();
+            if (!isClusterTarget() && !camViewCluster) return;
             com.overdrive.app.surveillance.BsNativeLayer layer = bsLayer;
             if (layer == null || !layer.isCreated()) return;
             int live = com.overdrive.app.surveillance.BsNativeLayer.clusterLayerStack(bsClusterStack);
@@ -5205,7 +5289,22 @@ public class GpuSurveillancePipeline {
             }
             logger.info("onClusterProjectionReady: cluster layerStack=" + bsClusterStack
                     + " (resolved=" + live + ")");
-            resolveBsGeometry();   // recompute against the live cluster panel
+            // Recompute geometry against the live cluster panel — but PROGRAM-AWARE. When
+            // camera-view owns the lane, resolveBsGeometry() would read the BLIND-SPOT config
+            // section, reset bsTarget to blindspot.target (head_unit by default) and overwrite
+            // the camview cluster rect with a head-unit-sized BS rect — discarding the
+            // automation's chosen size/position and (via the bsTarget reset) breaking the
+            // isClusterTarget() guard for later re-notifies. Route to the camview resolver,
+            // which keeps camViewTarget=cluster and sizes against clusterDisplaySize, exactly
+            // as camViewTick's own reconfig block does. A BS-cluster session (blindSpotEnabled)
+            // still takes resolveBsGeometry() unchanged.
+            if (camViewCluster) {
+                bsTarget = camViewTarget;          // stays "cluster" — keep the guard true
+                resolveCamViewGeometry();
+                bsGeomRect = camViewGeomRect;
+            } else {
+                resolveBsGeometry();
+            }
             // COLD-OPEN no-show fix: do NOT gate the show on the instantaneous
             // bsLayerVisible. On a cold open the fission display materializes
             // 1-3.5s AFTER commitReady, and the turn signal commonly clears in
@@ -5462,6 +5561,29 @@ public class GpuSurveillancePipeline {
             }
 
             org.json.JSONObject bs = com.overdrive.app.config.UnifiedConfigManager.getBlindSpot();
+            // AUTO rotation (direction-of-travel): when rotation="auto" the effective
+            // angle depends on gear (forward=base, reverse=base+180), so it must be
+            // re-evaluated live rather than only on a settings write. Re-resolve
+            // cheaply each tick and re-apply only on change. AUTO flips by 180° only,
+            // so base↔base+180 keeps the same 4:3/3:4 aspect parity — the dest rect is
+            // unchanged, so we skip the panel query entirely (no resolveBsGeometry).
+            // That also keeps this cluster-safe: unlike the orientation-change branch
+            // above, it never touches clusterDisplaySize/dumpsys on the 250ms loop.
+            // No-op churn for fixed rotations (want == bsRotationDeg in steady state).
+            {
+                int wantRot = resolveBsRotation(bs);
+                if (wantRot != bsRotationDeg) {
+                    bsRotationDeg = wantRot;
+                    com.overdrive.app.surveillance.BsNativeLayer rl = bsLayer;
+                    if (rl != null) {
+                        rl.setBufferRotation(wantRot);
+                        if (bsLayerVisible && rl.isCreated()) {
+                            int[] g = bsGeomRect;
+                            rl.setGeometry(g[0], g[1], g[2], g[3]);
+                        }
+                    }
+                }
+            }
             boolean debugPreview = bs.optBoolean("debugPreview", false);
             if (debugPreview) {
                 int want = bs.optInt("debugView", 7) == 8 ? 8 : 7;
@@ -5787,6 +5909,10 @@ public class GpuSurveillancePipeline {
             // Tell the app-side close-button overlay a view is up (edge-driven, no poll).
             // Fired outside the lock so the short `am broadcast` exec never holds it.
             if (nowActive) emitCamViewState(true, tgt);
+            // NOTE: the camera-profile ramp for the new camera-view rung is driven by the
+            // existing camViewTick → setBlindSpotVisible/clusterShowWhenReady →
+            // fireBsVisibilityChanged edge (RMM.desiredCameraState reads camViewKeepWarmActive
+            // fresh), so no explicit reconcile trigger is needed here.
         }
     }
 
@@ -5835,6 +5961,9 @@ public class GpuSurveillancePipeline {
             // Only when it was actually active, so the no-op early-return path (view
             // already hidden) doesn't fire a spurious "closed" broadcast.
             if (wasActive) emitCamViewState(false, null);
+            // Let RMM re-reconcile so the camera drops back to a lower rung (BS/stream/idle)
+            // now that cam-view no longer needs the higher fps.
+            if (wasActive) fireBsVisibilityChanged();
         }
     }
 
@@ -6135,6 +6264,30 @@ public class GpuSurveillancePipeline {
         return 0;   // "both" / null / unknown
     }
 
+    /**
+     * Re-read the blind-spot card rotation (and merge-mode gate) from config and
+     * re-apply it live. Called after a settings write changes blindspot.rotation OR
+     * blindspot.mergeMode (a flip to/from "both" changes whether rotation applies).
+     * Re-resolves geometry — which recomputes the rotation-aware dest rect + pushes
+     * the angle onto the layer — and re-applies the rect when the card is shown, so
+     * the change lands without an ACC cycle. No-op-safe when the lane isn't up.
+     */
+    public void refreshBlindSpotRotation() {
+        bsLifecycleLock.lock();
+        try {
+            resolveBsGeometry();
+            com.overdrive.app.surveillance.BsNativeLayer layer = bsLayer;
+            if (layer != null && layer.isCreated() && bsLayerVisible) {
+                int[] g = bsGeomRect;
+                layer.setGeometry(g[0], g[1], g[2], g[3]);
+            }
+        } catch (Throwable t) {
+            logger.warn("refreshBlindSpotRotation failed: " + t.getMessage());
+        } finally {
+            bsLifecycleLock.unlock();
+        }
+    }
+
     
     /**
      * Gets the current stream view mode.
@@ -6343,7 +6496,28 @@ public class GpuSurveillancePipeline {
     public boolean isSurveillanceMode() {
         return currentMode == Mode.SURVEILLANCE;
     }
-    
+
+    /**
+     * @return true when the sentry currently has active motion or is recording
+     * an event — the signal RMM uses to ramp the camera from parked-idle fps
+     * back to the full surveillance fps. False when the sentry is absent
+     * (falls through to today's behaviour).
+     */
+    public boolean hasActiveSurveillanceMotion() {
+        SurveillanceEngineGpu s = sentry;
+        return s != null && s.hasActiveMotion();
+    }
+
+    /**
+     * @return true when surveillance is in CONTINUOUS (always-record) mode,
+     * which has NO AI lane and already records at full fps — the parked-idle
+     * throttle must exclude it. False when the sentry is absent.
+     */
+    public boolean isContinuousSurveillance() {
+        SurveillanceEngineGpu s = sentry;
+        return s != null && s.isContinuousMode();
+    }
+
     /**
      * Checks if normal recording mode is active.
      * 

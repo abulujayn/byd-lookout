@@ -72,7 +72,9 @@ public class VariableCondition extends EventCondition {
             if (!getValue().isValidComparator(comparator)) return null;
 
             Object value = input.get("value");
-            if (!getValue().isValid(value)) return null;
+            // Accept a dynamic ${…} reference (resolved live at compare time) or a value
+            // that passes this condition's own type validation. Shared base helper.
+            if (!isAcceptableConditionValue(value)) return null;
 
             return new AutomationCondition(eventData, comparator, value);
         } catch (Exception e) {

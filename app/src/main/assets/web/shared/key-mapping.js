@@ -68,12 +68,54 @@ window.KM = (function () {
         { id: 'ac_fan',          i18n: 'keymap.act_ac_fan',           kind: 'api',
           method: 'POST', path: '/api/vehicle/climate', body: '{"action":"set_fan","fan":${v}}',
           payloads: [ { v: '1', i18n: 'keymap.fan_1' }, { v: '2', i18n: 'keymap.fan_2' }, { v: '3', i18n: 'keymap.fan_3' }, { v: '4', i18n: 'keymap.fan_4' }, { v: '5', i18n: 'keymap.fan_5' }, { v: '6', i18n: 'keymap.fan_6' }, { v: '7', i18n: 'keymap.fan_7' } ] },
+        // AC auto / fan-only / steering-wheel heater. ${v} carries the on|off suffix into
+        // the /api/vehicle/climate action string (auto_on, fan_only_off, …).
+        { id: 'ac_auto',         i18n: 'keymap.act_ac_auto',          kind: 'api',
+          method: 'POST', path: '/api/vehicle/climate', body: '{"action":"auto_${v}"}',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'fan_only',        i18n: 'keymap.act_fan_only',         kind: 'api',
+          method: 'POST', path: '/api/vehicle/climate', body: '{"action":"fan_only_${v}"}',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'steering_heat',   i18n: 'keymap.act_steering_heat',    kind: 'api',
+          method: 'POST', path: '/api/vehicle/climate', body: '{"action":"steering_heat_${v}"}',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'defrost_front',   i18n: 'keymap.act_defrost_front',    kind: 'api',
+          method: 'POST', path: '/api/vehicle/climate', body: '{"action":"defrost_front_${v}"}',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'defrost_rear',    i18n: 'keymap.act_defrost_rear',     kind: 'api',
+          method: 'POST', path: '/api/vehicle/climate', body: '{"action":"defrost_rear_${v}"}',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'recirculation',   i18n: 'keymap.act_recirculation',    kind: 'api',
+          method: 'POST', path: '/api/vehicle/climate', body: '{"action":"recirculate_${v}"}',
+          payloads: [ { v: 'on', i18n: 'keymap.recirculate' }, { v: 'off', i18n: 'keymap.fresh_air' } ] },
         { id: 'drl',             i18n: 'keymap.act_drl',             kind: 'catalog', key: 'drl',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' }, { v: 'toggle', i18n: 'keymap.toggle' } ] },
+        // Welcome / reading / ambient-music lights on/off. ${v} carries true|false into
+        // the /api/vehicle/lights enable field (target fixed per action).
+        { id: 'welcome_light',   i18n: 'keymap.act_welcome_light',    kind: 'api',
+          method: 'POST', path: '/api/vehicle/lights', body: '{"target":"welcomeLight","enable":${v}}',
+          payloads: [ { v: 'true', i18n: 'keymap.on' }, { v: 'false', i18n: 'keymap.off' } ] },
+        { id: 'reading_light',   i18n: 'keymap.act_reading_light',    kind: 'api',
+          method: 'POST', path: '/api/vehicle/lights', body: '{"target":"readingLight","enable":${v}}',
+          payloads: [ { v: 'true', i18n: 'keymap.on' }, { v: 'false', i18n: 'keymap.off' } ] },
+        { id: 'ambient_music',   i18n: 'keymap.act_ambient_music',    kind: 'api',
+          method: 'POST', path: '/api/vehicle/lights', body: '{"target":"ambientMusic","enable":${v}}',
+          payloads: [ { v: 'true', i18n: 'keymap.on' }, { v: 'false', i18n: 'keymap.off' } ] },
+        // Headlight beam level — a button binds ONE fixed level (1-11). ${v} carries it.
+        { id: 'headlight_level', i18n: 'keymap.act_headlight_level',  kind: 'api',
+          method: 'POST', path: '/api/vehicle/lights', body: '{"target":"headlightLevel","value":${v}}',
+          payloads: [ { v: '1', i18n: 'keymap.level_1' }, { v: '3', i18n: 'keymap.level_3' }, { v: '5', i18n: 'keymap.level_5' }, { v: '7', i18n: 'keymap.level_7' }, { v: '9', i18n: 'keymap.level_9' }, { v: '11', i18n: 'keymap.level_11' } ] },
+        { id: 'hazard',          i18n: 'keymap.act_hazard',          kind: 'catalog', key: 'hazard',
           payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' }, { v: 'toggle', i18n: 'keymap.toggle' } ] },
         { id: 'esp_control',     i18n: 'keymap.act_esp',             kind: 'catalog', key: 'esp_control',
           payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
         { id: 'itac',            i18n: 'keymap.act_itac',            kind: 'catalog', key: 'itac',
           payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        // Mirror fold/unfold. Set-only (no fold-state getter), so "toggle" is a blind
+        // flip off the last-commanded value cached daemon-side — bind Toggle to one
+        // button to alternate fold/unfold on each press.
+        { id: 'mirror_fold',     i18n: 'keymap.act_mirror_fold',     kind: 'catalog', key: 'mirror_fold',
+          payloads: [ { v: 'on', i18n: 'keymap.mirror_fold' }, { v: 'off', i18n: 'keymap.mirror_unfold' }, { v: 'toggle', i18n: 'keymap.toggle' } ] },
         // Camera views on the native SurfaceControl lane (shares blind-spot pipeline;
         // BS has priority). A button picks WHICH camera; it shows centered on the
         // head-unit at a chosen SIZE (small/medium/large/full). ${v} = size % → the
@@ -96,6 +138,25 @@ window.KM = (function () {
           payloads: [ { v: '25', i18n: 'keymap.size_small' }, { v: '45', i18n: 'keymap.size_medium' }, { v: '70', i18n: 'keymap.size_large' }, { v: '90', i18n: 'keymap.size_full' } ] },
         { id: 'camview_hide',    i18n: 'keymap.act_camview_hide',    kind: 'api',
           method: 'POST', path: '/api/camview/hide', body: '' },
+        // Same camera views projected onto the DRIVER CLUSTER (target=cluster). The daemon
+        // opens the OEM cluster projection on demand and renders the view on its native
+        // layer (identical path the blind-spot cluster view uses). No cluster "hide" is
+        // needed — /api/camview/hide is target-agnostic (camview_hide above covers both).
+        { id: 'camview_all_cluster',   i18n: 'keymap.act_camview_all_cluster',   kind: 'api',
+          method: 'POST', path: '/api/camview/show?cam=all&target=cluster&preset=${v}/center', body: '',
+          payloads: [ { v: '25', i18n: 'keymap.size_small' }, { v: '45', i18n: 'keymap.size_medium' }, { v: '70', i18n: 'keymap.size_large' }, { v: '90', i18n: 'keymap.size_full' } ] },
+        { id: 'camview_front_cluster', i18n: 'keymap.act_camview_front_cluster', kind: 'api',
+          method: 'POST', path: '/api/camview/show?cam=front&target=cluster&preset=${v}/center', body: '',
+          payloads: [ { v: '25', i18n: 'keymap.size_small' }, { v: '45', i18n: 'keymap.size_medium' }, { v: '70', i18n: 'keymap.size_large' }, { v: '90', i18n: 'keymap.size_full' } ] },
+        { id: 'camview_rear_cluster',  i18n: 'keymap.act_camview_rear_cluster',  kind: 'api',
+          method: 'POST', path: '/api/camview/show?cam=rear&target=cluster&preset=${v}/center', body: '',
+          payloads: [ { v: '25', i18n: 'keymap.size_small' }, { v: '45', i18n: 'keymap.size_medium' }, { v: '70', i18n: 'keymap.size_large' }, { v: '90', i18n: 'keymap.size_full' } ] },
+        { id: 'camview_left_cluster',  i18n: 'keymap.act_camview_left_cluster',  kind: 'api',
+          method: 'POST', path: '/api/camview/show?cam=left&target=cluster&preset=${v}/center', body: '',
+          payloads: [ { v: '25', i18n: 'keymap.size_small' }, { v: '45', i18n: 'keymap.size_medium' }, { v: '70', i18n: 'keymap.size_large' }, { v: '90', i18n: 'keymap.size_full' } ] },
+        { id: 'camview_right_cluster', i18n: 'keymap.act_camview_right_cluster', kind: 'api',
+          method: 'POST', path: '/api/camview/show?cam=right&target=cluster&preset=${v}/center', body: '',
+          payloads: [ { v: '25', i18n: 'keymap.size_small' }, { v: '45', i18n: 'keymap.size_medium' }, { v: '70', i18n: 'keymap.size_large' }, { v: '90', i18n: 'keymap.size_full' } ] },
         { id: 'seat_heat_driver',    i18n: 'keymap.act_seat_heat_driver',    kind: 'catalog', key: 'seat_heat_driver',
           payloads: [ { v: 'off', i18n: 'keymap.off' }, { v: 'low', i18n: 'keymap.low' }, { v: 'high', i18n: 'keymap.high' } ] },
         { id: 'seat_heat_passenger', i18n: 'keymap.act_seat_heat_passenger', kind: 'catalog', key: 'seat_heat_passenger',
@@ -108,6 +169,10 @@ window.KM = (function () {
           payloads: [ { v: 'normal', i18n: 'keymap.mode_normal' }, { v: 'eco', i18n: 'keymap.mode_eco' }, { v: 'sport', i18n: 'keymap.mode_sport' } ] },
         { id: 'powertrain_mode', i18n: 'keymap.act_powertrain_mode',  kind: 'catalog', key: 'powertrain_mode',
           payloads: [ { v: 'ev', i18n: 'keymap.mode_ev' }, { v: 'hev', i18n: 'keymap.mode_hev' } ] },
+        // Hold battery at current charge — one-tap alias for "switch to HEV" (the only
+        // SDK lever; no settable target-SOC). Single payload so a button just does it.
+        { id: 'hold_battery',    i18n: 'keymap.act_hold_battery',    kind: 'catalog', key: 'hold_battery',
+          payloads: [ { v: 'on', i18n: 'keymap.on' } ] },
         // regen / steering / brake feel: no telemetry readback exists, so "toggle"
         // CYCLES to the next option (daemon tracks the last-commanded value) — ideal
         // for a single button that flips between the two modes on each press.
@@ -127,6 +192,35 @@ window.KM = (function () {
         // readback. catalog kind resolves against the "lane_assist" entity daemon-side.
         { id: 'lane_assist',     i18n: 'keymap.act_lane_assist',      kind: 'catalog', key: 'lane_assist',
           payloads: [ { v: '0', i18n: 'keymap.lane_off' }, { v: '1', i18n: 'keymap.lane_ldw' }, { v: '2', i18n: 'keymap.lane_ldp' }, { v: '3', i18n: 'keymap.lane_ldw_ldp' }, { v: 'toggle', i18n: 'keymap.toggle' } ] },
+        // ── Expanded ADAS matrix. on/off (+toggle where the daemon has live readback).
+        //    Feature ids/polarity unverified per trim — verify via GET /api/vehicle/adas. ──
+        { id: 'adas_bsd',  i18n: 'keymap.act_bsd',  kind: 'catalog', key: 'adas_bsd',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'adas_tsr',  i18n: 'keymap.act_tsr',  kind: 'catalog', key: 'adas_tsr',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'adas_rcta', i18n: 'keymap.act_rcta', kind: 'catalog', key: 'adas_rcta',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'adas_fcta', i18n: 'keymap.act_fcta', kind: 'catalog', key: 'adas_fcta',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'adas_tla',  i18n: 'keymap.act_tla',  kind: 'catalog', key: 'adas_tla',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'adas_dow',  i18n: 'keymap.act_dow',  kind: 'catalog', key: 'adas_dow',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'adas_rcw',  i18n: 'keymap.act_rcw',  kind: 'catalog', key: 'adas_rcw',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'adas_islc', i18n: 'keymap.act_islc', kind: 'catalog', key: 'adas_islc',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'adas_elka', i18n: 'keymap.act_elka', kind: 'catalog', key: 'adas_elka',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'adas_rctb', i18n: 'keymap.act_rctb', kind: 'catalog', key: 'adas_rctb',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'adas_fctb', i18n: 'keymap.act_fctb', kind: 'catalog', key: 'adas_fctb',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'adas_fcw',  i18n: 'keymap.act_fcw',  kind: 'catalog', key: 'adas_fcw',
+          payloads: [ { v: '0', i18n: 'keymap.off' }, { v: '1', i18n: 'keymap.fcw_low' }, { v: '2', i18n: 'keymap.fcw_medium' }, { v: '3', i18n: 'keymap.fcw_high' } ] },
+        // AEB is ENABLE-ONLY (safety-critical): a button can only re-arm it, never disable.
+        { id: 'adas_aeb',  i18n: 'keymap.act_aeb',  kind: 'catalog', key: 'adas_aeb',
+          payloads: [ { v: 'on', i18n: 'keymap.on' } ] },
         // ── Display brightness (media handler; allowlisted). A button steps to a
         //    chosen level — pick the level when binding. ${v} = 0-100 percentage. ──
         { id: 'screen_brightness', i18n: 'keymap.act_screen_brightness', kind: 'api',
@@ -160,6 +254,15 @@ window.KM = (function () {
         { id: 'volume_navigation', i18n: 'keymap.act_volume_navigation', kind: 'api',
           method: 'POST', path: '/api/vehicle/media', body: '{"target":"volume","channel":"navigation","value":${v}}',
           payloads: [ { v: '0', i18n: 'keymap.vol_0' }, { v: '10', i18n: 'keymap.vol_10' }, { v: '20', i18n: 'keymap.vol_20' }, { v: '30', i18n: 'keymap.vol_30' }, { v: '40', i18n: 'keymap.vol_40' } ] },
+        // Volume up/down — one relative step on the media channel (ideal for a single
+        // button that nudges volume each press). ${v} = direction (+1 up / -1 down).
+        { id: 'volume_step', i18n: 'keymap.act_volume_step', kind: 'api',
+          method: 'POST', path: '/api/vehicle/media', body: '{"target":"volume_step","channel":"media","value":${v}}',
+          payloads: [ { v: '1', i18n: 'keymap.volume_up' }, { v: '-1', i18n: 'keymap.volume_down' } ] },
+        // Media transport — controls whatever holds the media session (radio/BT/app).
+        { id: 'media_control', i18n: 'keymap.act_media_control', kind: 'api',
+          method: 'POST', path: '/api/vehicle/media', body: '{"target":"media_key","key":"${v}"}',
+          payloads: [ { v: 'play_pause', i18n: 'keymap.media_play_pause' }, { v: 'next', i18n: 'keymap.media_next' }, { v: 'previous', i18n: 'keymap.media_previous' } ] },
         // Play audio: the payload dropdown is populated LIVE from the audio library
         // (dynamicPayloads:'audio' → GET /api/audio/library), so a button binds one of
         // the sounds the user uploaded on the Automations page. ${v} = the sound's
@@ -174,6 +277,37 @@ window.KM = (function () {
           body: '{"name":"${v}","channel":"media","display":"screen","loop":false}', dynamicPayloads: 'audio' },
         { id: 'stop_audio', i18n: 'keymap.act_stop_audio', kind: 'api',
           method: 'POST', path: '/api/vehicle/stop-audio', body: '' },
+        // System UI navigation — a button jumps Home / Back / Recents (daemon input keyevent).
+        { id: 'ui_nav', i18n: 'keymap.act_ui_nav', kind: 'api',
+          method: 'POST', path: '/api/vehicle/system', body: '{"target":"${v}"}',
+          payloads: [ { v: 'home', i18n: 'keymap.nav_home' }, { v: 'back', i18n: 'keymap.nav_back' }, { v: 'recents', i18n: 'keymap.nav_recents' } ] },
+        // Screenshot the chosen display (screencap; a11y screenshot is API30+, unavailable here).
+        { id: 'screenshot', i18n: 'keymap.act_screenshot', kind: 'api',
+          method: 'POST', path: '/api/vehicle/system', body: '{"target":"screenshot","display":${v}}',
+          payloads: [ { v: '0', i18n: 'keymap.display_head_unit' }, { v: '1', i18n: 'keymap.display_cluster' } ] },
+        // Cast an installed app onto the DRIVER CLUSTER. The daemon opens the OEM
+        // projection first (the fission display doesn't exist until then), resolves the
+        // live display id, and holds the projection open. App picked from the live list
+        // (dynamicPayloads:'apps' → /api/apps/list); the stored payload is the package.
+        // Match the "Cluster size" in Settings to your cluster. Stop with the binding below.
+        { id: 'cast_app_cluster', i18n: 'keymap.act_cast_app_cluster', kind: 'api',
+          method: 'POST', path: '/api/vehicle/system',
+          body: '{"target":"move_display","package":"${v}","display":1}', dynamicPayloads: 'apps' },
+        // Stop casting to the cluster — releases the projection so the gauges return.
+        { id: 'cluster_cast_stop', i18n: 'keymap.act_cluster_cast_stop', kind: 'api',
+          method: 'POST', path: '/api/vehicle/system', body: '{"target":"cluster_cast_stop"}' },
+        // Speak a fixed message aloud (TTS). A hardware button binds one preset phrase;
+        // the payload dropdown offers a few common ones (free-text is an automation).
+        { id: 'speak', i18n: 'keymap.act_speak', kind: 'api',
+          method: 'POST', path: '/api/vehicle/speak', body: '{"text":"${v}","channel":"voice"}',
+          payloads: [ { v: 'Hello', i18n: 'keymap.speak_hello' }, { v: 'Please fasten your seatbelt', i18n: 'keymap.speak_seatbelt' }, { v: 'Arriving soon', i18n: 'keymap.speak_arriving' } ] },
+        // Show a brief on-screen toast. A hardware button binds one preset phrase (a
+        // custom message/title/dialog is set up in an automation, which has the full form);
+        // the toast floats over the current app without stealing focus.
+        { id: 'show_toast', i18n: 'keymap.act_show_toast', kind: 'api',
+          method: 'POST', path: '/api/vehicle/message',
+          body: '{"kind":"toast","message":"${v}","duration":"short","position":"bottom","severity":"info"}',
+          payloads: [ { v: 'Hello', i18n: 'keymap.speak_hello' }, { v: 'Please fasten your seatbelt', i18n: 'keymap.speak_seatbelt' }, { v: 'Arriving soon', i18n: 'keymap.speak_arriving' } ] },
         // ── API actions: features with no SDK/catalog entity (routed via the
         //    allowlisted automation bypass). path/body use ${v} for the payload. ──
         { id: 'surveillance',    i18n: 'keymap.act_surveillance',     kind: 'api',
@@ -195,8 +329,135 @@ window.KM = (function () {
         // Manual-only recording action. This has a dedicated daemon action kind
         // instead of the automation-shared API path; the two window values are
         // edited by the clip controls below and persisted directly in the binding.
-        { id: 'manual_clip',     i18n: 'keymap.act_manual_clip',       kind: 'manualClip' }
+        { id: 'manual_clip',     i18n: 'keymap.act_manual_clip',       kind: 'manualClip' },
+        // Run a saved automation on a keypress — the physical-key equivalent of the
+        // automation's trigger. The target is chosen from a LIVE dropdown of the
+        // user's automations (dynamicPayloads:'automation' → GET /api/automations/picker);
+        // the stored binding is { kind:'automation', id, name }. The daemon enqueues it
+        // on the shared AutomationQueue (conditions + run-stats still apply). Dedicated
+        // 'automation' kind, NOT the API path — /api/automations is off the allowlist.
+        { id: 'run_automation', i18n: 'keymap.act_run_automation', kind: 'automation',
+          dynamicPayloads: 'automation' },
+        // Radio toggles (WiFi / Bluetooth / mobile-data). kind:'radio' → daemon runs
+        // `svc <radio> enable|disable`; WiFi-off also sets the keep-alive suppression
+        // flag so the watchdog doesn't auto-re-enable it. The `radio` id is fixed per
+        // action; the on/off payload picks the state.
+        { id: 'radio_wifi', i18n: 'keymap.act_radio_wifi', kind: 'radio', radio: 'wifi',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'radio_bluetooth', i18n: 'keymap.act_radio_bluetooth', kind: 'radio', radio: 'bluetooth',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] },
+        { id: 'radio_data', i18n: 'keymap.act_radio_data', kind: 'radio', radio: 'data',
+          payloads: [ { v: 'on', i18n: 'keymap.on' }, { v: 'off', i18n: 'keymap.off' } ] }
     ];
+
+    // Live (async) payload sources for curated actions that carry
+    // dynamicPayloads:'&lt;type&gt;'. Each entry supplies the fetch URL, the i18n keys for
+    // the loading / empty / missing states, and an extract() mapping the response to a
+    // flat [{value, text}] list for the payload dropdown. Keeps onCuratedChange generic
+    // so a new live list is a data entry here, not another bespoke fetch branch.
+    var DYNAMIC_PAYLOAD = {
+        audio: {
+            url: '/api/audio/library',
+            loading: 'keymap.loading_audio',
+            none: 'keymap.no_audio',
+            missing: 'keymap.audio_missing',
+            extract: function (j) {
+                var out = [];
+                var sounds = (j && j.success && j.sounds) ? j.sounds : [];
+                for (var i = 0; i < sounds.length; i++) {
+                    out.push({ value: sounds[i].name, text: sounds[i].name });
+                }
+                return out;
+            }
+        },
+        automation: {
+            url: '/api/automations/picker',
+            loading: 'keymap.loading_automations',
+            none: 'keymap.no_automations',
+            missing: 'keymap.automation_missing',
+            extract: function (j) {
+                var out = [];
+                var arr = Array.isArray(j) ? j : [];
+                for (var i = 0; i < arr.length; i++) {
+                    if (arr[i] && arr[i].id) out.push({ value: arr[i].id, text: arr[i].name || arr[i].id });
+                }
+                return out;
+            }
+        },
+        // Installed launchable apps, for the "Cast app to cluster" binding. Same source
+        // as the openApp picker (/api/apps/list); the stored payload is the package name.
+        apps: {
+            url: '/api/apps/list',
+            loading: 'keymap.loading_apps',
+            none: 'keymap.no_apps',
+            missing: 'keymap.app_missing',
+            extract: function (j) {
+                var out = [];
+                var apps = (j && j.success && j.apps) ? j.apps : [];
+                for (var i = 0; i < apps.length; i++) {
+                    if (apps[i] && apps[i].package) {
+                        out.push({ value: apps[i].package, text: apps[i].label || apps[i].package });
+                    }
+                }
+                return out;
+            }
+        }
+    };
+
+    // Cosmetic <optgroup> grouping for the curated-action picker — mirrors the
+    // Automations page categories. Maps each CURATED id to a category key; the value
+    // stored in a binding is still the id (never the category), so this only reorders
+    // how options are shown and never changes what a saved binding resolves to. An id
+    // not listed here falls into 'other' (shown last), so a new action can't vanish.
+    var KM_CATEGORY = {
+        lock: 'vehicle', unlock: 'vehicle', flash: 'vehicle', find_car: 'vehicle',
+        windows_all: 'windows_body', window_lf: 'windows_body', window_rf: 'windows_body',
+        window_lr: 'windows_body', window_rr: 'windows_body', tailgate: 'windows_body',
+        sunroof: 'windows_body', sunshade: 'windows_body', child_lock: 'windows_body',
+        mirror_fold: 'windows_body', wireless_charging: 'windows_body',
+        climate: 'climate', ac_fan: 'climate',
+        ac_auto: 'climate', fan_only: 'climate', steering_heat: 'climate', recirculation: 'climate',
+        defrost_front: 'climate', defrost_rear: 'climate',
+        seat_heat_driver: 'climate', seat_heat_passenger: 'climate',
+        drl: 'lighting', hazard: 'lighting',
+        welcome_light: 'lighting', reading_light: 'lighting',
+        ambient_music: 'lighting', headlight_level: 'lighting',
+        esp_control: 'adas_safety', itac: 'adas_safety', adas_slw: 'adas_safety',
+        adas_cpd: 'adas_safety', lane_assist: 'adas_safety',
+        adas_bsd: 'adas_safety', adas_tsr: 'adas_safety', adas_rcta: 'adas_safety',
+        adas_fcta: 'adas_safety', adas_tla: 'adas_safety', adas_dow: 'adas_safety',
+        adas_rcw: 'adas_safety', adas_islc: 'adas_safety', adas_elka: 'adas_safety',
+        adas_rctb: 'adas_safety', adas_fctb: 'adas_safety', adas_fcw: 'adas_safety',
+        adas_aeb: 'adas_safety',
+        drive_mode: 'drive', powertrain_mode: 'drive', hold_battery: 'drive', regen_level: 'drive',
+        steering_mode: 'drive', brake_feel: 'drive',
+        volume_media: 'media', volume_navigation: 'media', volume_step: 'media',
+        media_control: 'media', play_audio: 'media', play_video: 'media', stop_audio: 'media', speak: 'media',
+        screen_brightness: 'displays', cluster_brightness: 'displays',
+        hud_brightness: 'displays', hud_power: 'displays', screen_power: 'displays',
+        camview_all: 'surveillance', camview_front: 'surveillance', camview_rear: 'surveillance',
+        camview_left: 'surveillance', camview_right: 'surveillance', camview_hide: 'surveillance',
+        camview_all_cluster: 'surveillance', camview_front_cluster: 'surveillance', camview_rear_cluster: 'surveillance',
+        camview_left_cluster: 'surveillance', camview_right_cluster: 'surveillance',
+        surveillance: 'surveillance', recording: 'surveillance', manual_clip: 'surveillance',
+        seat_recall: 'system', seat_save: 'system',
+        ui_nav: 'system', screenshot: 'system', show_toast: 'system',
+        cast_app_cluster: 'system', cluster_cast_stop: 'system',
+        radio_wifi: 'system', radio_bluetooth: 'system', radio_data: 'system',
+        run_automation: 'flow'
+    };
+    // Same display order as the Automations page (BYD.AUTOMATION_CATEGORY_ORDER); kept
+    // inline so key-mapping.js works even if automations.js isn't loaded on this page.
+    var KM_CATEGORY_ORDER = [
+        'vehicle', 'climate', 'windows_body', 'lighting', 'adas_safety', 'drive',
+        'media', 'displays', 'sensors', 'surveillance', 'system', 'flow', 'other'
+    ];
+    function kmCategoryLabel(cat) {
+        var key = 'automation.category_' + cat;
+        var t = tr(key);
+        if (t && t !== key) return t;
+        return String(cat).replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase(); });
+    }
 
     // Known BYD steering-wheel / dash buttons (keycode → label), from the OEM
     // keycode map verified on DiLink firmware.
@@ -234,6 +495,7 @@ window.KM = (function () {
     var state = {
         enabled: false,
         allowAdvanced: false,
+        doubleTapWindowMs: 450,
         bindings: [],
         a11yEnabled: false,
         restartRequired: false
@@ -280,6 +542,7 @@ window.KM = (function () {
             .then(function (s) {
                 state.enabled = !!s.enabled;
                 state.allowAdvanced = !!s.allowAdvanced;
+                if (typeof s.doubleTapWindowMs === 'number') state.doubleTapWindowMs = s.doubleTapWindowMs;
                 state.bindings = (s.bindings && s.bindings.length) ? s.bindings : [];
                 state.a11yEnabled = !!s.a11yEnabled;
                 state.restartRequired = !!s.restartRequired;
@@ -335,6 +598,11 @@ window.KM = (function () {
     function paint() {
         $('kmEnable').checked = state.enabled;
         $('kmAllowAdvanced').checked = state.allowAdvanced;
+        // Double-tap window slider + live read-out (seconds, 1 decimal).
+        var dtRange = $('kmDoubleTapWindow');
+        if (dtRange) dtRange.value = state.doubleTapWindowMs;
+        var dtVal = $('kmDoubleTapWindowVal');
+        if (dtVal) dtVal.textContent = (state.doubleTapWindowMs / 1000).toFixed(1) + 's';
 
         // The "Advanced: shell" action only exists when the Advanced toggle is on.
         // Hiding the OPTION (not just gating on save) makes the relationship
@@ -389,6 +657,7 @@ window.KM = (function () {
     function bindingRow(b, index) {
         var row = document.createElement('div');
         row.className = 'km-binding';
+        if (b.enabled === false) row.classList.add('km-disabled');
 
         var key = document.createElement('div');
         key.className = 'km-key';
@@ -402,7 +671,14 @@ window.KM = (function () {
         action.textContent = b.label || describeAction(b.action);
         var sub = document.createElement('div');
         sub.className = 'km-sub';
-        sub.textContent = pressLabel(b.pressType);
+        // For a double binding that blocks the native single, note it on the sub-line so
+        // the list makes the behaviour visible (e.g. "Double press · blocks single-click").
+        var subText = pressLabel(b.pressType);
+        if (b.pressType === 'double' && b.blockNativeSingle === true) {
+            subText += ' · ' + tr('keymap.block_native_single_tag');
+        }
+        if (b.enabled === false) subText += ' · ' + tr('keymap.disabled_tag');
+        sub.textContent = subText;
         meta.appendChild(action);
         meta.appendChild(sub);
         row.appendChild(meta);
@@ -411,6 +687,22 @@ window.KM = (function () {
         pill.className = 'km-press-pill';
         pill.textContent = pressLabel(b.pressType);
         row.appendChild(pill);
+
+        // Enable/disable toggle — lets the user temporarily disable a binding
+        // without deleting it. The dispatcher already skips bindings with enabled:false.
+        var toggle = document.createElement('label');
+        toggle.className = 'toggle-switch toggle-switch-sm';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = b.enabled !== false;
+        cb.onchange = (function (idx) {
+            return function () { toggleBinding(idx, this.checked); };
+        })(index);
+        var slider = document.createElement('span');
+        slider.className = 'toggle-slider';
+        toggle.appendChild(cb);
+        toggle.appendChild(slider);
+        row.appendChild(toggle);
 
         // Edit — pre-fill the Add form from this binding and switch to the Add tab.
         var edit = document.createElement('button');
@@ -427,6 +719,26 @@ window.KM = (function () {
         del.onclick = function () { removeBinding(index); };
         row.appendChild(del);
         return row;
+    }
+
+    function toggleBinding(index, enabled) {
+        if (index < 0 || index >= state.bindings.length) return;
+        // Capture the binding OBJECT, not the integer index: persist() is async, and
+        // the user can delete/replace another binding (removeBinding's doDelete splices,
+        // addBinding's dedup splices) while this POST is in flight — reindexing the
+        // array. A splice moves references but never invalidates them, so rolling back
+        // on the object survives a concurrent reshape; an index reach-back would flip
+        // the wrong binding or write past the shrunken array. Mirrors the snapshot/
+        // resync discipline addBinding + removeBinding already use.
+        var b = state.bindings[index];
+        b.enabled = enabled;
+        persist(function (ok) {
+            if (!ok) {
+                b.enabled = !enabled;
+                toast(tr('keymap.save_failed'), 'error');
+            }
+            renderList();
+        });
     }
 
     function pressLabel(t) {
@@ -477,6 +789,22 @@ window.KM = (function () {
                 // Play audio/video: the sound filename is the payload.
                 var mn = a.body.match(/"name"\s*:\s*"([^"]*)"/);
                 if (mn) v = mn[1];
+            } else if (a.body && a.body.indexOf('"package"') >= 0) {
+                // Cast app to cluster: the package is the payload. Show the friendly app
+                // label from the cached picker list when we have it, else the package —
+                // so two cluster-cast bindings for different apps are distinguishable.
+                var mpk = a.body.match(/"package"\s*:\s*"([^"]*)"/);
+                if (mpk) {
+                    v = mpk[1];
+                    if (appList) {
+                        for (var ai = 0; ai < appList.length; ai++) {
+                            if (appList[ai] && appList[ai]['package'] === mpk[1]) {
+                                v = appList[ai].label || mpk[1];
+                                break;
+                            }
+                        }
+                    }
+                }
             } else if (a.body && a.body.indexOf('"mode"') >= 0) {
                 var m = a.body.match(/"mode"\s*:\s*"([^"]*)"/);
                 if (m) v = m[1];
@@ -510,6 +838,17 @@ window.KM = (function () {
             }
             return v ? (nm + ' — ' + v) : nm;
         }
+        if (a.kind === 'automation') {
+            // Prefer the saved name; fall back to the id so a nameless/older target
+            // still reads. (The daemon always resolves by id, not this label.)
+            return tr('keymap.act_run_automation') + ': ' + (a.name || a.id || '');
+        }
+        if (a.kind === 'radio') {
+            var rc = matchCuratedByRadio(a.radio);
+            var rlabel = rc ? tr(curatedById(rc).i18n) : (a.radio || 'radio');
+            var rstate = tr(a.state === 'off' ? 'keymap.off' : 'keymap.on');
+            return rlabel + ' — ' + rstate;
+        }
         if (a.kind === 'openApp') {
             var appName = a.label || a['package'] || '';
             var suffix = a.split ? ' (' + tr('keymap.split_screen') + ')' : '';
@@ -535,6 +874,23 @@ window.KM = (function () {
         });
     }
 
+    // Double-tap window slider: update the live read-out on every input tick (no
+    // POST), and persist only on release (change) so dragging doesn't spam the
+    // daemon. The daemon clamps to 250..1500ms; the slider min/max already match.
+    function onDoubleTapWindowInput() {
+        var r = $('kmDoubleTapWindow');
+        if (!r) return;
+        state.doubleTapWindowMs = parseInt(r.value, 10) || 450;
+        var dtVal = $('kmDoubleTapWindowVal');
+        if (dtVal) dtVal.textContent = (state.doubleTapWindowMs / 1000).toFixed(1) + 's';
+    }
+    function onDoubleTapWindowChange() {
+        onDoubleTapWindowInput();
+        persist(function (ok) {
+            if (!ok) toast(tr('keymap.save_failed'), 'error');
+        });
+    }
+
     function persist(cb) {
         fetch('/api/keymap/config', {
             method: 'POST',
@@ -542,6 +898,7 @@ window.KM = (function () {
             body: JSON.stringify({
                 enabled: state.enabled,
                 allowAdvanced: state.allowAdvanced,
+                doubleTapWindowMs: state.doubleTapWindowMs,
                 bindings: state.bindings
             })
         }).then(function (r) { return r.json(); })
@@ -654,44 +1011,48 @@ window.KM = (function () {
             applyClipPreset(false);
             return;
         }
-        if (c && c.dynamicPayloads === 'audio') {
-            // Live-populate from the audio library (uploaded on the Automations page).
+        var dyn = (c && c.dynamicPayloads) ? DYNAMIC_PAYLOAD[c.dynamicPayloads] : null;
+        if (dyn) {
+            // Live-populate from an async source (audio library, or the saved-automation
+            // list). Driven by the DYNAMIC_PAYLOAD descriptor so audio and automation
+            // share one code path — only the URL / labels / extract() differ.
             row.style.display = '';
             var loading = document.createElement('option');
             loading.value = '';
-            loading.textContent = tr('keymap.loading_audio');
+            loading.textContent = tr(dyn.loading);
             loading.disabled = true; loading.selected = true;
             sel.appendChild(loading);
             // Stale-response guard: a fetch is async, but the user may switch the
             // curated action before it resolves. Stamp this request; on resolve, bail
             // if a newer onCuratedChange has run (token bumped) or the selected action
-            // is no longer THIS dynamic one — otherwise a late audio response would
-            // clobber a different action's (synchronously-built) payload dropdown.
+            // is no longer THIS dynamic one — otherwise a late response would clobber a
+            // different action's (synchronously-built) payload dropdown.
             var myToken = ++payloadReqSeq;
             var myActionId = c.id;
+            var myType = c.dynamicPayloads;
             var stillMine = function () {
                 if (myToken !== payloadReqSeq) return false;
                 var cur = curatedById($('kmCuratedAction').value);
-                return !!(cur && cur.id === myActionId && cur.dynamicPayloads === 'audio');
+                return !!(cur && cur.id === myActionId && cur.dynamicPayloads === myType);
             };
-            fetch('/api/audio/library', { cache: 'no-store' })
+            fetch(dyn.url, { cache: 'no-store' })
                 .then(function (r) { return r.json(); })
                 .then(function (j) {
                     if (!stillMine()) return;
-                    var sounds = (j && j.success && j.sounds) ? j.sounds : [];
+                    var items = dyn.extract(j) || [];
                     sel.innerHTML = '';
-                    if (!sounds.length) {
+                    if (!items.length) {
                         var none = document.createElement('option');
                         none.value = '';
-                        none.textContent = tr('keymap.no_audio');
+                        none.textContent = tr(dyn.none);
                         none.disabled = true; none.selected = true;
                         sel.appendChild(none);
                         return;
                     }
-                    for (var k = 0; k < sounds.length; k++) {
+                    for (var k = 0; k < items.length; k++) {
                         var so = document.createElement('option');
-                        so.value = sounds[k].name;
-                        so.textContent = sounds[k].name;
+                        so.value = items[k].value;
+                        so.textContent = items[k].text;
                         sel.appendChild(so);
                     }
                     // Restore a saved selection if it's still present; else keep the first.
@@ -703,7 +1064,7 @@ window.KM = (function () {
                         if (!found) {
                             var miss = document.createElement('option');
                             miss.value = preselect;
-                            miss.textContent = preselect + ' ' + tr('keymap.audio_missing');
+                            miss.textContent = preselect + ' ' + tr(dyn.missing);
                             sel.appendChild(miss);
                         }
                         sel.value = preselect;
@@ -714,7 +1075,7 @@ window.KM = (function () {
                     sel.innerHTML = '';
                     var err = document.createElement('option');
                     err.value = '';
-                    err.textContent = tr('keymap.no_audio');
+                    err.textContent = tr(dyn.none);
                     err.disabled = true; err.selected = true;
                     sel.appendChild(err);
                 });
@@ -837,11 +1198,33 @@ window.KM = (function () {
     function buildCuratedOptions() {
         var sel = $('kmCuratedAction');
         sel.innerHTML = '';
-        for (var i = 0; i < CURATED.length; i++) {
-            var o = document.createElement('option');
-            o.value = CURATED[i].id;
-            o.textContent = tr(CURATED[i].i18n);
-            sel.appendChild(o);
+        // Bucket options by category (preserving CURATED order within each bucket).
+        var buckets = {};
+        var i;
+        for (i = 0; i < CURATED.length; i++) {
+            var cat = KM_CATEGORY[CURATED[i].id] || 'other';
+            if (!buckets[cat]) buckets[cat] = [];
+            buckets[cat].push(CURATED[i]);
+        }
+        // Emit <optgroup>s in the declared order; any un-ordered category (and 'other')
+        // sorts last so a newly-added action is still reachable.
+        var cats = Object.keys(buckets).sort(function (a, b) {
+            var ra = a === 'other' ? 9998 : KM_CATEGORY_ORDER.indexOf(a);
+            var rb = b === 'other' ? 9998 : KM_CATEGORY_ORDER.indexOf(b);
+            if (ra < 0) ra = 9997; if (rb < 0) rb = 9997;
+            return ra - rb;
+        });
+        for (i = 0; i < cats.length; i++) {
+            var group = document.createElement('optgroup');
+            group.label = kmCategoryLabel(cats[i]);
+            var items = buckets[cats[i]];
+            for (var j = 0; j < items.length; j++) {
+                var o = document.createElement('option');
+                o.value = items[j].id;
+                o.textContent = tr(items[j].i18n);
+                group.appendChild(o);
+            }
+            sel.appendChild(group);
         }
         onCuratedChange();
     }
@@ -992,7 +1375,33 @@ window.KM = (function () {
         }
         pt.value = opts[0];
         pt.disabled = disabled;
+        syncBlockNativeRow();
     }
+
+    // Show the "Block single-click action" toggle ONLY when the press type is "double"
+    // (it is meaningless for single/long). Called on every press-type change — user-
+    // driven (onPressTypeChange) and programmatic (buildPressTypeOptions / editBinding).
+    // Clears the checkbox when hidden so a stale value can't be serialized for a
+    // non-double binding. Defaults to CHECKED when switching to double so a newly-
+    // created double binding suppresses the stock action (the intuitive expectation —
+    // "I mapped this key, so it shouldn't also do the old thing"). Users who want the
+    // stock single-tap to pass through can uncheck it.
+    function syncBlockNativeRow() {
+        var row = $('kmBlockNativeRow');
+        var pt = $('kmPressType');
+        if (!row || !pt) return;
+        var isDouble = pt.value === 'double';
+        row.style.display = isDouble ? '' : 'none';
+        if (!isDouble) { var cb = $('kmBlockNativeSingle'); if (cb) cb.checked = false; }
+        else {
+            var cb = $('kmBlockNativeSingle');
+            // Default ON for fresh bindings (editIndex === -1); when editing, the
+            // saved value is restored by editBinding() AFTER this runs.
+            if (cb && editIndex < 0) cb.checked = true;
+        }
+    }
+
+    function onPressTypeChange() { syncBlockNativeRow(); }
 
     // Press-type selector for the manual/custom path. Reads the current manual
     // keycode and, if it is a KNOWN button (base or long-variant), restricts the
@@ -1047,6 +1456,19 @@ window.KM = (function () {
                 };
             }
             var payload = ($('kmPayload').value != null) ? $('kmPayload').value : '';
+            if (c.kind === 'automation') {
+                // The payload is the target automation's id; carry its display name
+                // too so the list reads well and survives even if the automation is
+                // later renamed/removed (daemon resolves by id at fire time).
+                if (!payload) { toast(tr('keymap.need_automation'), 'error'); return null; }
+                var selEl = $('kmPayload');
+                var nm = (selEl && selEl.selectedIndex >= 0) ? selEl.options[selEl.selectedIndex].textContent : '';
+                return { kind: 'automation', id: payload, name: nm };
+            }
+            if (c.kind === 'radio') {
+                // radio id is fixed per curated action; payload is the on/off state.
+                return { kind: 'radio', radio: c.radio, state: payload || 'on' };
+            }
             if (c.kind === 'api') {
                 // Substitute the chosen payload into the path/body templates; the
                 // daemon receives a concrete method/path/body (no ${v} at fire time).
@@ -1213,6 +1635,13 @@ window.KM = (function () {
         var wasEnabled = (editIndex >= 0 && state.bindings[editIndex])
             ? (state.bindings[editIndex].enabled !== false) : true;
         var newBinding = { keycode: keycode, pressType: pressType, enabled: wasEnabled, label: label, action: action };
+        // "Block native single-click" is only meaningful for a double-press binding
+        // (the dispatcher reads it only in the double branch). Persist it only then, and
+        // only when true, so single/long bindings stay byte-identical to before.
+        if (pressType === 'double') {
+            var bn = $('kmBlockNativeSingle');
+            if (bn && bn.checked) newBinding.blockNativeSingle = true;
+        }
         var replaced = false;
 
         if (editIndex >= 0 && editIndex < state.bindings.length) {
@@ -1285,6 +1714,11 @@ window.KM = (function () {
         // Press type — set after the options are built above so the value sticks.
         var pt = $('kmPressType');
         if (pt && !pt.disabled) pt.value = b.pressType || 'single';
+        // Reflect the saved block-native-single flag + show/hide its row for the
+        // restored press type.
+        syncBlockNativeRow();
+        var bnEdit = $('kmBlockNativeSingle');
+        if (bnEdit) bnEdit.checked = (b.pressType === 'double' && b.blockNativeSingle === true);
 
         // Action → form. A sequence loads its steps as chips (with the form left
         // blank so addBinding folds nothing extra); a single action loads into the
@@ -1375,6 +1809,30 @@ window.KM = (function () {
             applyClipWindowToForm(a.beforeSeconds, a.afterSeconds);
             return;
         }
+        // Run-automation: a curated action whose live payload is the target automation
+        // id. Select it, reveal the (dynamic) payload dropdown via onCuratedChange, and
+        // pass the saved id as the preselect so it's restored once the list resolves.
+        if (a.kind === 'automation') {
+            if (kindSel) kindSel.value = 'curated';
+            onKindChange();
+            var autoSel = $('kmCuratedAction');
+            if (autoSel) autoSel.value = 'run_automation';
+            onCuratedChange(a.id || undefined);
+            return;
+        }
+        // Radio toggle: match the curated entry by its fixed `radio` id, restore the
+        // on/off state as the payload.
+        if (a.kind === 'radio') {
+            if (kindSel) kindSel.value = 'curated';
+            onKindChange();
+            var radioId = matchCuratedByRadio(a.radio);
+            var radioSel = $('kmCuratedAction');
+            if (radioSel && radioId) {
+                radioSel.value = radioId;
+                onCuratedChange(a.state || 'on');
+            }
+            return;
+        }
         // catalog / vehicle / api all live under the "curated" kind, matched back to
         // a CURATED entry by key (catalog/vehicle) or id (api).
         if (kindSel) kindSel.value = 'curated';
@@ -1399,6 +1857,13 @@ window.KM = (function () {
     function matchCuratedByVehicle(actionVerb) {
         for (var i = 0; i < CURATED.length; i++) {
             if (CURATED[i].kind === 'vehicle' && CURATED[i].key === actionVerb) return CURATED[i].id;
+        }
+        return null;
+    }
+    // Match a curated 'radio' entry by its fixed radio id (wifi/bluetooth/data).
+    function matchCuratedByRadio(radio) {
+        for (var i = 0; i < CURATED.length; i++) {
+            if (CURATED[i].kind === 'radio' && CURATED[i].radio === radio) return CURATED[i].id;
         }
         return null;
     }
@@ -1491,6 +1956,8 @@ window.KM = (function () {
         $('kmCapKeycode').textContent = '—';
         $('kmCapHint').textContent = tr('keymap.capture_idle');
         $('kmShellCmd').value = '';
+        var bn = $('kmBlockNativeSingle'); if (bn) bn.checked = false;
+        syncBlockNativeRow();
         resetClipWindow();
         seqSteps = [];
         formDirty = false;
@@ -1561,15 +2028,19 @@ window.KM = (function () {
         init: init,
         load: load,
         saveConfig: saveConfig,
+        onDoubleTapWindowInput: onDoubleTapWindowInput,
+        onDoubleTapWindowChange: onDoubleTapWindowChange,
         toggleCapture: toggleCapture,
         onNativeKey: onNativeKey,
         onKnownButtonChange: onKnownButtonChange,
         onKindChange: onKindChange,
+        onPressTypeChange: onPressTypeChange,
         onCuratedChange: onCuratedChange,
         onClipPresetChange: onClipPresetChange,
         onClipWindowChange: onClipWindowChange,
         addStep: addStep,
         addBinding: addBinding,
+        toggleBinding: toggleBinding,
         goAdd: goAdd,
         openA11ySettings: openA11ySettings
     };

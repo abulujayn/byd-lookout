@@ -136,7 +136,88 @@ public class PerformanceApiHandler {
             return handleResetCategories(body, out);
         }
 
+        // GET /api/performance/data-usage?days=30 - per-day WiFi/mobile + app/system
+        if (path.startsWith("/api/performance/data-usage") && method.equals("GET")) {
+            return handleDataUsageGet(path, out);
+        }
+
+        // POST /api/performance/data-usage/toggle {enabled:bool} - arm/disarm sampler
+        if (path.equals("/api/performance/data-usage/toggle") && method.equals("POST")) {
+            return handleDataUsageToggle(body, out);
+        }
+
+        // POST /api/performance/data-usage/reset - clear recorded history
+        if (path.equals("/api/performance/data-usage/reset") && method.equals("POST")) {
+            return handleDataUsageReset(out);
+        }
+
         return false;
+    }
+
+    /** GET the last N days of data usage (default 30). See DataUsageMonitor.getUsage. */
+    private static boolean handleDataUsageGet(String path, OutputStream out) throws Exception {
+        try {
+            int days = parseIntQueryParam(path, "days", 30);
+            if (days < 1) days = 1;
+            if (days > 90) days = 90;   // sane cap; retention is 30d raw anyway
+            JSONObject usage = com.overdrive.app.monitor.DataUsageMonitor.getInstance().getUsage(days);
+            HttpResponse.sendJson(out, usage.toString());
+            return true;
+        } catch (Exception e) {
+            logger.error("Failed to get data usage", e);
+            HttpResponse.sendJson(out, "{\"enabled\":false,\"available\":false,\"days\":[],\"total\":0}");
+            return true;
+        }
+    }
+
+    /**
+     * Toggle the data-usage feature. Persists dataUsage.enabled and then arms or
+     * disarms the sampler on THIS (daemon) process via startIfEnabled() — so the
+     * enable edge starts collecting immediately and the disable edge frees the
+     * sampler thread (zero overhead when off). App-UID callers reach this over
+     * the daemon's HTTP server, so the persist + arm both happen daemon-side.
+     */
+    private static boolean handleDataUsageToggle(String body, OutputStream out) throws Exception {
+        try {
+            JSONObject json = (body == null || body.trim().isEmpty())
+                    ? new JSONObject() : new JSONObject(body);
+            boolean enabled = json.optBoolean("enabled", false);
+            boolean ok = com.overdrive.app.config.UnifiedConfigManager.INSTANCE
+                    .setDataUsageEnabled(enabled);
+            // Reflect the change on the sampler now (startIfEnabled re-reads config
+            // with forceReload and starts or stops accordingly).
+            try {
+                com.overdrive.app.monitor.DataUsageMonitor dum =
+                        com.overdrive.app.monitor.DataUsageMonitor.getInstance();
+                android.content.Context ctx = com.overdrive.app.daemon.CameraDaemon.getAppContext();
+                if (ctx != null) dum.resolveAppUid(ctx);
+                dum.startIfEnabled();
+            } catch (Throwable t) {
+                logger.warn("Data-usage sampler arm/disarm after toggle failed: " + t.getMessage());
+            }
+            JSONObject r = new JSONObject();
+            r.put("success", ok);
+            r.put("enabled", enabled);
+            HttpResponse.sendJson(out, r.toString());
+            return true;
+        } catch (Exception e) {
+            logger.error("Failed to toggle data usage", e);
+            HttpResponse.sendJson(out, "{\"success\":false,\"error\":\"" + e.getMessage() + "\"}");
+            return true;
+        }
+    }
+
+    /** Clear all recorded data-usage history (daily rows + delta baseline). */
+    private static boolean handleDataUsageReset(OutputStream out) throws Exception {
+        try {
+            boolean ok = com.overdrive.app.monitor.DataUsageMonitor.getInstance().resetHistory();
+            HttpResponse.sendJson(out, "{\"success\":" + ok + "}");
+            return true;
+        } catch (Exception e) {
+            logger.error("Failed to reset data usage", e);
+            HttpResponse.sendJson(out, "{\"success\":false,\"error\":\"" + e.getMessage() + "\"}");
+            return true;
+        }
     }
     
     private static boolean handleGetCurrent(OutputStream out) throws Exception {
@@ -736,6 +817,12 @@ public class PerformanceApiHandler {
                                 .wipeMediaCategory("trips");
                             r.put("success", n >= 0);
                             r.put("filesDeleted", n);
+                            break;
+                        }
+                        case "dataUsage": {
+                            boolean ok = com.overdrive.app.monitor.DataUsageMonitor
+                                .getInstance().resetHistory();
+                            r.put("success", ok);
                             break;
                         }
                         default:

@@ -69,6 +69,13 @@
             android:defaultValue="/vehicle-control" />
     </fragment>
 
+    <!-- Projection (native only — cast + live mirror of the driver cluster) -->
+    <fragment
+        android:id="@+id/projectionFragment"
+        android:name="com.overdrive.app.ui.fragment.ProjectionFragment"
+        android:label="@string/rail_projection"
+        tools:layout="@layout/fragment_projection" />
+
     <!-- Trips (web canonical) -->
     <fragment
         android:id="@+id/tripsFragment"

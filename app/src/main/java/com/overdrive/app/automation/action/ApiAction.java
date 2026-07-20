@@ -122,8 +122,11 @@ public class ApiAction extends BaseAction {
      * @param automationAction The AutomationAction with the variables needed to trigger this action
      */
     public void trigger(AutomationAction automationAction) {
-        String path = replaceVariables(getPath(), automationAction.getVariables());
-        String body = replaceVariables(getBody(), automationAction.getVariables());
+        // Path substitution is NOT JSON-escaped (it's a URL, and existing values are
+        // simple tokens/ints); body substitution IS JSON-escaped so a free-text value
+        // (e.g. the Speak message with a quote/backslash/newline) can't break the JSON.
+        String path = replaceVariables(getPath(), automationAction.getVariables(), false);
+        String body = replaceVariables(getBody(), automationAction.getVariables(), true);
         HttpServer server = CameraDaemon.getHttpServer();
         if (server != null && path != null && body != null) {
             // Ignoring the response for now but it contains the full HTTP response
@@ -134,21 +137,37 @@ public class ApiAction extends BaseAction {
     }
 
     /**
-     * Replace any variables in the input with the value from the variables map
-     * Uses the toString method to convert the variables to a String
+     * Replace any {@code ${variable}} in the input with its value from the map.
      *
-     * @param input     The String to replace the variables for
-     * @param variables A map of String -> a class which has a toString method
-     * @return The string with any variables of format ${variable} replaced
+     * @param input      The String to replace the variables for
+     * @param variables  A map of String → a class whose toString() gives the value
+     * @param jsonEscape When true, each substituted value is JSON-string-escaped so it
+     *                   is safe to place inside a JSON body between quotes. Numeric
+     *                   values (e.g. {@code "value":${level}}) are written WITHOUT
+     *                   quotes in the template, so escaping a bare number is a no-op
+     *                   (digits need no escaping) — only genuine free text is affected.
+     * @return The string with variables replaced, or null on error
      */
-    private String replaceVariables(String input, Map<String, Object> variables) {
+    private String replaceVariables(String input, Map<String, Object> variables, boolean jsonEscape) {
         try {
             Matcher m = p.matcher(input);
 
             StringBuffer result = new StringBuffer();
             while (m.find()) {
-                // Keep the variable in the String if it doesn't exist in the map
-                String value = variables.getOrDefault(m.group(1), m.group(0)).toString();
+                String key = m.group(1);
+                String value;
+                if (variables.containsKey(key)) {
+                    // This action's own parameter (the normal case).
+                    value = variables.get(key).toString();
+                } else {
+                    // Fall back to a user VARIABLE of this name from the shared automation
+                    // state, so a message/body can interpolate a counter or flag set by
+                    // another action (e.g. "Door opened ${door_count} times"). Absent →
+                    // keep the literal ${name} placeholder (unchanged legacy behaviour).
+                    String stateVal = lookupStateVariable(key);
+                    value = (stateVal != null) ? stateVal : m.group(0);
+                }
+                if (jsonEscape) value = jsonEscape(value);
                 m.appendReplacement(result, Matcher.quoteReplacement(value));
             }
             m.appendTail(result);
@@ -158,5 +177,49 @@ public class ApiAction extends BaseAction {
             logger.error("Failed to replace variables for automation", e);
             return null;
         }
+    }
+
+    /**
+     * Look up a user VARIABLE's current value from the shared automation state, or null
+     * if it isn't set. Lets an ApiAction body/path interpolate {@code ${name}} against a
+     * variable another action set. Best-effort: any lookup error yields null (the caller
+     * then keeps the literal placeholder), so this can never break action execution.
+     */
+    private static String lookupStateVariable(String name) {
+        try {
+            com.overdrive.app.automation.value.Value v =
+                    com.overdrive.app.automation.Automations.getStateValue(
+                            SetVariableAction.variableEvent(name));
+            return v == null ? null : v.toString();
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /**
+     * Escape a string for safe inclusion inside a JSON string literal (the surrounding
+     * quotes are already in the body template). Handles the JSON control set: backslash,
+     * double-quote, and the C0 whitespace/control chars. This is what keeps a Speak
+     * message like {@code He said "go"} or a value with a newline from producing a
+     * malformed body that the daemon's JSONObject parse would reject.
+     */
+    private static String jsonEscape(String s) {
+        StringBuilder b = new StringBuilder(s.length() + 8);
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"':  b.append("\\\""); break;
+                case '\\': b.append("\\\\"); break;
+                case '\n': b.append("\\n"); break;
+                case '\r': b.append("\\r"); break;
+                case '\t': b.append("\\t"); break;
+                case '\b': b.append("\\b"); break;
+                case '\f': b.append("\\f"); break;
+                default:
+                    if (c < 0x20) b.append(String.format("\\u%04x", (int) c));
+                    else b.append(c);
+            }
+        }
+        return b.toString();
     }
 }

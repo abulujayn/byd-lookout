@@ -40,6 +40,7 @@ BYD.communityAutomations = {
     q: '',
     minRating: 0,      // 0 = any; 1..5 filters on live average
     minDownloads: 0,   // 0 = any; else minimum import count
+    mineOnly: false,   // true = show only automations THIS install published
     _searchTimer: null,
     _loading: false,
 
@@ -215,7 +216,7 @@ BYD.communityAutomations = {
                 chip.textContent = self._t('community.cat_' + cat);
                 chip.addEventListener('click', function () {
                     self.category = cat;
-                    var all = chipRow.querySelectorAll('.filter-chip');
+                    var all = chipRow.querySelectorAll('[data-community-cat]');
                     for (var k = 0; k < all.length; k++) all[k].classList.remove('active');
                     chip.classList.add('active');
                     self.loadPage(1);
@@ -223,6 +224,21 @@ BYD.communityAutomations = {
                 chipRow.appendChild(chip);
             })(C_CATEGORIES[c]);
         }
+        // "Mine" toggle — a distinct-axis chip (not a category) so an owner can
+        // instantly narrow the catalogue to just what THIS install published.
+        // Server-computed `mine` backs both this filter and the per-card badge.
+        var mineChip = document.createElement('button');
+        mineChip.className = 'filter-chip community-chip-mine' + (self.mineOnly ? ' active' : '');
+        mineChip.setAttribute('data-community-mine-toggle', '1');
+        mineChip.setAttribute('data-i18n', 'community.filter_mine');
+        mineChip.textContent = self._t('community.filter_mine');
+        mineChip.addEventListener('click', function () {
+            self.mineOnly = !self.mineOnly;
+            if (self.mineOnly) mineChip.classList.add('active');
+            else mineChip.classList.remove('active');
+            self.loadPage(1);
+        });
+        chipRow.appendChild(mineChip);
         host.appendChild(chipRow);
     },
 
@@ -243,6 +259,7 @@ BYD.communityAutomations = {
         if (this.q) params.push('q=' + encodeURIComponent(this.q));
         if (this.minRating > 0) params.push('minRating=' + this.minRating);
         if (this.minDownloads > 0) params.push('minDownloads=' + this.minDownloads);
+        if (this.mineOnly) params.push('mine=1');
         var qs = params.join('&');
 
         fetch('/api/community/list?' + qs, { cache: 'no-store' })
@@ -289,7 +306,7 @@ BYD.communityAutomations = {
         var t = this._t;
 
         var card = document.createElement('div');
-        card.className = 'card community-card';
+        card.className = 'card community-card' + (item.mine ? ' community-card-mine' : '');
         card.setAttribute('data-community-id', item.id);
 
         // Header: name + author + category badge.
@@ -497,6 +514,31 @@ BYD.communityAutomations = {
         // author_device, so a stranger never sees this button. The DELETE endpoint
         // re-checks ownership regardless, so this is a UX gate, not the security boundary.
         if (a.mine) {
+            // Edit-my-upload: update the published row IN PLACE (PUT), preserving its
+            // ratings/downloads + id — the answer to "how do I edit a published
+            // automation" without delete-and-republish. The editable RULES come from the
+            // matching LOCAL automation (the user edits it on the Automations page first);
+            // we match by the published row's stored source id when present, else fall
+            // back to a name match, else to the published row's own rules so the metadata
+            // (name/description/category) can still be updated. Only shown on `mine` rows;
+            // the Worker re-checks ownership regardless.
+            var editBtn = document.createElement('button');
+            editBtn.className = 'btn btn-secondary community-edit-btn';
+            editBtn.innerHTML = C_publishIcon + '<span data-i18n="community.edit">' + BYD.core._esc(t('community.edit')) + '</span>';
+            editBtn.addEventListener('click', function () {
+                var localId = self._matchLocalId(a);
+                if (!localId) {
+                    // No local source to edit from — tell the user to keep/recreate it
+                    // locally, then edit. (We never PUT the community row's own rules blindly
+                    // as "edited" — the point of edit is to push local changes.)
+                    BYD.utils.alertDialog({ title: t('community.edit'), body: t('community.edit_no_local') });
+                    return;
+                }
+                dismiss();
+                self.openPublish(localId, { id: a.id, name: a.name, description: a.description, category: a.category });
+            });
+            actions.appendChild(editBtn);
+
             var delBtn = document.createElement('button');
             delBtn.className = 'btn btn-danger community-unpublish-btn';
             delBtn.innerHTML = C_trashIcon + '<span data-i18n="community.unpublish">' + BYD.core._esc(t('community.unpublish')) + '</span>';
@@ -600,7 +642,15 @@ BYD.communityAutomations = {
 
     // Publish modal: collect author / name / description / category, then POST the
     // local automation's blob to the daemon (which blocks shell + re-validates).
-    openPublish: function (localId) {
+    // Open the publish form. Two modes:
+    //   openPublish(localId)                 → PUBLISH a local automation (POST, new row).
+    //   openPublish(localId, { editId, ... })→ UPDATE an already-published row (PUT, same
+    //                                          id, ratings/downloads preserved). `edit`
+    //                                          carries {id, name, description, category}
+    //                                          to prefill; the rules come from the LOCAL
+    //                                          automation (localId) so the user edits
+    //                                          locally then pushes the update.
+    openPublish: function (localId, edit) {
         var self = this;
         var t = this._t;
         // The local automation blob (== the rules payload) is already cached by
@@ -617,6 +667,7 @@ BYD.communityAutomations = {
             BYD.utils.alertDialog({ title: t('community.publish'), body: t('community.publish_shell_blocked') });
             return;
         }
+        var isEdit = !!(edit && edit.id);
 
         var backdrop = document.createElement('div');
         backdrop.className = 'modal-backdrop';
@@ -627,8 +678,9 @@ BYD.communityAutomations = {
 
         var h = document.createElement('h3');
         h.className = 'soh-modal-title';
-        h.setAttribute('data-i18n', 'community.publish_title');
-        h.textContent = t('community.publish_title');
+        // Edit mode gets its own title; publish keeps the original.
+        h.setAttribute('data-i18n', isEdit ? 'community.update_title' : 'community.publish_title');
+        h.textContent = t(isEdit ? 'community.update_title' : 'community.publish_title');
         card.appendChild(h);
 
         var form = document.createElement('div');
@@ -639,6 +691,12 @@ BYD.communityAutomations = {
         this._prefillAuthor(authorInput);
         var nameInput = this._field(form, 'community.field_name', 'text', 60);
         var descInput = this._field(form, 'community.field_desc', 'textarea', 500);
+        // Edit mode: prefill name/description from the published row (author comes from
+        // the remembered value above; category is selected below).
+        if (isEdit) {
+            if (edit.name) nameInput.value = edit.name;
+            if (edit.description) descInput.value = edit.description;
+        }
 
         // Category select.
         var catWrap = document.createElement('div');
@@ -659,6 +717,8 @@ BYD.communityAutomations = {
         }
         catWrap.appendChild(catSel);
         form.appendChild(catWrap);
+        // Edit mode: preselect the published row's category.
+        if (isEdit && edit.category) { try { catSel.value = edit.category; } catch (e) {} }
         card.appendChild(form);
 
         var actions = document.createElement('div');
@@ -672,37 +732,58 @@ BYD.communityAutomations = {
 
         var pubBtn = document.createElement('button');
         pubBtn.className = 'btn btn-primary';
-        pubBtn.innerHTML = C_publishIcon + '<span data-i18n="community.publish">' + BYD.core._esc(t('community.publish')) + '</span>';
+        var pubLabelKey = isEdit ? 'community.update' : 'community.publish';
+        pubBtn.innerHTML = C_publishIcon + '<span data-i18n="' + pubLabelKey + '">' + BYD.core._esc(t(pubLabelKey)) + '</span>';
         pubBtn.addEventListener('click', function () {
             var author = (authorInput.value || '').trim();
             var name = (nameInput.value || '').trim();
+            var description = (descInput.value || '').trim();
             if (!author) { self._toast(t('community.err_author'), 'error'); return; }
             if (!name) { self._toast(t('community.err_name'), 'error'); return; }
+            // A description is now REQUIRED so browsers of the community list always know
+            // what a shared automation does before adding it. Mirror the author/name gate.
+            if (!description) { self._toast(t('community.err_description'), 'error'); return; }
             pubBtn.disabled = true;
-            var payload = {
-                authorName: author,
-                name: name,
-                description: (descInput.value || '').trim(),
-                category: catSel.value,
-                rules: rules
-            };
-            fetch('/api/community/publish', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+            // Bundle any action groups the automation references (by groupId) so a
+            // downloader gets the group definitions too — otherwise a "Run action group"
+            // action would resolve to nothing on their device. Fetch the full local group
+            // map first (async), then collect only the referenced ones into the payload.
+            // A fetch failure doesn't block publish — the automation still uploads, just
+            // without bundled groups (the referenced action would no-op on import, same as
+            // before this feature), so we degrade gracefully rather than trap the user.
+            fetch('/api/action-groups', { cache: 'no-store' }).then(function (r) { return r.json(); })
+              .catch(function () { return {}; })
+              .then(function (groupMap) {
+                var payload = {
+                    authorName: author,
+                    name: name,
+                    description: description,
+                    category: catSel.value,
+                    rules: rules,
+                    actionGroups: self._collectActionGroups(rules, groupMap || {})
+                };
+                // Edit → PUT /api/community/automation/{id} (same row, keeps ratings/downloads).
+                // Publish → POST /api/community/publish (new row). Both re-validate on the daemon
+                // + Worker; both refuse a shell automation.
+                var url = isEdit ? ('/api/community/automation/' + encodeURIComponent(edit.id)) : '/api/community/publish';
+                return fetch(url, {
+                    method: isEdit ? 'PUT' : 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
             }).then(function (r) { return r.json(); })
               .then(function (data) {
-                  if (data && (data.id || data.success)) {
+                  if (data && (data.id || data.success || data.updated)) {
                       dismiss();
-                      self._toast(t('community.published'), 'success');
+                      self._toast(t(isEdit ? 'community.updated' : 'community.published'), 'success');
                       self.loadPage(1);
                   } else {
                       pubBtn.disabled = false;
-                      self._toast((data && data.error) || t('community.publish_failed'), 'error');
+                      self._toast((data && data.error) || t(isEdit ? 'community.update_failed' : 'community.publish_failed'), 'error');
                   }
               }).catch(function () {
                   pubBtn.disabled = false;
-                  self._toast(t('community.publish_failed'), 'error');
+                  self._toast(t(isEdit ? 'community.update_failed' : 'community.publish_failed'), 'error');
               });
         });
         actions.appendChild(pubBtn);
@@ -865,6 +946,81 @@ BYD.communityAutomations = {
             if (ty.indexOf('shell') !== -1) return true;
         }
         return false;
+    },
+
+    // Collect the action-group DEFINITIONS an automation references, so they can be
+    // bundled into a community publish (and recreated on import). Walks the automation's
+    // action lists (primary + else + nested if/loop children) for `actionGroup` actions,
+    // reads each `variables.groupId`, and pulls that group's {name, actions} from the
+    // local group map (GET /api/action-groups → {id:{name,actions}}). RECURSES: a group's
+    // own actions may reference further groups, so those are pulled in too (guarded against
+    // cycles by the visited set). Returns { groupId: {name, actions}, ... } — empty when
+    // the automation uses no groups or the map is unavailable. ES5-safe (var/for).
+    _collectActionGroups: function (rules, groupMap) {
+        var out = {};
+        if (!rules || !groupMap) return out;
+        var self = this;
+        // Walk an actions array, recording referenced group ids into `ids`.
+        var walk = function (list, ids) {
+            if (!list || !list.length) return;
+            for (var i = 0; i < list.length; i++) {
+                var a = list[i];
+                if (!a) continue;
+                if (a.type === 'actionGroup') {
+                    var gid = a.variables && a.variables.groupId ? a.variables.groupId : null;
+                    if (gid) ids[gid] = true;
+                }
+                if (a.childActions) walk(a.childActions, ids);
+                if (a.elseActions) walk(a.elseActions, ids);
+            }
+        };
+        // First pass: ids referenced directly by the automation.
+        var pending = {};
+        walk(rules.actions, pending);
+        walk(rules.elseActions, pending);
+        // Resolve transitively: a bundled group's own actions may reference more groups.
+        var guard = 0;
+        var frontier = Object.keys(pending);
+        while (frontier.length && guard < 64) {   // guard: hard cap so a cycle can't spin
+            guard++;
+            var next = [];
+            for (var k = 0; k < frontier.length; k++) {
+                var id = frontier[k];
+                if (out[id]) continue;                 // already collected
+                var g = groupMap[id];
+                if (!g) continue;                      // referenced group missing locally — skip
+                out[id] = { name: g.name, actions: g.actions || [] };
+                var childIds = {};
+                walk(g.actions, childIds);             // groups this group references
+                var ck = Object.keys(childIds);
+                for (var c = 0; c < ck.length; c++) { if (!out[ck[c]]) next.push(ck[c]); }
+            }
+            frontier = next;
+        }
+        return out;
+    },
+
+    // Find the LOCAL automation to edit-then-update a published community row from. The
+    // community id and local id differ (import mints a fresh local UUID), so we match by
+    // the user-given NAME: an automation named the same as the published row. Returns the
+    // local automation id, or null when there's no local source (the user deleted it, or
+    // it's on another device) — the caller then explains they must recreate it locally to
+    // push an edit. Name match is a heuristic; the daemon+Worker still gate the PUT on the
+    // publishing-device id, so a wrong match can only ever update the user's OWN row.
+    _matchLocalId: function (a) {
+        if (!(window.BYD && BYD.automations && BYD.automations.automations)) return null;
+        var locals = BYD.automations.automations;
+        var wantName = (a && a.name ? String(a.name) : '').trim().toLowerCase();
+        var id;
+        // Prefer an exact name match.
+        if (wantName) {
+            for (id in locals) {
+                if (!Object.prototype.hasOwnProperty.call(locals, id)) continue;
+                var nm = (locals[id] && locals[id].name ? String(locals[id].name) : '').trim().toLowerCase();
+                if (nm && nm === wantName) return id;
+            }
+        }
+        return null;
     },
 
     _field: function (form, i18nKey, kind, maxlen) {

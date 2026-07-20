@@ -43,6 +43,29 @@ enum class DaemonType(
     TELEGRAM_DAEMON("Telegram Bot", "telegram_bot_daemon", "/data/local/tmp/telegram_bot_daemon.disabled")
 }
 
+/**
+ * "Vehicle ON only" parked-shutdown marker. Planted on the ACC-off edge in onOnly mode
+ * to terminate the whole daemon stack and KEEP it down while parked (zero compute).
+ *
+ * Deliberately DISTINCT from [DaemonType.sentinelPath] (the user `.disabled` sentinel):
+ *  - `.disabled` is wiped by DaemonStartupManager.clearStaleSentinels() on every
+ *    boot/launch — reusing it would let the stack rebuild mid-park.
+ *  - `.disabled` also means "the USER stopped this" — reusing it would make a parked
+ *    car look permanently user-disabled.
+ * This marker is NOT in CORE_DAEMONS, so clearStaleSentinels never touches it; it is
+ * cleared explicitly on the ACC-on edge (or by a max-age fail-safe). It is honored by
+ * BOTH the watchdog shell scripts (exit instead of respawn) AND the app-side
+ * health-check / START_STICKY / BootReceiver rebuild paths. Written `chmod 666` so the
+ * UID-2000 daemon family and the app UID can both read/write it; contents = epoch millis
+ * of park (for the stale-age fail-safe).
+ */
+object ParkedShutdown {
+    const val MARKER_PATH = "/data/local/tmp/overdrive_parked_shutdown"
+    /** Max age before the marker is treated as stale and force-cleared (fail-safe so a
+     *  marker can never permanently suppress an active session). */
+    const val MAX_AGE_MS = 24L * 60 * 60 * 1000
+}
+
 fun DaemonType.localizedName(context: Context): String = context.getString(when (this) {
     DaemonType.CAMERA_DAEMON      -> R.string.daemon_name_camera
     DaemonType.SENTRY_DAEMON      -> R.string.daemon_name_surveillance

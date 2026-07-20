@@ -1071,6 +1071,32 @@ public class HardwareEventRecorderGpu {
     // then release() stops it again — but in the window between, the drainer
     // races encoder.release(), throwing transient IllegalStateExceptions.
     private volatile boolean drainerRestartSuppressed = false;
+
+    // Guards ALL drainer lifecycle transitions (start/stop/restart). The
+    // bounded pre-yield pattern (PanoramicCameraGpu yieldCameraInternal /
+    // restartCameraAfterError) lets onPreYield() keep running on a
+    // "PreYield-*" worker after its 8s timeout while the GL thread proceeds
+    // to stopDrainerForCameraClose() + closeCameraForPath(). The worker is
+    // concurrently inside closeEventRecording()'s stopDrainerThread()/
+    // startDrainerThread(). Without this lock, the plain check-then-act on
+    // `drainerThread` (`if (drainerThread != null) drainerThread.interrupt()`)
+    // races: one thread nulls the field between the other's null-check and
+    // interrupt() → NPE that either kills the GL handler thread (escapes
+    // yieldCameraInternal) or aborts closeEventRecording before muxer.stop()
+    // (leaked muxer + stranded .tmp clip). Lock hold times are bounded (the
+    // longest is stopDrainerThread's join(2000)); the drainer thread itself
+    // never takes this lock, so joining while holding it cannot deadlock.
+    private final Object drainerLock = new Object();
+
+    // Set by stopDrainerForCameraClose(), cleared by
+    // restartDrainerAfterCameraClose(). Blocks a late startDrainerThread()
+    // from a timed-out pre-yield worker (closeEventRecording's post-rename
+    // restart) landing while the GL thread is inside closeCameraForPath() —
+    // restarting the MediaCodec drainer against a camera being destroyed is
+    // the exact FORTIFY "pthread_mutex_lock called on a destroyed mutex"
+    // abort the stop-before-close ordering exists to prevent. Same shape as
+    // drainerRestartSuppressed (release()'s permanent-stop latch).
+    private volatile boolean drainerSuppressedForCameraClose = false;
     
     // SOTA: Flag to disable pre-record buffer for stream-only encoders
     private boolean usePreRecordBuffer = true;
@@ -3750,12 +3776,17 @@ public class HardwareEventRecorderGpu {
      * This moves SD card I/O off the GL thread to prevent freezes.
      */
     private void startDrainerThread() {
+        synchronized (drainerLock) {
         if (drainerRunning) {
             logger.warn("Drainer thread already running");
             return;
         }
         if (drainerRestartSuppressed) {
             logger.info("Drainer restart suppressed (release in progress)");
+            return;
+        }
+        if (drainerSuppressedForCameraClose) {
+            logger.info("Drainer restart suppressed (camera close in progress)");
             return;
         }
 
@@ -3851,33 +3882,36 @@ public class HardwareEventRecorderGpu {
 
         drainerThread.setPriority(Thread.NORM_PRIORITY);
         drainerThread.start();
-        
+
         // Start disk writer thread (handles muxer I/O separately from encoder dequeue)
         startDiskWriterThread();
+        } // end synchronized (drainerLock)
     }
-    
+
     /**
      * Stops the background drainer thread.
      */
     private void stopDrainerThread() {
-        drainerRunning = false;
-        if (drainerThread != null) {
-            try {
-                drainerThread.interrupt();
-                // SOTA: 2 s join matches the disk writer's join. The drainer can
-                // be inside a single drainEncoderInternal() pass that takes
-                // 100+ ms under SD-card pressure; the old 500 ms ceiling let
-                // the close path move on while the drainer was still pushing
-                // packets to the queue, racing the muxer.stop() call.
-                drainerThread.join(2000);
-            } catch (InterruptedException e) {
-                // Ignore
+        synchronized (drainerLock) {
+            drainerRunning = false;
+            if (drainerThread != null) {
+                try {
+                    drainerThread.interrupt();
+                    // SOTA: 2 s join matches the disk writer's join. The drainer can
+                    // be inside a single drainEncoderInternal() pass that takes
+                    // 100+ ms under SD-card pressure; the old 500 ms ceiling let
+                    // the close path move on while the drainer was still pushing
+                    // packets to the queue, racing the muxer.stop() call.
+                    drainerThread.join(2000);
+                } catch (InterruptedException e) {
+                    // Ignore
+                }
+                drainerThread = null;
             }
-            drainerThread = null;
-        }
 
-        // Stop disk writer after drainer (drainer may still be pushing to the queue)
-        stopDiskWriterThread();
+            // Stop disk writer after drainer (drainer may still be pushing to the queue)
+            stopDiskWriterThread();
+        }
     }
     
     /**
@@ -3894,21 +3928,24 @@ public class HardwareEventRecorderGpu {
      * Call restartDrainerAfterCameraClose() after the camera is reopened.
      */
     public void stopDrainerForCameraClose() {
-        logger.info("Stopping drainer for camera close...");
-        drainerRunning = false;
-        if (drainerThread != null) {
-            try {
-                drainerThread.interrupt();
-                drainerThread.join(1000);  // Wait up to 1 second for clean exit
-                if (drainerThread.isAlive()) {
-                    logger.warn("Drainer thread still alive after 1s — proceeding anyway");
+        synchronized (drainerLock) {
+            logger.info("Stopping drainer for camera close...");
+            drainerSuppressedForCameraClose = true;
+            drainerRunning = false;
+            if (drainerThread != null) {
+                try {
+                    drainerThread.interrupt();
+                    drainerThread.join(1000);  // Wait up to 1 second for clean exit
+                    if (drainerThread.isAlive()) {
+                        logger.warn("Drainer thread still alive after 1s — proceeding anyway");
+                    }
+                } catch (InterruptedException e) {
+                    // Ignore
                 }
-            } catch (InterruptedException e) {
-                // Ignore
+                drainerThread = null;
             }
-            drainerThread = null;
+            logger.info("Drainer stopped for camera close");
         }
-        logger.info("Drainer stopped for camera close");
     }
     
     /**
@@ -3921,6 +3958,7 @@ public class HardwareEventRecorderGpu {
         // that must NOT be silently no-op'd. Only release() ↔ a new encoder
         // instance is supposed to permanently stop the drainer.
         drainerRestartSuppressed = false;
+        drainerSuppressedForCameraClose = false;
         if (!drainerRunning) {
             startDrainerThread();
             logger.info("Drainer restarted after camera reopen");

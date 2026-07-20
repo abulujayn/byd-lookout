@@ -40,6 +40,34 @@ class OnboardingState private constructor(private val prefs: SharedPreferences) 
         get() = prefs.getBoolean(KEY_DAEMON_AUTHORIZED, false)
         set(v) = prefs.edit().putBoolean(KEY_DAEMON_AUTHORIZED, v).apply()
 
+    /**
+     * True once the user has been asked to pick an operating mode (Vehicle ON+OFF vs
+     * ON only) in the first-run step. This is only the "was it asked" marker — the
+     * chosen mode VALUE lives in UnifiedConfig (surveillance.operatingMode) so the
+     * daemons can read it; this app-private flag just drives whether the MODE step
+     * still needs to show. Absent → step shows; the config default (onAndOff) already
+     * means a user who never reaches it gets full behaviour.
+     */
+    var modeChosen: Boolean
+        get() = prefs.getBoolean(KEY_MODE_CHOSEN, false)
+        set(v) = prefs.edit().putBoolean(KEY_MODE_CHOSEN, v).apply()
+
+    /**
+     * A non-default operating mode the user picked that has NOT yet been durably written
+     * to the daemon (the config default is "onAndOff", so only a non-default choice needs
+     * this). Set the instant the user picks it; cleared only on a confirmed persist. A
+     * daemon-ready flush (MainActivity.flushPendingOperatingMode) retries it independently
+     * of the onboarding step lifecycle, so the choice can't be lost if the first-run POST
+     * retries all expire before the daemon binds :8080 and the user then completes
+     * onboarding (which would otherwise disable the MODE re-ask via onboardingComplete).
+     * Null = nothing pending.
+     */
+    var pendingOperatingMode: String?
+        get() = prefs.getString(KEY_PENDING_OP_MODE, null)
+        set(v) = prefs.edit().apply {
+            if (v == null) remove(KEY_PENDING_OP_MODE) else putString(KEY_PENDING_OP_MODE, v)
+        }.apply()
+
     var cameraStep: CameraStep
         get() = CameraStep.fromName(prefs.getString(KEY_CAMERA_STEP, null))
         set(v) = prefs.edit().putString(KEY_CAMERA_STEP, v.name).apply()
@@ -88,6 +116,8 @@ class OnboardingState private constructor(private val prefs: SharedPreferences) 
     fun reset() {
         prefs.edit()
             .remove(KEY_DAEMON_AUTHORIZED)
+            .remove(KEY_MODE_CHOSEN)
+            .remove(KEY_PENDING_OP_MODE)
             .remove(KEY_CAMERA_STEP)
             .remove(KEY_CAMERA_SUBSTEP)
             .remove(KEY_VEHICLE_DONE)
@@ -102,6 +132,8 @@ class OnboardingState private constructor(private val prefs: SharedPreferences) 
         private const val PREFS_NAME = "overdrive_onboarding"
 
         private const val KEY_DAEMON_AUTHORIZED = "daemon_authorized"
+        private const val KEY_MODE_CHOSEN = "mode_chosen"
+        private const val KEY_PENDING_OP_MODE = "pending_operating_mode"
         private const val KEY_CAMERA_STEP = "camera_step"
         private const val KEY_CAMERA_SUBSTEP = "camera_sub_step"
         private const val KEY_VEHICLE_DONE = "vehicle_step_done"

@@ -32,6 +32,21 @@ class ProcessRevivalReceiver : BroadcastReceiver() {
         val appContext = context.applicationContext
         Log.i(TAG, "Revival alarm fired (data=${intent.dataString})")
 
+        // GATE (G6): in "Vehicle ON only" mode the out-of-process revival chain must
+        // stand down — its whole purpose is to WAKE the head unit (RTC_WAKEUP) every
+        // ~5 min to resurrect the parked daemon stack, which is exactly the post-OFF
+        // system-waking onOnly must eliminate. If a pending alarm still fires after the
+        // user flipped to onOnly, tear the chain down and do NOT re-arm or restart the
+        // keepalive service. (schedule() below is also a no-op+cancel in onOnly, but the
+        // explicit return here also skips the DaemonKeepaliveService.start.)
+        if (com.overdrive.app.config.UnifiedConfigManager.isVehicleOnOnlyMode()) {
+            Log.i(TAG, "onOnly mode — cancelling revival chain, not re-arming")
+            try { cancel(appContext) } catch (e: Exception) {
+                Log.w(TAG, "cancel failed: ${e.message}")
+            }
+            return
+        }
+
         // Re-arm first so a crash below doesn't break the chain.
         try {
             schedule(appContext)
@@ -102,6 +117,18 @@ class ProcessRevivalReceiver : BroadcastReceiver() {
          * Safe to call repeatedly — FLAG_UPDATE_CURRENT replaces in place.
          */
         fun schedule(context: Context) {
+            // GATE (G6): "Vehicle ON only" mode — never arm the revival wake-alarms.
+            // This single check covers ALL callers (MainActivity.onCreate, BootReceiver
+            // .startDaemons, DaemonKeepaliveService.onCreate) AND the app-update relaunch
+            // path (MainActivity re-runs schedule() after MY_PACKAGE_REPLACED), so the
+            // mode is honoured across respawns and updates with no per-caller edit. We
+            // also cancel() any alarms a prior onAndOff session left pending so a mid-park
+            // toggle-to-onOnly tears the chain down at the next schedule() call.
+            if (com.overdrive.app.config.UnifiedConfigManager.isVehicleOnOnlyMode()) {
+                Log.i(TAG, "onOnly mode — not arming revival alarms; cancelling any pending")
+                cancel(context)
+                return
+            }
             val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
             if (alarmManager == null) {
                 Log.w(TAG, "AlarmManager unavailable")
@@ -134,6 +161,26 @@ class ProcessRevivalReceiver : BroadcastReceiver() {
                         AlarmManager.RTC_WAKEUP, now + INTERVAL_MS + BACKUP_OFFSET_MS, pi,
                     )
                 }
+            }
+        }
+
+        /**
+         * Cancel both revival alarms. Used by "Vehicle ON only" mode (G6) to stand the
+         * wake chain down. Rebuilds the primary + backup PendingIntents with
+         * FLAG_NO_CREATE (returns null if none exists — nothing to cancel) so we don't
+         * accidentally create a new intent just to cancel it.
+         */
+        fun cancel(context: Context) {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+                ?: return
+            val flags = PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+            buildPendingIntent(context, PRIMARY_REQUEST_CODE, "primary", flags)?.let {
+                alarmManager.cancel(it)
+                it.cancel()
+            }
+            buildPendingIntent(context, BACKUP_REQUEST_CODE, "backup", flags)?.let {
+                alarmManager.cancel(it)
+                it.cancel()
             }
         }
     }

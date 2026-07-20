@@ -163,6 +163,113 @@ public class HttpResponse {
      * old "no-cache" behaviour so any future /video/* caller (e.g. live
      * streams) opting out of caching just calls the no-ETag version.
      */
+    /**
+     * Stream an arbitrary media file with an explicit Content-Type. Same chunked
+     * body as {@link #sendVideo} but caller-chosen MIME, so audio (mp3/wav/…) and
+     * video both serve correctly to a streaming MediaPlayer. No Range (callers use
+     * this for small library files that buffer fine over the local loopback).
+     */
+    public static void sendMediaFile(OutputStream out, java.io.File file, String contentType) throws Exception {
+        if (!file.exists()) {
+            sendError(out, 404, "File not found");
+            return;
+        }
+        StringBuilder headers = new StringBuilder();
+        headers.append("HTTP/1.1 200 OK\r\n")
+               .append("Content-Type: ").append(contentType).append("\r\n")
+               .append("Content-Length: ").append(file.length()).append("\r\n")
+               .append("Accept-Ranges: bytes\r\n")
+               .append("Cache-Control: no-cache\r\n")
+               .append("Connection: close\r\n\r\n");
+        out.write(headers.toString().getBytes());
+        try (java.io.FileInputStream fis = new java.io.FileInputStream(file)) {
+            byte[] buffer = new byte[16384];
+            int count;
+            while ((count = fis.read(buffer)) != -1) {
+                out.write(buffer, 0, count);
+            }
+        }
+        out.flush();
+    }
+
+    /**
+     * Stream a media file with a caller-chosen Content-Type and full HTTP Range support.
+     * Honours a {@code bytes=start-end} request header with a 206 Partial Content reply;
+     * a null/blank/malformed range falls back to a 200 full-file stream.
+     *
+     * <p>This is what {@link #sendMediaFile} could not do: a streaming {@code MediaPlayer}
+     * (VideoView / audio service) issues Range requests to locate an MP4's {@code moov}
+     * atom — non-faststart MP4s store it at the END of the file. If the server ignores the
+     * Range and always returns the file from byte 0, the extractor never finds the header
+     * and {@code prepare()} stalls, so "Play Video" produced nothing while a linearly-
+     * streamable MP3 still played. Serving 206 fixes video playback from the library.
+     */
+    public static void sendMediaFileRanged(OutputStream out, java.io.File file,
+                                           String contentType, String rangeHeader) throws Exception {
+        if (!file.exists()) {
+            sendError(out, 404, "File not found");
+            return;
+        }
+        long fileLength = file.length();
+        long start = 0, end = fileLength - 1;
+        boolean partial = false;
+        if (rangeHeader != null && rangeHeader.startsWith("bytes=")) {
+            try {
+                String spec = rangeHeader.substring(6).trim();
+                int dash = spec.indexOf('-');
+                if (dash < 0) { sendError(out, 400, "Invalid Range header"); return; }
+                String from = spec.substring(0, dash).trim();
+                String to = spec.substring(dash + 1).trim();
+                if (from.isEmpty()) {
+                    // Suffix range "bytes=-N" — the LAST N bytes. Split-on-"-" would lose
+                    // this (it produces ["","N"]), so parse the two sides by the dash index.
+                    long suffix = Long.parseLong(to);
+                    if (suffix <= 0) { sendError(out, 416, "Range Not Satisfiable"); return; }
+                    start = Math.max(0, fileLength - suffix);
+                    end = fileLength - 1;
+                } else {
+                    start = Long.parseLong(from);
+                    if (!to.isEmpty()) end = Long.parseLong(to);
+                }
+                if (start < 0 || start >= fileLength) { sendError(out, 416, "Range Not Satisfiable"); return; }
+                if (end < 0 || end >= fileLength) end = fileLength - 1;
+                if (end < start) end = start;
+                partial = true;
+            } catch (NumberFormatException e) {
+                sendError(out, 400, "Invalid Range header");
+                return;
+            }
+        }
+        long contentLength = end - start + 1;
+
+        StringBuilder headers = new StringBuilder();
+        headers.append(partial ? "HTTP/1.1 206 Partial Content\r\n" : "HTTP/1.1 200 OK\r\n")
+               .append("Content-Type: ").append(contentType).append("\r\n")
+               .append("Content-Length: ").append(contentLength).append("\r\n");
+        if (partial) {
+            headers.append("Content-Range: bytes ").append(start).append("-").append(end)
+                   .append("/").append(fileLength).append("\r\n");
+        }
+        headers.append("Accept-Ranges: bytes\r\n")
+               .append("Cache-Control: no-cache\r\n")
+               .append("Connection: close\r\n\r\n");
+        out.write(headers.toString().getBytes());
+
+        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(file, "r")) {
+            raf.seek(start);
+            byte[] buffer = new byte[16384];
+            long remaining = contentLength;
+            while (remaining > 0) {
+                int toRead = (int) Math.min(buffer.length, remaining);
+                int read = raf.read(buffer, 0, toRead);
+                if (read <= 0) break;
+                out.write(buffer, 0, read);
+                remaining -= read;
+            }
+        }
+        out.flush();
+    }
+
     public static void sendVideo(OutputStream out, java.io.File file) throws Exception {
         sendVideoInternal(out, file, null);
     }

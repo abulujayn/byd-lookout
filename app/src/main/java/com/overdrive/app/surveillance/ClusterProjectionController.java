@@ -438,6 +438,17 @@ public final class ClusterProjectionController {
         return i != null && i.sustainedHeld();
     }
 
+    /** Null-safe static check of whether a SPECIFIC {@code token} still holds the
+     *  projection (mirrors {@link #isSustainedHeldStatic()} but scoped to one holder).
+     *  Returns false if this daemon never opened a projection. Used by {@link
+     *  com.overdrive.app.launcher.ClusterCast} to reconcile its own active flag when a
+     *  direct {@link #forceClose} (relayout / bs-disable / retarget / ACC-off) cleared
+     *  ALL holders — so a torn-down cast reports inactive without a keep-alive loop. */
+    public static boolean holdsTokenStatic(String token) {
+        ClusterProjectionController i = instance;
+        return i != null && token != null && i.sustainedHolders.contains(token);
+    }
+
     /** Bump the signal timestamp (called every tick while a turn signal is active). */
     public void noteSignal() { lastSignalMs = System.currentTimeMillis(); }
 

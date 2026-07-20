@@ -126,6 +126,11 @@ class ZrokLauncher(
                 "# Zrok Tunnel Watchdog Script",
                 "LOG_FILE=\"$ZROK_LOG\"",
                 "SENTINEL=\"$ZROK_DISABLED_SENTINEL\"",
+                // "Vehicle ON only" parked-shutdown marker (ParkedShutdown.MARKER_PATH):
+                // present → the whole stack is terminated for the parked window, so this
+                // tunnel watchdog must exit too (else its 60s edge-probe loop keeps the AP
+                // busy + the network up). Never exists in onAndOff → inert there.
+                "PARKED=\"${com.overdrive.app.ui.model.ParkedShutdown.MARKER_PATH}\"",
                 "UNIQUE_NAME_FILE=\"/data/local/tmp/.zrok/unique_name\"",
                 "RETRY_COUNT=0",
                 "HEALTHY_UPTIME_SEC=300",
@@ -134,7 +139,7 @@ class ZrokLauncher(
                 "PROBE_STRIKES=2",
                 "",
                 "while true; do",
-                "  if [ -f \"\$SENTINEL\" ]; then",
+                "  if [ -f \"\$SENTINEL\" ] || [ -f \"\$PARKED\" ]; then",
                 "    echo \"[\$(date)] Tunnel disabled by user (sentinel file exists). Exiting watchdog.\" >> \"\$LOG_FILE\"",
                 "    exit 0",
                 "  fi",
@@ -171,7 +176,7 @@ class ZrokLauncher(
                 "    PROBE_FAILS=0",
                 "    sleep \$PROBE_INITIAL_DELAY_SEC",
                 "    while kill -0 \$ZROK_PID 2>/dev/null; do",
-                "      if [ -f \"\$SENTINEL\" ]; then break; fi",
+                "      if [ -f \"\$SENTINEL\" ] || [ -f \"\$PARKED\" ]; then break; fi",
                 "      NAME=\$(cat \"\$UNIQUE_NAME_FILE\" 2>/dev/null)",
                 "      if [ -z \"\$NAME\" ]; then sleep \$PROBE_INTERVAL_SEC; continue; fi",
                 "      if pgrep -f 'sing-box' >/dev/null 2>&1; then",
@@ -236,7 +241,7 @@ class ZrokLauncher(
                 "  END_EPOCH=\$(awk '{print int(\$1)}' /proc/uptime 2>/dev/null || date +%s)",
                 "  UPTIME_SEC=\$((END_EPOCH - START_EPOCH))",
                 "  if [ \$UPTIME_SEC -lt 0 ]; then UPTIME_SEC=0; fi",
-                "  if [ -f \"\$SENTINEL\" ]; then",
+                "  if [ -f \"\$SENTINEL\" ] || [ -f \"\$PARKED\" ]; then",
                 "    echo \"[\$(date)] Tunnel disabled by user (sentinel written during shutdown). Exiting watchdog.\" >> \"\$LOG_FILE\"",
                 "    exit 0",
                 "  fi",
@@ -546,8 +551,19 @@ class ZrokLauncher(
                         // transparently migrates tokens saved before this field was
                         // encrypted — the next saveReservedToken() re-encrypts it.
                         val token = CredentialCipher.decrypt(raw)
-                        reservedShareToken = token
-                        callback(token)
+                        if (token.isNotEmpty()) {
+                            reservedShareToken = token
+                            callback(token)
+                        } else {
+                            // Present but undecryptable (e.g. .byd_device_id
+                            // transiently unreadable). Report "unavailable this
+                            // attempt" instead of caching "" and letting a
+                            // non-null empty string launch `zrok share reserved`
+                            // with no token. Do NOT overwrite reservedShareToken.
+                            logManager.warn(TAG, "Reserved token present but undecryptable; "
+                                    + "treating as unavailable this attempt")
+                            callback(null)
+                        }
                     } else {
                         callback(null)
                     }
@@ -558,7 +574,7 @@ class ZrokLauncher(
             }
         )
     }
-    
+
     private fun checkAndInstallZrokForReserved(shareToken: String, permanentUrl: String, callback: ZrokCallback) {
         adbShellExecutor.execute(
             command = "test -x $ZROK_TMP_PATH && echo yes || echo no",
@@ -1218,14 +1234,33 @@ class ZrokLauncher(
             command = "cat $ZROK_RESERVED_TOKEN_FILE 2>/dev/null",
             callback = object : AdbShellExecutor.ShellCallback {
                 override fun onSuccess(output: String) {
-                    val token = output.trim()
-                    if (token.isNotEmpty() && !token.contains("No such file")) {
+                    val raw = output.trim()
+                    val havePersisted = raw.isNotEmpty() && !raw.contains("No such file")
+                    // decrypt() passes plaintext through unchanged (transparent
+                    // migration of tokens saved before encryption), and returns
+                    // "" for a present-but-undecryptable ENC: blob. Distinguish
+                    // the two: a NON-EMPTY file that fails to decrypt is a
+                    // transient key problem (e.g. .byd_device_id briefly
+                    // unreadable), NOT an absent token. Reserving fresh here
+                    // would rotate the permanent URL (a new unique-name), which
+                    // silently breaks every origin-bound PWA push subscription —
+                    // so on undecryptable we ABORT this launch and let the next
+                    // attempt retry, rather than burning a reserve slot.
+                    val token = if (havePersisted) CredentialCipher.decrypt(raw) else ""
+                    if (token.isNotEmpty()) {
                         // Have reserved token - use reserved mode
                         logManager.info(TAG, "✅ Found reserved token, using permanent URL")
                         callback.onLog("✅ Using permanent URL")
                         reservedShareToken = token
                         val permanentUrl = "https://$uniqueName.share.zrok.io"
                         launchZrokShareReserved(token, permanentUrl, callback)
+                    } else if (havePersisted) {
+                        // Present but undecryptable — do NOT re-reserve (would
+                        // change the permanent URL). Surface and stop.
+                        logManager.error(TAG, "Reserved token present but could not be decrypted; "
+                                + "not re-reserving to preserve the permanent URL. Retry after the "
+                                + "device id file is readable, or re-set the token from the app UI.")
+                        callback.onError("Reserved token could not be decrypted. Retry shortly, or re-set it from the app UI.")
                     } else {
                         // No reserved token - need to reserve first (ONE TIME)
                         logManager.info(TAG, "⚠️ No reserved token. Reserving permanent URL...")
@@ -1941,10 +1976,22 @@ class ZrokLauncher(
                         // transparently migrates tokens saved before this field was
                         // encrypted — the next saveEnableToken() re-encrypts it.
                         val token = CredentialCipher.decrypt(raw)
-                        zrokToken = token
-                        tokenLoaded = true
-                        logManager.info(TAG, "Enable token loaded from unified storage")
-                        callback(token)
+                        if (token.isNotEmpty()) {
+                            zrokToken = token
+                            tokenLoaded = true
+                            logManager.info(TAG, "Enable token loaded from unified storage")
+                            callback(token)
+                        } else {
+                            // Present but undecryptable (e.g. .byd_device_id
+                            // transiently unreadable). Report "not loaded" rather
+                            // than caching "" — an empty zrokToken would run
+                            // `zrok enable` with no token. Callers treat null as
+                            // "no token configured" and stop cleanly. Leave
+                            // tokenLoaded false so a later attempt retries.
+                            logManager.warn(TAG, "Enable token present but undecryptable; "
+                                    + "treating as not loaded this attempt")
+                            callback(null)
+                        }
                     } else {
                         callback(null)
                     }
@@ -1955,7 +2002,7 @@ class ZrokLauncher(
             }
         )
     }
-    
+
     /**
      * Delete enable token from unified storage AND wipe everything else
      * derived from the previous zrok account.

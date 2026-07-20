@@ -617,6 +617,15 @@ class MainActivity : AppCompatActivity() {
         // RoadSense on/off in the web UI and returned to the app, or granted the
         // overlay permission. Cheap — a no-op if the state already matches.
         syncRoadSenseOverlay()
+
+        // Daemon-ready flush of any pending onboarding operating-mode choice. The
+        // auth-granted callback fires BEFORE the user reaches the MODE step (and only
+        // once on a stable ADB connection), so it can't be the sole trigger — onResume
+        // runs on every return to the app, reliably after the daemon has bound :8080 on
+        // any non-first launch. Idempotent + no-op when nothing is pending, and it
+        // reconciles against the live config so it never clobbers a later Settings
+        // change (see flushPendingOperatingMode).
+        com.overdrive.app.onboarding.OnboardingHost.flushPendingOperatingMode(applicationContext)
     }
 
     /**
@@ -752,7 +761,15 @@ class MainActivity : AppCompatActivity() {
                     // Re-run daemon initialization now that ADB is authorized
                     android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                         daemonStartupManager.initializeOnAppLaunch()
-                        
+
+                        // Flush any pending operating-mode choice the first-run dialog
+                        // couldn't persist before the daemon bound :8080. Decoupled from
+                        // the onboarding step lifecycle (survives onboardingComplete), so
+                        // an "On only" pick is never silently lost. No-op when nothing is
+                        // pending; has its own retry+backoff to tolerate daemon bring-up.
+                        com.overdrive.app.onboarding.OnboardingHost
+                            .flushPendingOperatingMode(applicationContext)
+
                         // Check daemon statuses after startup
                         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                             daemonStartupManager.checkAllDaemonStatuses()
@@ -1305,6 +1322,7 @@ class MainActivity : AppCompatActivity() {
                 R.id.liveViewFragment,
                 R.id.recordingsFragment,
                 R.id.vehicleControlFragment,
+                R.id.projectionFragment,
                 R.id.tripsFragment,
                 R.id.chargingFragment,
                 R.id.automationsFragment,
@@ -1343,6 +1361,8 @@ class MainActivity : AppCompatActivity() {
                 R.drawable.ic_recording, R.string.rail_recordings),
             RailItem(R.id.railDestVehicle, R.id.vehicleControlFragment,
                 R.drawable.ic_vehicle_control, R.string.rail_vehicle),
+            RailItem(R.id.railDestProjection, R.id.projectionFragment,
+                R.drawable.ic_projection, R.string.rail_projection),
             RailItem(R.id.railDestTrips, R.id.tripsFragment,
                 R.drawable.ic_trips, R.string.rail_trips),
             RailItem(R.id.railDestCharging, R.id.chargingFragment,
@@ -3631,6 +3651,13 @@ class MainActivity : AppCompatActivity() {
     /** Hidden Diagnostics long-press — wipe onboarding state and re-run the full novice track. */
     fun resetAndReplayOnboarding() {
         com.overdrive.app.onboarding.OnboardingState.get(this).reset()
+        // Also clear the daemon-side operatingModeSetByUser marker so the replayed
+        // session doesn't inherit the prior session's "user chose a mode" flag —
+        // otherwise flushPendingOperatingMode would GET a stale true and wrongly drop a
+        // legitimate new replay pick. reset() already wiped the app-private prefs
+        // (modeChosen, pendingOperatingMode); this keeps the daemon flag on the same
+        // reset boundary. Best-effort + retrying; the replay pick's own POST is ungated.
+        com.overdrive.app.onboarding.OnboardingHost.clearOperatingModeUserFlag()
         ensureOnboardingHost().startReplay()
     }
 }

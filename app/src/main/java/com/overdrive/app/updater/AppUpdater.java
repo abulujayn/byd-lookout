@@ -612,6 +612,57 @@ public class AppUpdater {
                         return;
                     }
 
+                    // VERSION-NEWER OFFER (checked BEFORE the timestamp gate, like
+                    // the cross-channel offer above). The timestamp baseline records
+                    // "when we last CHECKED", not the updated_at of the build the
+                    // user is actually running — so on a rolling tag (braveheart) a
+                    // user who sideloaded/flashed an OLDER APK, or whose baseline got
+                    // seeded/poisoned to the current-remote updated_at (first-run seed
+                    // below, the out-of-band reseed, or a failed install that rolled
+                    // the baseline forward to remote), is PERMANENTLY suppressed by
+                    // the updated_at compare even though a strictly-newer build is
+                    // live. Guard against that with a baseline-INDEPENDENT check: if
+                    // the remote label parses to a strictly-higher numeric version
+                    // than the running build, offer it unconditionally. This is
+                    // positive-only (it can only ADD an offer, never suppress one) so
+                    // it can't cause downgrade-spam; a same-or-lower remote version —
+                    // including an in-place re-upload that keeps the same version but
+                    // bumps updated_at — falls through to the timestamp path, which
+                    // already handles that case correctly. Both numbers must parse
+                    // (numericVersion returns "" for a bare/unknown label) and belong
+                    // to THIS channel, or we skip the shortcut and defer to timestamp.
+                    //
+                    // Compare against getDisplayVersion() — the VERSION_FILE-first
+                    // label — NOT getInstalledVersion() (raw BuildConfig). On a
+                    // rolling tag the compiled versionName may stay pinned across
+                    // re-uploads (it is pinned at 33.0 today), so BuildConfig would
+                    // report a stale number and this shortcut would RE-OFFER the
+                    // just-installed build forever. VERSION_FILE is advanced ONLY on
+                    // pm-install success (persistVersionToFile on the rc==0 path) to
+                    // the real filename-derived label, and restored on failure, so it
+                    // faithfully tracks what actually landed. A fresh sideload (no
+                    // VERSION_FILE) falls back to the BuildConfig identity, which is
+                    // then the user's true flashed version — still correct for the
+                    // strand case. getDisplayVersion always yields a label for the
+                    // running channel (VERSION_FILE is channel-guarded to "" on a
+                    // cross-channel value, then it drops to BuildConfig), so the
+                    // channel check below holds.
+                    String remoteNumeric = numericVersion(remoteVersion);
+                    String installedLabel = getDisplayVersion(context);
+                    String installedNumeric =
+                            (channelOfLabel(installedLabel) != null
+                                    && channel.equals(channelOfLabel(installedLabel)))
+                                    ? numericVersion(installedLabel) : "";
+                    if (!remoteNumeric.isEmpty() && !installedNumeric.isEmpty()
+                            && isNewerVersion(installedNumeric, remoteNumeric)) {
+                        Log.i(TAG, "Version-newer offer (installed " + installedNumeric
+                                + " < remote " + remoteNumeric + ") — offering " + remoteVersion
+                                + " regardless of timestamp baseline");
+                        runCallback(() -> callback.onUpdateAvailable(
+                                currentVersion, remoteVersion, releaseNotes));
+                        return;
+                    }
+
                     // Update detection: compare asset updated_at timestamp only.
                     // Version comparison is unreliable since versionName may not be bumped
                     // when the APK is replaced on the same release tag.

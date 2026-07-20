@@ -682,6 +682,23 @@ public class LocationSidecarService extends Service implements LocationListener 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.i(TAG, "Service started");
+        // "Vehicle ON only" parked-shutdown gate: if the stack was terminated for the
+        // parked window, this sidecar (1Hz GPS→IPC loop to the now-dead CameraDaemon)
+        // must not keep running/respawning. Self-stop and stay down until ACC-on recovery
+        // clears the marker. Guarded on onOnly (fail-open) so onAndOff is unaffected. The
+        // recoveryInProgress guard avoids self-stopping on the recovery edge before the
+        // async marker clear lands. Mirrors DaemonKeepaliveService.onStartCommand.
+        try {
+            if (com.overdrive.app.config.UnifiedConfigManager.isVehicleOnOnlyMode()
+                    && new java.io.File(com.overdrive.app.ui.model.ParkedShutdown.MARKER_PATH).exists()
+                    && !com.overdrive.app.ui.daemon.DaemonStartupManager.getRecoveryInProgress()) {
+                Log.i(TAG, "onOnly + parked-shutdown marker present — stopping location sidecar");
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "parked-marker gate failed (" + t.getMessage() + ") — proceeding");
+        }
         return START_STICKY;
     }
 

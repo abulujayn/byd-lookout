@@ -641,9 +641,29 @@ public class QualitySettingsApiHandler {
                         String mode = data.optString("mergeMode", "both");
                         int code = "side".equals(mode) ? 1 : ("rear".equals(mode) ? 2 : 0);
                         p.setBlindSpotMergeMode(code);
+                        // Rotation is gated to the single-view modes, so a merge-mode
+                        // flip to/from "both" changes whether the stored angle applies.
+                        // Re-resolve geometry so the card rotates (side/rear) or snaps
+                        // back upright (both) live.
+                        p.refreshBlindSpotRotation();
                     }
                 } catch (Exception e) {
                     CameraDaemon.log("blindspot merge-mode dispatch failed: " + e.getMessage());
+                }
+            }
+            // A blind-spot card-rotation change must take effect live. The value is a
+            // fixed quarter turn (0/90/180/270) or "auto" (direction-of-travel); the
+            // base angle for "auto" is the sibling "rotationBase". Only honoured for
+            // single-view modes (the daemon gates it); persisted by updateSection
+            // above, then re-resolved onto the running SurfaceControl layer here. A
+            // rotationBase edit is also refreshed so an "auto" card re-orients live.
+            // No-op when the lane isn't up (next enable re-applies it).
+            if ("blindspot".equals(section) && (data.has("rotation") || data.has("rotationBase"))) {
+                try {
+                    com.overdrive.app.surveillance.GpuSurveillancePipeline p = CameraDaemon.getGpuPipeline();
+                    if (p != null) p.refreshBlindSpotRotation();
+                } catch (Exception e) {
+                    CameraDaemon.log("blindspot rotation dispatch failed: " + e.getMessage());
                 }
             }
             // A cluster-layout (size-profile) change must take effect live: force the
@@ -689,6 +709,34 @@ public class QualitySettingsApiHandler {
                     if (rmm != null) rmm.onPipelineStartedExternally();
                 } catch (Exception e) {
                     CameraDaemon.log("blindspot enable dispatch failed: " + e.getMessage());
+                }
+            }
+
+            // Low-power-while-parked toggle (camera.surveillanceIdleThrottle): the
+            // flag is already persisted by updateSection above, so desiredCameraState()
+            // reads it fresh. Push a reconcile so the idle throttle takes effect (or
+            // lifts) promptly rather than waiting for the 30s resync tick or the next
+            // ACC cycle. No-op if the pipeline isn't up / not in surveillance mode.
+            if ("camera".equals(section) && data.has("surveillanceIdleThrottle")) {
+                try {
+                    com.overdrive.app.recording.RecordingModeManager rmm =
+                        CameraDaemon.getRecordingModeManager();
+                    if (rmm != null) rmm.onSurveillanceActivityChanged();
+                } catch (Exception e) {
+                    CameraDaemon.log("camera idle-throttle reconcile dispatch failed: " + e.getMessage());
+                }
+            }
+            // OEM idle throttle (oemDashcam.idleThrottleWhenParked): re-resolve the
+            // OEM axis profile so the encode draw-stride is (re)applied/lifted live
+            // while parked, rather than only on the next start/ACC edge. No-op when
+            // the OEM pipeline isn't up.
+            if ("oemDashcam".equals(section) && data.has("idleThrottleWhenParked")) {
+                try {
+                    com.overdrive.app.camera.OemDashcamPipeline oem =
+                        CameraDaemon.getOemDashcamPipeline();
+                    if (oem != null) oem.reapplyAxisProfileFromUcm();
+                } catch (Exception e) {
+                    CameraDaemon.log("oem idle-throttle reapply dispatch failed: " + e.getMessage());
                 }
             }
 

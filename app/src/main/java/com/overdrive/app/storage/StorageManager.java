@@ -7387,9 +7387,20 @@ public class StorageManager {
                                 com.overdrive.app.daemon.CameraDaemon.getGpuPipeline();
                             if (pipeline != null && pipeline.getSentry() != null
                                     && surveillanceStorageType == StorageType.USB) {
-                                pipeline.getSentry().setEventOutputDir(getSurveillanceDir());
+                                // FIX: use getLiveSurveillanceDir() — NOT getSurveillanceDir().
+                                // getSurveillanceDir() returns the frozen field that
+                                // updateActiveDirectories() SKIPS while surveillanceActive
+                                // is true (an armed session). During a parked surveillance
+                                // session the field stays at internal-fallback from when the
+                                // USB dropped, so pushing it after remount success re-pins
+                                // sentry to INTERNAL despite the USB being back. This was
+                                // the root cause of "surveillance videos saved to internal
+                                // for 10-15 min" — the SD watchdog branch (line ~7097)
+                                // already has this fix; the USB branch was missed.
+                                File liveSurvDir = getLiveSurveillanceDir();
+                                pipeline.getSentry().setEventOutputDir(liveSurvDir);
                                 logInfo("USB watchdog: updated sentry output dir to " +
-                                    getSurveillanceDir().getAbsolutePath());
+                                    liveSurvDir.getAbsolutePath());
                             }
 
                             // Pano recorder dir re-poke: same rationale as

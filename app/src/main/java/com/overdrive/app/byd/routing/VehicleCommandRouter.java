@@ -418,6 +418,22 @@ public final class VehicleCommandRouter {
         }
     }
 
+    /** Fold / unfold the exterior rear-view mirrors (BODYWORK_REARVIEW_MIRROR_SET).
+     *  fold=true → mirrors fold in, false → unfold. No telemetry readback exists for
+     *  mirror-fold state (confirmed against the OEM firmware — set-only), so this is
+     *  a fire-and-set command; the keymap/automation "toggle" is a blind flip via the
+     *  last-commanded cache, not a live read. */
+    public static final class MirrorFoldCommand extends VehicleCommand {
+        public final boolean fold;
+        public MirrorFoldCommand(boolean fold) { this.fold = fold; }
+        public String name() { return "mirror-fold"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) {
+            return c.setMirrorsFolded(fold);
+        }
+    }
+
     /** Phone wireless-charger pad on/off — BYDAutoChargingDevice feature write. */
     public static final class WirelessChargingCommand extends VehicleCommand {
         public final boolean enabled;
@@ -490,7 +506,13 @@ public final class VehicleCommandRouter {
         public String name() { return "seat-heat"; }
         public Capability cloudCapability() { return Capability.AVAILABLE; }
         public Capability sdkCapability() { return Capability.AVAILABLE; }
-        public RoutePreference defaultPreference() { return RoutePreference.CLOUD_FIRST; }
+        // SDK_FIRST (not CLOUD_FIRST): the local setSeatHeatingState(position,level) is
+        // genuinely PER-SEAT, whereas the cloud VENTILATIONHEATING command is COMPOSITE —
+        // it writes mainHeat AND copilotHeat together from the (possibly stale) snapshot,
+        // so a "driver heat on" cloud call would also drive the passenger seat. Preferring
+        // the SDK path fixes the reported "driver seat heating turns on both seats" bug;
+        // cloud stays as the fallback for when the local write is refused (e.g. parked).
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_FIRST; }
         public CloudOutcome executeViaCloud(BydCloudClient client, String vin) throws Exception {
             String chairType = (position == 1) ? "1" : "2";
             boolean ok = client.setSeatClimate(vin, chairType,
@@ -511,7 +533,10 @@ public final class VehicleCommandRouter {
         public String name() { return "seat-vent"; }
         public Capability cloudCapability() { return Capability.AVAILABLE; }
         public Capability sdkCapability() { return Capability.AVAILABLE; }
-        public RoutePreference defaultPreference() { return RoutePreference.CLOUD_FIRST; }
+        // SDK_FIRST — same rationale as SeatHeatCommand: the local setSeatVentilation
+        // (position,level) is per-seat; the cloud path is a composite that would drive
+        // both seats. Prefer the per-seat SDK write; cloud is the fallback.
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_FIRST; }
         public CloudOutcome executeViaCloud(BydCloudClient client, String vin) throws Exception {
             String chairType = (position == 1) ? "1" : "2";
             boolean ok = client.setSeatClimate(vin, chairType,
@@ -551,6 +576,22 @@ public final class VehicleCommandRouter {
         public boolean executeViaSdk(BydDataCollector c) { return c.setDayTimeLight(drlOn); }
     }
 
+    /**
+     * Hazard (double-flash) lights on/off. Local SDK only — no cloud hazard command
+     * exists (the cloud "flash" is the momentary locate-flash, not a sustained toggle).
+     * Actuation is UNCONFIRMED on this platform (inferred feature id, no OEM precedent)
+     * — {@link BydDataCollector#setHazardLights} returns false if the HAL rejects it, so
+     * a failed write surfaces honestly rather than silently no-op'ing.
+     */
+    public static final class HazardCommand extends VehicleCommand {
+        public final boolean on;
+        public HazardCommand(boolean on) { this.on = on; }
+        public String name() { return "hazard"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setHazardLights(on); }
+    }
+
     public static final class AmbientColourCommand extends VehicleCommand {
         public final int colour;
         public AmbientColourCommand(int colour) { this.colour = colour; }
@@ -558,6 +599,108 @@ public final class VehicleCommandRouter {
         public Capability sdkCapability() { return Capability.REQUIRED; }
         public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
         public boolean executeViaSdk(BydDataCollector c) { return c.setAmbientLight(colour); }
+    }
+
+    /** AC auto mode on/off (feature-id Ac.AUTO_MODE_SET). SDK-only. */
+    public static final class AcAutoModeCommand extends VehicleCommand {
+        public final boolean on;
+        public AcAutoModeCommand(boolean on) { this.on = on; }
+        public String name() { return "ac-auto"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setAcAutoMode(on); }
+    }
+
+    /** Air intake: recirculate cabin air vs draw fresh outside air (feature-id
+     *  Ac.CYCLE_MODE_SET, FRESH_AIR=0 / RECIRCULATION=1). SDK-only. */
+    public static final class AcRecirculationCommand extends VehicleCommand {
+        public final boolean recirculate;
+        public AcRecirculationCommand(boolean recirculate) { this.recirculate = recirculate; }
+        public String name() { return "ac-recirculation"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setAcRecirculation(recirculate); }
+    }
+
+    /** Front windscreen defrost/demist on/off (feature-id Ac.DEFROST_FRONT_SET). SDK-only —
+     *  no BYD cloud remote-control equivalent; same AC-device routing as recirculation. */
+    public static final class FrontDefrostCommand extends VehicleCommand {
+        public final boolean on;
+        public FrontDefrostCommand(boolean on) { this.on = on; }
+        public String name() { return "defrost-front"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setFrontDefrost(on); }
+    }
+
+    /** Rear windscreen defrost/demist on/off (feature-id Ac.DEFROST_REAR_SET). SDK-only. */
+    public static final class RearDefrostCommand extends VehicleCommand {
+        public final boolean on;
+        public RearDefrostCommand(boolean on) { this.on = on; }
+        public String name() { return "defrost-rear"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setRearDefrost(on); }
+    }
+
+    /** Fan-only (ventilation, no compressor) on/off. SDK-only, named-method HAL call. */
+    public static final class FanOnlyModeCommand extends VehicleCommand {
+        public final boolean on;
+        public FanOnlyModeCommand(boolean on) { this.on = on; }
+        public String name() { return "fan-only"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setFanOnlyMode(on); }
+    }
+
+    /** Steering-wheel heating on/off (setting HAL, on=2/off=1). SDK-only. */
+    public static final class SteeringWheelHeatCommand extends VehicleCommand {
+        public final boolean on;
+        public SteeringWheelHeatCommand(boolean on) { this.on = on; }
+        public String name() { return "steering-heat"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setSteeringWheelHeating(on); }
+    }
+
+    /** Smart welcome-light on/off (setting HAL, on=1/off=2). SDK-only. */
+    public static final class WelcomeLightCommand extends VehicleCommand {
+        public final boolean on;
+        public WelcomeLightCommand(boolean on) { this.on = on; }
+        public String name() { return "welcome-light"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setWelcomeLight(on); }
+    }
+
+    /** Interior reading light on/off (body feature-id, on=1/off=2). SDK-only. */
+    public static final class ReadingLightCommand extends VehicleCommand {
+        public final boolean on;
+        public ReadingLightCommand(boolean on) { this.on = on; }
+        public String name() { return "reading-light"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setReadingLight(on); }
+    }
+
+    /** Ambient-light music mode on/off (body feature-id, on=1/off=2). SDK-only. */
+    public static final class AmbientMusicModeCommand extends VehicleCommand {
+        public final boolean on;
+        public AmbientMusicModeCommand(boolean on) { this.on = on; }
+        public String name() { return "ambient-music"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setAmbientMusicMode(on); }
+    }
+
+    /** Headlight (headlamp) level / height (setting HAL, clamped 1..11). SDK-only. */
+    public static final class HeadlightLevelCommand extends VehicleCommand {
+        public final int level;
+        public HeadlightLevelCommand(int level) { this.level = level; }
+        public String name() { return "headlight-level"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setHeadlightLevel(level); }
     }
 
     public static final class AdasSpeedLimitWarningCommand extends VehicleCommand {
@@ -623,6 +766,136 @@ public final class VehicleCommandRouter {
         public boolean executeViaSdk(BydDataCollector c) { return c.setChildPresenceDetection(value); }
     }
 
+    // ── Expanded ADAS matrix (all SDK-only, on adasDevice via BydDataCollector) ──
+    // Warning/info toggles are low-risk; the auto-brake / lane-keep ones are SAFETY
+    // controls (disabling reduces protection) and are labelled as such at the action
+    // layer. AEB is exposed ENABLE-ONLY (its action never sends a disable).
+
+    public static final class AdasBlindSpotCommand extends VehicleCommand {
+        public final boolean enabled;
+        public AdasBlindSpotCommand(boolean on) { this.enabled = on; }
+        public String name() { return "adas-bsd"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setBlindSpotDetection(enabled); }
+    }
+
+    public static final class AdasTrafficSignCommand extends VehicleCommand {
+        public final boolean enabled;
+        public AdasTrafficSignCommand(boolean on) { this.enabled = on; }
+        public String name() { return "adas-tsr"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setTrafficSignRecognition(enabled); }
+    }
+
+    public static final class AdasRearCrossTrafficCommand extends VehicleCommand {
+        public final boolean enabled;
+        public AdasRearCrossTrafficCommand(boolean on) { this.enabled = on; }
+        public String name() { return "adas-rcta"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setRearCrossTrafficAlert(enabled); }
+    }
+
+    public static final class AdasFrontCrossTrafficCommand extends VehicleCommand {
+        public final boolean enabled;
+        public AdasFrontCrossTrafficCommand(boolean on) { this.enabled = on; }
+        public String name() { return "adas-fcta"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setFrontCrossTrafficAlert(enabled); }
+    }
+
+    public static final class AdasTrafficLightAttentionCommand extends VehicleCommand {
+        public final boolean enabled;
+        public AdasTrafficLightAttentionCommand(boolean on) { this.enabled = on; }
+        public String name() { return "adas-tla"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setTrafficLightAttention(enabled); }
+    }
+
+    public static final class AdasOpenDoorWarningCommand extends VehicleCommand {
+        public final boolean enabled;
+        public AdasOpenDoorWarningCommand(boolean on) { this.enabled = on; }
+        public String name() { return "adas-dow"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setOpenDoorWarning(enabled); }
+    }
+
+    public static final class AdasRearCollisionWarningCommand extends VehicleCommand {
+        public final boolean enabled;
+        public AdasRearCollisionWarningCommand(boolean on) { this.enabled = on; }
+        public String name() { return "adas-rcw"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setRearCollisionWarning(enabled); }
+    }
+
+    public static final class AdasSpeedLimitControlCommand extends VehicleCommand {
+        public final boolean enabled;
+        public AdasSpeedLimitControlCommand(boolean on) { this.enabled = on; }
+        public String name() { return "adas-islc"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setSpeedLimitControl(enabled); }
+    }
+
+    /** Emergency/urgent lane keeping — SAFETY (autonomous steering intervention). */
+    public static final class AdasEmergencyLaneKeepCommand extends VehicleCommand {
+        public final boolean enabled;
+        public AdasEmergencyLaneKeepCommand(boolean on) { this.enabled = on; }
+        public String name() { return "adas-elka"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setEmergencyLaneKeeping(enabled); }
+    }
+
+    /** Rear cross-traffic BRAKE — SAFETY (autonomous braking). */
+    public static final class AdasRearCrossBrakeCommand extends VehicleCommand {
+        public final boolean enabled;
+        public AdasRearCrossBrakeCommand(boolean on) { this.enabled = on; }
+        public String name() { return "adas-rctb"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setRearCrossTrafficBraking(enabled); }
+    }
+
+    /** Front cross-traffic BRAKE — SAFETY (autonomous braking). */
+    public static final class AdasFrontCrossBrakeCommand extends VehicleCommand {
+        public final boolean enabled;
+        public AdasFrontCrossBrakeCommand(boolean on) { this.enabled = on; }
+        public String name() { return "adas-fctb"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setFrontCrossTrafficBraking(enabled); }
+    }
+
+    /**
+     * Forward Collision Warning sensitivity LEVEL (multi-mode, not on/off): app-level
+     * 0=Off/1=Low/2=Med/3=High. SAFETY — lowering delays collision warnings.
+     */
+    public static final class AdasFcwLevelCommand extends VehicleCommand {
+        public final int level;
+        public AdasFcwLevelCommand(int level) { this.level = level; }
+        public String name() { return "adas-fcw"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setFcwLevel(level); }
+    }
+
+    /** Automatic Emergency Braking — SAFETY-CRITICAL, ENABLE-ONLY at the action layer. */
+    public static final class AdasEmergencyBrakingCommand extends VehicleCommand {
+        public final boolean enabled;
+        public AdasEmergencyBrakingCommand(boolean on) { this.enabled = on; }
+        public String name() { return "adas-aeb"; }
+        public Capability sdkCapability() { return Capability.REQUIRED; }
+        public RoutePreference defaultPreference() { return RoutePreference.SDK_ONLY; }
+        public boolean executeViaSdk(BydDataCollector c) { return c.setEmergencyBraking(enabled); }
+    }
+
     /**
      * Smart-charging schedule — BYD cloud /control/smartCharge/saveOrUpdate.
      * Wire-compatible with pyBYD's trigger_save_charging_schedule.
@@ -649,9 +922,10 @@ public final class VehicleCommandRouter {
     }
 
     /**
-     * BEV charge cap — BYDAutoChargingDevice.setChargeStopCapacityState (50..100%).
-     * Collector probes the framework on first write and reports false if the
-     * value didn't stick (the documented Seal HAL behavior).
+     * BEV charge cap. Collector writes the SOC-target (setSOCTarget +
+     * setSocSaveSwitch) first — the path that actually applies on these trims,
+     * clamped to [15/25 .. 70] — and falls back to the legacy
+     * setChargeStopCapacityState (50..100%, probed for no-op) when absent.
      */
     public static final class ChargeCapPercentCommand extends VehicleCommand {
         public final int percent;
@@ -662,7 +936,7 @@ public final class VehicleCommandRouter {
         public boolean executeViaSdk(BydDataCollector c) { return c.setChargeCapPercent(percent); }
     }
 
-    /** BEV charge cap on/off — BYDAutoChargingDevice.setChargeStopSwitchState. */
+    /** BEV charge cap on/off — setSocSaveSwitch, falling back to setChargeStopSwitchState. */
     public static final class ChargeCapToggleCommand extends VehicleCommand {
         public final boolean enabled;
         public ChargeCapToggleCommand(boolean on) { this.enabled = on; }

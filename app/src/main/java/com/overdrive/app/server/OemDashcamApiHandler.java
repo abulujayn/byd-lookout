@@ -377,6 +377,19 @@ public class OemDashcamApiHandler {
             } catch (Throwable ignored) {}
         }
 
+        // GATE (G5): "Vehicle ON only" mode — the parked (surveillance) axis must be
+        // fully suppressed so no OEM dvr_*.mp4 is written and no OEM pipeline is kept
+        // warm after the vehicle powers off. Gated HERE inside the resolver (not at the
+        // ACC-OFF call site) on purpose: applyTriggerLifecycleFromUcm() is ALSO re-run
+        // every ~30s by startSelfHealTicker() independent of any ACC edge, so a call-site
+        // gate would be bypassed by the ticker and keep the pipeline warm. survSuppressed
+        // only feeds the !accOn (parked) clauses below, so forcing it true leaves the
+        // ACC-ON recording axis (recordingDesired for rec=continuous&&accOn, keepWarmRec)
+        // fully intact. Fail-open: false → normal parked behaviour.
+        if (com.overdrive.app.config.UnifiedConfigManager.isVehicleOnOnlyMode()) {
+            survSuppressed = true;
+        }
+
         // The two axes are independent and ACC-gated symmetrically:
         //   recordingMode  = drive-time intent  (ACC ON  phase only)
         //   surveillanceMode = parked-time intent (ACC OFF phase only)
@@ -728,6 +741,17 @@ public class OemDashcamApiHandler {
             if (req.has("fps")) {
                 int f = req.optInt("fps", -1);
                 if (f >= 10 && f <= 60) delta.put("fps", f);
+            }
+            // Parked-idle encode throttle knobs (separate clause — the drive/
+            // continuous fps floor above is untouched). idleFps is the effective
+            // encode rate while parked-idle keep-warm (camera HAL stays >=15);
+            // idleThrottleWhenParked is the master gate (default off).
+            if (req.has("idleFps")) {
+                int f = req.optInt("idleFps", -1);
+                if (f >= 1 && f <= 15) delta.put("idleFps", f);
+            }
+            if (req.has("idleThrottleWhenParked")) {
+                delta.put("idleThrottleWhenParked", req.optBoolean("idleThrottleWhenParked", false));
             }
 
             // Surveillance integration toggle. Web posts {"surveillance":

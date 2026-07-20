@@ -144,11 +144,37 @@ public class EventCondition {
             if (!getValue().isValidComparator(comparator)) return null;
 
             Object value = input.get("value");
-            if (!getValue().isValid(value)) return null;
+            // Accept a DYNAMIC reference token (${var:…} / ${signal:…}) as the value even
+            // for a typed (e.g. Int) condition — it's resolved to a live value at compare
+            // time (see AutomationCondition.resolveDynamic), so it can't be validated
+            // against the type's own constant constraints here. Bounded so a hand-edited
+            // config can't store an unbounded string. Otherwise the value must satisfy the
+            // type's normal validation (unchanged path for every existing automation).
+            if (!isAcceptableConditionValue(value)) return null;
 
             return new AutomationCondition(eventData, comparator, value);
         } catch (Exception e) {
             return null;
         }
+    }
+
+    /**
+     * Whether a stored condition value is acceptable: either a bounded DYNAMIC reference
+     * token ({@code ${…}}, resolved live at compare time) or a value that passes this
+     * condition's own type validation. Shared with the free-text subclasses
+     * ({@link VariableCondition}, {@link MqttTriggerCondition}) so a dynamic RHS is
+     * accepted uniformly. Additive: a non-token value takes the identical
+     * {@code getValue().isValid} path as before.
+     *
+     * @param value the raw value from the stored config
+     * @return true if the value may be stored on the condition
+     */
+    protected boolean isAcceptableConditionValue(Object value) {
+        if (AutomationCondition.isDynamicRef(value)) {
+            // Bound the token length so a hand-edited/imported config can't store an
+            // unbounded string as a "reference".
+            return ((String) value).length() <= 128;
+        }
+        return getValue().isValid(value);
     }
 }

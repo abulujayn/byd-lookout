@@ -11,6 +11,10 @@ import org.json.JSONObject;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Iterator;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * High-level BYD cloud API client.
@@ -30,6 +34,36 @@ public final class BydCloudClient {
     private BydCloudTransport transport;
     private BydCloudSession session;
     private boolean commandsVerified = false;
+
+    /**
+     * Single-thread executor used to run best-effort, diagnostic-only cloud
+     * confirmation polls off the request path so they never consume the
+     * caller's cloud timeout budget. Lazily created; daemon (non-blocking).
+     */
+    private volatile ExecutorService confirmExecutor;
+
+    private synchronized ExecutorService confirmExecutor() {
+        if (confirmExecutor == null) {
+            // Build the ThreadPoolExecutor directly (NOT Executors.newSingleThreadExecutor,
+            // which wraps the pool in a FinalizableDelegatedExecutorService that can't be
+            // downcast to ThreadPoolExecutor — so setKeepAliveTime/allowCoreThreadTimeOut
+            // would be unreachable). corePoolSize=1, allowCoreThreadTimeOut so the sole
+            // worker self-terminates after 30s idle: a discarded client (reconnect /
+            // stale-creds rebuild after a schedule save ran a confirm poll) then leaks no
+            // lingering thread. Thread is a daemon regardless, so it never blocks exit.
+            ThreadPoolExecutor tpe = new ThreadPoolExecutor(
+                    1, 1, 30L, TimeUnit.SECONDS,
+                    new LinkedBlockingQueue<Runnable>(),
+                    r -> {
+                        Thread t = new Thread(r, "byd-cloud-confirm");
+                        t.setDaemon(true);
+                        return t;
+                    });
+            tpe.allowCoreThreadTimeOut(true);
+            confirmExecutor = tpe;
+        }
+        return confirmExecutor;
+    }
 
     public BydCloudClient(BydCloudConfig config) {
         this.config = config;
@@ -557,31 +591,57 @@ public final class BydCloudClient {
             return false;
         }
 
+        // BYD returned code 0 → the write was ACCEPTED. Treat that as success:
+        // mirror it into the local cache and return true immediately. We do NOT
+        // gate the user-visible result on the changeResult poll for two reasons:
+        //   1. The poll's own terminal "success" (res==2) is documented (pyBYD) to
+        //      reflect cloud acceptance only, not the actual vehicle state — so it
+        //      was never authoritative.
+        //   2. A full 12×1s poll can exceed the router's CLOUD_TIMEOUT_MS (12s)
+        //      once the saveOrUpdate POST + session setup are included, which made
+        //      every non-instant save surface as "save failed" even though BYD
+        //      had accepted it. Returning on acceptance removes that false negative.
         String requestSerial = extractRequestSerial(response, env.contentKey);
+        SmartChargeCache.setSchedule(startChargeTime, endChargeTime, chargeWay, enabled);
         if (requestSerial == null || requestSerial.isEmpty()) {
-            logger.warn("smartCharge save: missing requestSerial — assuming immediate success");
-            SmartChargeCache.setSchedule(startChargeTime, endChargeTime, chargeWay, enabled);
+            logger.info("smartCharge save accepted (no requestSerial) — cached, treating as success");
             return true;
         }
-
-        boolean ok = pollSmartChargeResult(vin, requestSerial);
-        if (ok) {
-            SmartChargeCache.setSchedule(startChargeTime, endChargeTime, chargeWay, enabled);
-        }
-        return ok;
+        // Best-effort confirmation only — used purely for diagnostics. Run it on a
+        // background daemon thread so its sequential changeResult POSTs + sleeps can
+        // never consume the caller's cloud timeout budget (which already made
+        // non-instant saves surface as false negatives). An explicit terminal
+        // rejection is logged as a warning; it does not flip the already-accepted
+        // result and no caller waits on it.
+        final String confirmSerial = requestSerial;
+        confirmExecutor().submit(() -> {
+            try {
+                boolean confirmed = pollSmartChargeResult(vin, confirmSerial,
+                        SMART_CHARGE_CONFIRM_ATTEMPTS, SMART_CHARGE_CONFIRM_SLEEP_MS);
+                logger.info("smartCharge save accepted; changeResult confirmed=" + confirmed
+                        + " (result cached regardless)");
+            } catch (Exception e) {
+                logger.info("smartCharge save confirm poll failed (ignored): " + e.getMessage());
+            }
+        });
+        return true;
     }
+
+    /** Bounded confirmation poll after a save is already accepted (diagnostic only). */
+    private static final int SMART_CHARGE_CONFIRM_ATTEMPTS = 4;
+    private static final long SMART_CHARGE_CONFIRM_SLEEP_MS = 700L;
 
     /**
      * Poll /control/smartCharge/changeResult until res != 1 (terminal).
      * Per pyBYD: res == 2 is success; any other terminal int is failure.
      */
-    private boolean pollSmartChargeResult(String vin, String requestSerial) throws IOException {
+    private boolean pollSmartChargeResult(String vin, String requestSerial,
+                                          int attempts, long sleepMs) throws IOException {
         BydCloudSession s = ensureSession();
-        // pyBYD's _trigger_and_poll loop isn't visible, but the BYD app
-        // typically resolves changeResult within ~5–10s. 12 attempts × 1s
-        // gives a 12s ceiling — comfortably above the observed window
-        // without holding the HTTP handler too long.
-        for (int attempt = 0; attempt < 12; attempt++) {
+        // The BYD app typically resolves changeResult within ~5–10s. Callers pass
+        // a bounded attempts × sleep budget; for the save path this is kept well
+        // under the router's cloud timeout since the result is already accepted.
+        for (int attempt = 0; attempt < attempts; attempt++) {
             long nowMs = System.currentTimeMillis();
             JSONObject inner = buildInner(nowMs);
             try {
@@ -612,10 +672,11 @@ public final class BydCloudClient {
                     return success;
                 }
             }
-            try { Thread.sleep(1000L); }
+            try { Thread.sleep(sleepMs); }
             catch (InterruptedException ie) { Thread.currentThread().interrupt(); return false; }
         }
-        logger.warn("smartCharge changeResult: timed out after 12 polls (requestSerial=" + requestSerial + ")");
+        logger.warn("smartCharge changeResult: timed out after " + attempts
+                + " polls (requestSerial=" + requestSerial + ")");
         return false;
     }
 

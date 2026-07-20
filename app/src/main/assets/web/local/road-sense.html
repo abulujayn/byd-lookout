@@ -27,7 +27,7 @@
         ];
     </script>
     <script src="../shared/app-tabs.js"></script>
-    <link rel="stylesheet" href="../shared/styles.css?v=17">
+    <link rel="stylesheet" href="../shared/styles.css?v=18">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 </head>
@@ -525,7 +525,7 @@
                             </div>
                         </div>
                         <!-- Camera selection: merge both, or show a single camera. -->
-                        <div class="setting-row" style="border-bottom:none;">
+                        <div class="setting-row">
                             <div class="setting-info">
                                 <div class="setting-name" data-i18n="road_sense.bs_merge_title">Cameras shown</div>
                                 <div class="setting-desc" data-i18n="road_sense.bs_merge_desc">Merge the rear and side cameras into one view, or show just one camera. Single-camera views fill the window with that camera's full field of view; the Blend point and Blend softness sliders only apply to the merged view.</div>
@@ -534,6 +534,37 @@
                                 <button class="btn btn-secondary" id="bsMergeBoth" style="margin:0 8px 8px 0;" onclick="RoadSenseSettings.bsSetMergeMode('both')" data-i18n="road_sense.bs_merge_both">Rear + side</button>
                                 <button class="btn btn-secondary" id="bsMergeSide" style="margin:0 8px 8px 0;" onclick="RoadSenseSettings.bsSetMergeMode('side')" data-i18n="road_sense.bs_merge_side">Side only</button>
                                 <button class="btn btn-secondary" id="bsMergeRear" style="margin:0 0 8px 0;" onclick="RoadSenseSettings.bsSetMergeMode('rear')" data-i18n="road_sense.bs_merge_rear">Rear only</button>
+                            </div>
+                        </div>
+                        <!-- Card rotation. Only applies to single-camera views (the merged
+                             panorama is landscape and always upright), so this row is shown
+                             only for the "Side only" / "Rear only" modes. "Auto" orients to
+                             the direction of travel (flips 180° in reverse). -->
+                        <div class="setting-row" id="bsRotationRow" style="border-bottom:none;display:none;">
+                            <div class="setting-info">
+                                <div class="setting-name" data-i18n="road_sense.bs_rotation_title">Rotate view</div>
+                                <div class="setting-desc" data-i18n="road_sense.bs_rotation_desc">Rotate the single-camera view on screen. Useful when a side camera reads better turned upright. The window reshapes to match the rotation.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex;flex-wrap:wrap;">
+                                <button class="btn btn-secondary" id="bsRot0" style="margin:0 8px 8px 0;" onclick="RoadSenseSettings.bsSetRotation(0)" data-i18n="road_sense.bs_rotation_0">0&deg;</button>
+                                <button class="btn btn-secondary" id="bsRot90" style="margin:0 8px 8px 0;" onclick="RoadSenseSettings.bsSetRotation(90)" data-i18n="road_sense.bs_rotation_90">90&deg;</button>
+                                <button class="btn btn-secondary" id="bsRot180" style="margin:0 8px 8px 0;" onclick="RoadSenseSettings.bsSetRotation(180)" data-i18n="road_sense.bs_rotation_180">180&deg;</button>
+                                <button class="btn btn-secondary" id="bsRot270" style="margin:0 8px 8px 0;" onclick="RoadSenseSettings.bsSetRotation(270)" data-i18n="road_sense.bs_rotation_270">270&deg;</button>
+                                <button class="btn btn-secondary" id="bsRotAuto" style="margin:0 0 8px 0;" onclick="RoadSenseSettings.bsSetRotation('auto')" data-i18n="road_sense.bs_rotation_auto">Auto</button>
+                            </div>
+                        </div>
+                        <!-- Forward-orientation base for "Auto". Reverse gear flips this 180°
+                             on screen. Shown only when rotation is set to Auto. -->
+                        <div class="setting-row" id="bsAutoBaseRow" style="border-bottom:none;display:none;">
+                            <div class="setting-info">
+                                <div class="setting-name" data-i18n="road_sense.bs_auto_base_title">Forward orientation</div>
+                                <div class="setting-desc" data-i18n="road_sense.bs_auto_base_desc">The angle used while driving forward. Reverse gear flips the view 180° so it reads naturally when backing up.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex;flex-wrap:wrap;">
+                                <button class="btn btn-secondary" id="bsBase0" style="margin:0 8px 8px 0;" onclick="RoadSenseSettings.bsSetRotationBase(0)" data-i18n="road_sense.bs_rotation_0">0&deg;</button>
+                                <button class="btn btn-secondary" id="bsBase90" style="margin:0 8px 8px 0;" onclick="RoadSenseSettings.bsSetRotationBase(90)" data-i18n="road_sense.bs_rotation_90">90&deg;</button>
+                                <button class="btn btn-secondary" id="bsBase180" style="margin:0 8px 8px 0;" onclick="RoadSenseSettings.bsSetRotationBase(180)" data-i18n="road_sense.bs_rotation_180">180&deg;</button>
+                                <button class="btn btn-secondary" id="bsBase270" style="margin:0 0 8px 0;" onclick="RoadSenseSettings.bsSetRotationBase(270)" data-i18n="road_sense.bs_rotation_270">270&deg;</button>
                             </div>
                         </div>
                     </div>
@@ -697,7 +728,7 @@
     <script src="../shared/auth.js"></script>
     <script src="../shared/core.js"></script>
     <script src="../shared/update-flow.js"></script>
-    <script src="../shared/road-sense.js?v=5"></script>
+    <script src="../shared/road-sense.js?v=7"></script>
     <script>
         function toggleSidebar() {
             document.getElementById('sidebar').classList.toggle('open');

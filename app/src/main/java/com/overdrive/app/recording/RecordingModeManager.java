@@ -113,6 +113,10 @@ public class RecordingModeManager {
         // wants it.
         pipeline.setKeepAlivePredicate(() -> {
             if (bsKeepWarmActive()) return true;
+            // Camera-view (show-camera overlay) is an independent keep-warm reason, same as
+            // blind-spot: while it is active the camera/rails stay up regardless of recording
+            // mode or gear so the overlay actually renders frames.
+            if (camViewKeepWarmActive()) return true;
             if (!modeActive) return false;
             Mode m = currentMode;
             return m == Mode.CONTINUOUS || m == Mode.DRIVE_MODE || m == Mode.PROXIMITY_GUARD;
@@ -2453,6 +2457,24 @@ public class RecordingModeManager {
     }
 
     /**
+     * Camera-view keep-warm: the head-unit/cluster "show camera view" overlay
+     * (StreamingApiHandler /api/camview) renders the stitched pano onto the same native
+     * SurfaceControl lane the blind-spot view uses. It is an INDEPENDENT camera consumer —
+     * exactly like {@link #bsKeepWarmActive()} — so it must hold the camera warm and be a
+     * recognised rung in {@link #desiredCameraState()}. Without this, cam-view was invisible
+     * to the single-authority camera ladder: the overlay chrome (the ✕ close button) opened
+     * but no frames were produced, because no rung kept the pano rail delivering at a usable
+     * fps (idle rung sits at ~1fps and the keep-alive predicate would tear the camera down
+     * when nothing else wanted it). Gated on ACC-on, mirroring BS. */
+    private boolean camViewKeepWarmActive() {
+        try {
+            return accIsOn && pipeline.isCamViewActive();
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
      * Public entry point invoked when the pano pipeline was started OUTSIDE the
      * recording-mode lifecycle — specifically the blind-spot cold-start path
      * (StreamingApiHandler.ensurePanoStartedNonBlocking → pano.start()). That
@@ -2464,6 +2486,18 @@ public class RecordingModeManager {
      * pipeline isn't running.
      */
     public void onPipelineStartedExternally() {
+        reconcileCameraProfile();
+    }
+
+    /**
+     * Pushed by the surveillance engine when motion activity begins (first
+     * motion) or ends (recording stops) so the parked-idle throttle can ramp
+     * the camera fps between idle and full promptly, rather than waiting for the
+     * 30s resync tick. reconcileCameraProfile self-serializes on reconcileLock;
+     * a no-op when the throttle is off (desiredCameraState returns the same
+     * intent). Cheap and idempotent — safe to call on every motion edge.
+     */
+    public void onSurveillanceActivityChanged() {
         reconcileCameraProfile();
     }
 
@@ -2596,12 +2630,26 @@ public class RecordingModeManager {
                     || currentMode == Mode.DRIVE_MODE
                     || currentMode == Mode.PROXIMITY_GUARD);
         if (recordingModeOwnsCamera() || pipelineIsRecording() || activationInFlight) {
-            boolean proximity = (currentMode == Mode.PROXIMITY_GUARD);
+            // PROXIMITY_GUARD claims fps ownership ONLY when its controller is
+            // genuinely running (isActive() == not IDLE). Two independent config
+            // keys can disagree: recording.mode can be PROXIMITY_GUARD while
+            // proximityGuard.enabled is false — in which case the controller never
+            // start()s, stays IDLE, and desiredCameraFps() returns 0. Without the
+            // isActive() guard, a parked ACC-off SENTRY unit with mode=PROXIMITY_GUARD
+            // would enter this branch, get proxFps=0 → configuredRecordingFps()
+            // (full 15fps), and RETURN — shadowing the surveillance idle-throttle
+            // below (surveillanceIdleFps) that would otherwise drop the HAL to the
+            // low idle rate. The old comment "PROXIMITY_GUARD never runs parked" was
+            // the false assumption behind this: a stale/disabled proximity mode DOES
+            // sit here parked. Gating on isActive() lets that case fall through to
+            // the idle throttle while a truly-running proximity controller still
+            // owns the fps as before.
+            boolean proximity = (currentMode == Mode.PROXIMITY_GUARD)
+                    && proximityController != null
+                    && proximityController.isActive();
             // activeConfiguredFps() picks the surveillance fps while the pipeline
             // sits in ACC-off SENTRY (pipelineIsRecording() counts surveillance as
-            // an owner), else the ACC-on recording fps. The proximity branch below
-            // is ACC-on only (PROXIMITY_GUARD never runs parked), so it keeps using
-            // configuredRecordingFps() directly — surveillance never reaches it.
+            // an owner), else the ACC-on recording fps.
             int fps = Math.max(activeConfiguredFps(), streamFps);
             if (proximity) {
                 // PROXIMITY detection is RADAR-driven, not camera-driven. While
@@ -2636,6 +2684,41 @@ public class RecordingModeManager {
                                 + (bsDemand > 0 ? "+BS" : "") + (streamFps > 0 ? "+stream" : "")
                                 + ", controller owns stride/bitrate)");
             }
+            // Parked-idle surveillance throttle (default-OFF opt-in): while ARMED
+            // surveillance sits idle (no active motion, not CONTINUOUS mode) drop
+            // the shared camera HAL to the low idle fps to cut capture-rail +
+            // compose/encode power. The recorder lane stays ON at stride 1 so the
+            // pre-record ring keeps filling; detection parity is preserved because
+            // reconcileCameraProfileLocked() co-sets the AI-lane wall-clock readback
+            // interval so the motion cadence is held at today's rate regardless of
+            // this HAL fps. On first-motion the engine pushes a reconcile
+            // (onSurveillanceActivityChanged) → hasActiveSurveillanceMotion() flips
+            // true → this branch is skipped → HAL ramps back to the full fps below.
+            // streamFps floor is preserved so an open live-view is never starved.
+            if (!proximity
+                    && UnifiedConfigManager.isSurveillanceIdleThrottle()
+                    && pipeline.isSurveillanceMode()
+                    && !pipeline.isContinuousSurveillance()
+                    && !pipeline.hasActiveSurveillanceMotion()) {
+                // Self-enforcing parity floor: the wall-clock readback gate can only
+                // DROP frames the HAL delivers, never manufacture them — so if the
+                // idle HAL fps were below the motion cadence (survFps/aiReadbackModulo,
+                // e.g. 15/3 = 5 Hz), motion detection would silently undersample vs
+                // today. Clamp the idle HAL floor to that cadence so a user's
+                // aggressive surveillanceIdleFps saves a little less power but NEVER
+                // regresses detection. At the default 5/15 this floor is exactly 5,
+                // matching the configured idle fps (no change).
+                final int aiReadbackModulo = 3;  // == AiLaneGl.DEFAULT_READBACK_MODULO
+                int motionCadenceFloor = (int) Math.ceil(configuredSurveillanceFps() / (double) aiReadbackModulo);
+                int idleFps = Math.max(
+                        Math.max(UnifiedConfigManager.getSurveillanceIdleFps(), motionCadenceFloor),
+                        streamFps);
+                // Only actually throttle if idle fps is below the full rate;
+                // otherwise fall through so we don't log a misleading "idle".
+                if (idleFps < fps) {
+                    return new CameraIntent(true, idleFps, true, "recording:surveillance-idle");
+                }
+            }
             // Continuous-style: own stride/bitrate (stride 1 + full bitrate).
             return new CameraIntent(true, fps, true, "recording:continuous-style");
         }
@@ -2646,6 +2729,15 @@ public class RecordingModeManager {
                     : UnifiedConfigManager.getBlindSpotIdleFps();
             return new CameraIntent(false, Math.max(bsFps, streamFps), false,
                     "blind-spot keep-warm (view " + (bsViewShown() ? "SHOWN" : "hidden") + ")");
+        }
+        // Rung 2b: camera-view overlay (show-camera) is the consumer. Renders the pano onto
+        // the native SurfaceControl lane exactly like a shown blind-spot view, so it needs a
+        // real fps (BS active rate) — NOT the ~1fps idle rung, which is why the overlay
+        // opened (✕ chrome) but showed no image. Recorder lane OFF (nothing records; the
+        // frames go straight to the SurfaceControl layer).
+        if (camViewKeepWarmActive()) {
+            int camFps = UnifiedConfigManager.getBlindSpotActiveFps();
+            return new CameraIntent(false, Math.max(camFps, streamFps), false, "camera-view overlay");
         }
         // Rung 3: live-view stream is the only consumer.
         if (streamFps > 0) {
@@ -2680,6 +2772,37 @@ public class RecordingModeManager {
             int prevFps = pipeline.getCameraTargetFps();
             pipeline.setRecorderLaneEnabled(want.laneEnabled);
             pipeline.setCameraTargetFps(want.fps);
+            // Parked-idle throttle: pin the AI motion-readback cadence to today's
+            // rate (survFps/3 Hz → period 3000/survFps ms) via a wall-clock gate,
+            // so the frame-counted native motion pipeline sees IDENTICAL cadence
+            // whether the HAL is at the idle fps or the full fps — and across the
+            // async ramp between them (no undersample transient). Applied for all
+            // surveillance states (idle AND active) when the throttle is on;
+            // cleared to 0 (legacy frame-count modulo) otherwise, keeping the OFF
+            // path byte-identical. Excludes CONTINUOUS (no AI lane).
+            if (UnifiedConfigManager.isSurveillanceIdleThrottle()
+                    && pipeline.isSurveillanceMode()
+                    && !pipeline.isContinuousSurveillance()) {
+                int survFps = configuredSurveillanceFps();
+                // Today's motion rate is survFps / AiLaneGl's readback modulo (3);
+                // the target inter-sample period is its inverse in ms. The 3 must
+                // stay in sync with AiLaneGl.DEFAULT_READBACK_MODULO (kept private
+                // there; inlined here to avoid a cross-package import for one int).
+                final int aiReadbackModulo = 3;
+                // Apply ~20% jitter tolerance: at idle the HAL delivers frames at
+                // ~the same period as the target (e.g. 200ms @5fps vs 200ms
+                // target), so a strict >= would drop a frame that arrives a hair
+                // early and halve the effective rate on that beat. Undershooting
+                // the gate by 20% lets near-period frames through — the cadence
+                // is then paced by the HAL delivery (5 Hz idle) as intended, and
+                // at full fps the gate still yields ~5 Hz (200ms/66ms ≈ every 3rd).
+                long targetMs = (survFps > 0)
+                        ? Math.round(1000.0 * aiReadbackModulo / survFps * 0.8)
+                        : 0L;
+                pipeline.setAiReadbackMinIntervalMs(targetMs);
+            } else {
+                pipeline.setAiReadbackMinIntervalMs(0L);
+            }
             if (want.ownStrideBitrate) {
                 pipeline.setRecorderFrameStride(1);
                 // activeConfiguredBitrate() = surveillance tier while parked in

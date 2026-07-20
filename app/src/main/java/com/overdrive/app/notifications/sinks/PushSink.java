@@ -95,15 +95,29 @@ public final class PushSink implements NotificationBus.Sink {
                 : new NotificationEvent(event.category, event.severity, event.title, event.body,
                         event.tag, fallbackClickUrl, event.data);
 
+        // User-initiated diagnostics ("Send test") bypass all per-device
+        // filtering — the point is to verify push reaches THIS device at all,
+        // so gating it on the very mute/floor/quiet-hours prefs under test would
+        // make the button look broken (e.g. a fresh device where the test's
+        // category is muted-by-default, or a raised severity floor). Always
+        // paired with a target id (below) so the bypass can only ever affect the
+        // one device that asked — never fans an unfiltered push to other phones.
+        final boolean bypassPrefs = event.isPreferencesBypassed();
+        // When set, deliver ONLY to this subscription (the requester's device).
+        final String targetId = event.getPushTargetId();
+
         long now = System.currentTimeMillis();
         ExecutorService exec = null; // lazy
         for (PushSubscription sub : all) {
-            if (sub.isMuted(event.category)) continue;
-            if (event.severity.ordinal() < sub.minSeverity.ordinal()) continue;
-            if (sub.inQuietHours(now)
-                    && event.severity != NotificationEvent.Severity.CRITICAL
-                    && !categoryBypassesQuiet) {
-                continue;
+            if (targetId != null && !targetId.equals(sub.id)) continue;
+            if (!bypassPrefs) {
+                if (sub.isMuted(event.category)) continue;
+                if (event.severity.ordinal() < sub.minSeverity.ordinal()) continue;
+                if (sub.inQuietHours(now)
+                        && event.severity != NotificationEvent.Severity.CRITICAL
+                        && !categoryBypassesQuiet) {
+                    continue;
+                }
             }
             if (exec == null) exec = executor();
             final PushSubscription target = sub;

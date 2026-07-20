@@ -714,6 +714,20 @@ public class CameraDaemon {
             log("Keymap a11y watchdog start failed: " + t.getMessage());
         }
 
+        // Data-usage sampler. Arms ONLY if the feature is enabled in config
+        // (opt-in, default off), so a disabled feature reads no /proc/net stats
+        // and schedules no wakeups — zero overhead when off. resolveAppUid lets it
+        // attribute the app-UID (10xxx) traffic alongside the UID-2000 daemons +
+        // tunnels. startIfEnabled re-checks on every config-change edge below.
+        try {
+            com.overdrive.app.monitor.DataUsageMonitor dum =
+                    com.overdrive.app.monitor.DataUsageMonitor.getInstance();
+            if (sharedAppContext != null) dum.resolveAppUid(sharedAppContext);
+            dum.startIfEnabled();
+        } catch (Throwable t) {
+            log("DataUsageMonitor start failed: " + t.getMessage());
+        }
+
         // Touch the OEM-dashcam cleaner singleton so its constructor runs
         // and (if enabled in saved config) auto-starts the periodic monitor.
         // Without this the cleaner is lazy-initialized on first UI/API hit,
@@ -1223,6 +1237,16 @@ public class CameraDaemon {
         com.overdrive.app.server.StreamingApiHandler.startBsSelfHealTicker();
         com.overdrive.app.server.StreamingApiHandler.resolveBlindSpotLifecycle();
 
+        // Recover gracefully if the app cast onto the cluster (or the persisted ACC-on
+        // auto-start app) is uninstalled: tear down a live cast + mirror in the SF-safe
+        // order and clear a stale auto-start package. Runtime-registered (manifest
+        // PACKAGE_REMOVED receivers don't fire on API 26+); no-op if no app context.
+        try {
+            com.overdrive.app.receiver.CastPackageWatcher.register(getAppContext());
+        } catch (Throwable t) {
+            log("CastPackageWatcher register failed: " + t.getMessage());
+        }
+
         log("Daemon ready on TCP:" + TCP_PORT + " HTTP:" + HTTP_PORT);
 
         // Periodic memory monitor — mirrors AccSentryDaemon.logMemoryStatus().
@@ -1716,7 +1740,16 @@ public class CameraDaemon {
     public static HttpServer getHttpServer() {
         return httpServer;
     }
-    
+
+    /**
+     * The live MQTT connection manager, or null if MQTT init failed / hasn't run. Exposed
+     * for the automation "Publish MQTT" action to fan a message out to every active
+     * connection. Null-check at the call site — a car with no MQTT setup returns null.
+     */
+    public static com.overdrive.app.mqtt.MqttConnectionManager getMqttConnectionManager() {
+        return mqttConnectionManager;
+    }
+
     /**
      * Periodic memory monitor. Daemon-process equivalent of
      * {@code AccSentryDaemon.logMemoryStatus()}: emits ActivityManager
@@ -1881,7 +1914,48 @@ public class CameraDaemon {
     private static final String DISABLE_SENTINEL = "/data/local/tmp/camera_daemon.disabled";
     
     public static void shutdown() {
-        log("Shutdown requested — writing disable sentinel and cleaning up...");
+        shutdownInternal(true);
+    }
+
+    /**
+     * "Vehicle ON only" parked terminate. Called at the END of the ACC-off branch (after
+     * all mandatory finalize + the G2 gate) when operatingMode==onOnly. Performs the SAME
+     * ordered graceful teardown as {@link #shutdown()} (close H2 / trips / RecordingsIndex,
+     * stop servers, kill own watchdog, kill self) so nothing is corrupted — but plants the
+     * PARKED-SHUTDOWN marker instead of the user `.disabled` sentinel. The marker keeps the
+     * whole stack down for the parked window (watchdogs + app health-check honor it) yet is
+     * NOT the user-stop signal and is cleared automatically on the ACC-on edge. The
+     * AccSentryDaemon-launched reaper is the process-wide backstop; this is CameraDaemon
+     * doing its OWN clean shutdown because it owns the durable H2 state a SIGKILL could
+     * corrupt.
+     */
+    public static void parkTerminate() {
+        log("onOnly parkTerminate — planting parked-shutdown marker + graceful shutdown");
+        writeParkedShutdownMarker();
+        shutdownInternal(false);
+    }
+
+    /**
+     * Write the parked-shutdown marker (epoch millis, chmod 666) so the watchdog scripts
+     * and the app-side health-check keep the stack down while parked. Distinct from the
+     * `.disabled` sentinel (see ParkedShutdown / writeDisableSentinel).
+     */
+    private static void writeParkedShutdownMarker() {
+        String path = com.overdrive.app.ui.model.ParkedShutdown.MARKER_PATH;
+        try {
+            java.io.FileWriter fw = new java.io.FileWriter(path);
+            fw.write(String.valueOf(System.currentTimeMillis()));
+            fw.close();
+            try { new java.io.File(path).setReadable(true, false);
+                  new java.io.File(path).setWritable(true, false); } catch (Exception ignored) {}
+            log("Parked-shutdown marker written: " + path);
+        } catch (Exception e) {
+            log("WARNING: Failed to write parked-shutdown marker: " + e.getMessage());
+        }
+    }
+
+    private static void shutdownInternal(boolean writeDisableSentinel) {
+        log("Shutdown requested (writeDisableSentinel=" + writeDisableSentinel + ") — cleaning up...");
         running.set(false);
 
         // Stop AVC keep-alive immediately (force, daemon teardown)
@@ -1902,8 +1976,14 @@ public class CameraDaemon {
 
         // Write disable sentinel FIRST — this tells the shell watchdog wrapper
         // to NOT restart the daemon after we exit. Without this, the wrapper
-        // sees exit code 0 and respawns us immediately.
-        writeDisableSentinel();
+        // sees exit code 0 and respawns us immediately. In the onOnly parkTerminate
+        // path the PARKED marker (written by writeParkedShutdownMarker before this)
+        // already stops the watchdog, and we must NOT write the user `.disabled`
+        // sentinel (wrong semantics + it would be wiped by clearStaleSentinels), so
+        // the caller passes writeDisableSentinel=false.
+        if (writeDisableSentinel) {
+            writeDisableSentinel();
+        }
         
         // Cancel PermissionGranter to stop orphaned pm grant processes
         PermissionGranter.cancel();
@@ -1939,6 +2019,7 @@ public class CameraDaemon {
         // Stop the charging fast-sampler BEFORE closing the H2 DB it writes to.
         try { if (chargingSessionManager != null) chargingSessionManager.shutdown(); } catch (Exception ignored) {}
         try { com.overdrive.app.monitor.SocHistoryDatabase.getInstance().stop(); } catch (Exception ignored) {}
+        try { com.overdrive.app.monitor.DataUsageMonitor.getInstance().shutdown(); } catch (Exception ignored) {}
         try { com.overdrive.app.notifications.NotificationStore.getInstance().stop(); } catch (Exception ignored) {}
         
         // Stop services. Both the trip analytics + recordings index inits
@@ -2168,6 +2249,26 @@ public class CameraDaemon {
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 log("Shutdown hook: cleaning up all resources...");
 
+                // -1. URGENT: Finalize active trip FIRST — before anything that
+                //     might block (GPU pipeline stop, cluster projection restore).
+                //     Trip finalization does a local H2 insert + gzip flush (<50ms)
+                //     and MUST complete before the VM dies. Without this, a
+                //     System.exit(0) from the GL watchdog loses the in-progress
+                //     trip's DB row entirely (the .jsonl.gz survives on disk but
+                //     has no row — only recoverable via POST /api/trips/recover
+                //     or the new auto-recovery at next startup).
+                //     This is defense-in-depth: if TripAnalyticsManager isn't
+                //     initialized yet (async init on parallel thread), skip
+                //     gracefully — the trip hadn't started anyway.
+                try {
+                    if (tripAnalyticsManager != null && tripAnalyticsManager.isInitialized()) {
+                        tripAnalyticsManager.shutdown();
+                        log("Shutdown hook: trip analytics finalized (early)");
+                    }
+                } catch (Exception e) {
+                    log("Shutdown hook: early trip finalize error: " + e.getMessage());
+                }
+
                 // 0. Tear down any in-progress ScreenDeterrent FIRST. The
                 //    deterrent owns SurfaceControl + UCM gate flags; if we
                 //    skip this, AccSentryDaemon (separate process) reads
@@ -2200,6 +2301,25 @@ public class CameraDaemon {
                 //     (wedged thread / latch timeout), the flags stay SET on purpose so
                 //     the next respawn's clearStaleGateAtBoot() re-fires 18→0. No-op
                 //     when on head-unit / already closed (instance never constructed).
+                // 0.5a Tear down the head-unit cluster MIRROR FIRST — BEFORE the OEM
+                //     projection close below. Its own SurfaceFlinger virtual display reads
+                //     the fission SOURCE layerStack; destroying that source (projection
+                //     close) while our VD is still bound faults SurfaceFlinger natively.
+                //     shutdownIfActive is SYNCHRONOUS (unbind+destroy the VD, bounded await)
+                //     so it completes before the projection close. No-op if never started.
+                try {
+                    com.overdrive.app.receiver.CastPackageWatcher.unregister(getAppContext());
+                } catch (Exception e) {
+                    log("Shutdown hook: CastPackageWatcher unregister error: " + e.getMessage());
+                }
+                try {
+                    com.overdrive.app.surveillance.ClusterMirrorController.shutdownIfActive();
+                    log("Shutdown hook: cluster mirror torn down");
+                } catch (Exception e) {
+                    log("Shutdown hook: cluster mirror cleanup error: " + e.getMessage());
+                }
+
+                // 0.5b THEN close the OEM cluster projection + restore gauges.
                 try {
                     com.overdrive.app.surveillance.ClusterProjectionController.shutdownIfActive();
                     log("Shutdown hook: cluster projection restore issued");
@@ -3302,6 +3422,19 @@ public class CameraDaemon {
         // knows lock state is READABLE on this trim and must NOT override a
         // genuine unlock.
         sawValidLockReading = true;
+        // Publish the central-lock state to the AUTOMATION engine — this is the single
+        // funnel every definite lock reading (SDK OTA poll + cloud) converges through, so
+        // a "when the car locks/unlocks" trigger and a "only while locked" condition both
+        // get every real edge here. Done BEFORE the arm-gate early-returns below so a lock
+        // automation fires regardless of whether surveillance was already armed. Level-
+        // triggered + deduped in Automations.update, so a repeated same-state read no-ops.
+        try {
+            com.overdrive.app.automation.Automations.update(
+                    com.overdrive.app.automation.condition.BydEvent.LOCK,
+                    locked ? "locked" : "unlocked");
+        } catch (Throwable t) {
+            log("lock automation publish failed: " + t.getMessage());
+        }
         if (locked) {
             if (doorLockListenerArmed) return;
             log("LOCK GATE [" + source + "]: LOCKED — arming surveillance");
@@ -3836,8 +3969,30 @@ public class CameraDaemon {
                     storage.startSdCardWatchdog();
                 }
                 
-                // Check if user has enabled surveillance in config
+                // Check if user has enabled surveillance in config.
+                // GATE (G2): also short-circuit when the "Vehicle ON only" operating
+                // mode is selected — no post-vehicle-OFF surveillance may arm. This gate
+                // sits AFTER all the mandatory ACC-OFF bookkeeping above (recordAccEvent,
+                // trip finalize, recording finalize, telemetry/gear stop, SD force-mount +
+                // watchdog, OEM lifecycle recalc) so those still run in onOnly — only the
+                // sentry pipeline / arm dispatch / door-lock gate / schedule checker below
+                // is skipped. Defense-in-depth with AccSentryDaemon's G1 gate (separate
+                // process, reached by a different IPC path). Fail-open: false → arm as usual.
                 boolean userEnabled = com.overdrive.app.config.UnifiedConfigManager.isSurveillanceEnabled();
+                boolean onOnly = com.overdrive.app.config.UnifiedConfigManager.isVehicleOnOnlyMode();
+                if (onOnly) {
+                    // "Vehicle ON only": all mandatory ACC-off bookkeeping above has now
+                    // completed (recordAccEvent, trip finalize, recording segment finalize,
+                    // telemetry/gear stop, SD force-mount). There is no post-OFF work in this
+                    // mode — instead of just skipping surveillance, TERMINATE this daemon
+                    // gracefully (parkTerminate closes H2/servers, plants the parked marker,
+                    // kills own watchdog + self). AccSentryDaemon's reaper terminates the rest
+                    // of the stack and enforces the marker. Nothing recovers until the ACC-on
+                    // edge clears the marker. This call does not return (kills the process).
+                    log("onOnly mode — ACC-off finalize complete; parkTerminate (full shutdown, sleep while parked)");
+                    parkTerminate();
+                    return;  // unreachable (process killed), kept for clarity
+                }
                 if (!userEnabled) {
                     log("Surveillance NOT enabled in config — skipping auto-start on ACC OFF");
                     return;  // SD card is mounted + watchdog running
@@ -4273,6 +4428,26 @@ public class CameraDaemon {
         }
 
         if (tripAnalyticsManager != null) tripAnalyticsManager.onGearChanged(gear);
+
+        // Feed the AUTOMATION engine too, off the FAST GearMonitor path (200ms, runs
+        // regardless of ACC). Previously the automation GEAR event was published ONLY
+        // from BydEvent.bydEvent — i.e. the telemetry snapshot build(), whose gearMode
+        // is collected ONLY while ACC is on (collectGearbox is ACC-gated) and at the
+        // slow parked cadence. That made "when gear → P" (and any gear rule) unreliable:
+        // P is the terminal PARKED gear, reached right as ACC turns off, so the snapshot
+        // path often never saw the transition. Publishing here — the same value format
+        // BydEvent uses (gearToString lowercased: p/r/n/d/m/s, matching the trigger's
+        // option ids) — gives gear automations the same fast, ACC-independent delivery
+        // recording/trips already get. Automations.update is level-triggered + dedups,
+        // so this is idempotent with the snapshot path when both fire. Best-effort:
+        // never let an automation publish failure disrupt gear notification.
+        try {
+            com.overdrive.app.automation.Automations.update(
+                    com.overdrive.app.automation.condition.BydEvent.GEAR,
+                    com.overdrive.app.monitor.GearMonitor.gearToString(gear).toLowerCase());
+        } catch (Throwable t) {
+            if (!redundant) log("gear automation publish failed: " + t.getMessage());
+        }
     }
     
     /**

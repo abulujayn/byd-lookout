@@ -318,6 +318,16 @@ public final class NotificationApiHandler {
             } else {
                 sub = new PushSubscription(id, endpoint, p256dh, auth, label,
                         System.currentTimeMillis());
+                // Brand-new device: seed the mute set from the registry so
+                // categories marked defaultEnabled:false (surveillance notice,
+                // legacy motion, door open/close) start OFF, as the registry
+                // has always claimed. Before this, a fresh subscription's empty
+                // mute set meant every default-off category delivered until the
+                // user muted it by hand — the "notice notifications arrive even
+                // though the tier is off" report. Only new devices are seeded;
+                // the re-subscribe branch above preserves explicit user choices.
+                sub.mutedCategories.addAll(
+                        PushSubscription.defaultMutedCategories(registry));
             }
             subStore.put(sub);
 
@@ -429,11 +439,16 @@ public final class NotificationApiHandler {
     private static boolean sendTest(String body, OutputStream out) throws Exception {
         String category = "surveillance.motion";
         String severityStr = "info";
+        String targetId = null;
         if (body != null && !body.isEmpty()) {
             try {
                 JSONObject j = new JSONObject(body);
                 category = j.optString("category", category);
                 severityStr = j.optString("severity", severityStr);
+                // isNull guards the JSON literal null → org.json's optString
+                // would otherwise hand back the string "null", which matches no
+                // subscription and would deliver the test to nobody.
+                targetId = j.isNull("id") ? null : emptyToNull(j.optString("id", null));
             } catch (Exception ignored) {}
         }
         NotificationEvent.Severity severity;
@@ -450,6 +465,18 @@ public final class NotificationApiHandler {
                 "test-" + System.currentTimeMillis(),
                 null,
                 new JSONObject().put("test", true));
+        // A user-initiated test must reach the REQUESTING device regardless of
+        // its muted categories / severity floor / quiet hours — otherwise the
+        // button looks broken on a fresh device (default category muted by the
+        // new registry-seed) or when the user raised the floor. The bypass is
+        // applied ONLY when we can scope it to the requester's own id, so it can
+        // never fan an unfiltered push to OTHER phones (e.g. waking a sleeping
+        // device in its quiet hours). An older PWA that sends no id keeps the
+        // previous behaviour exactly: broadcast to all, each device's prefs
+        // still honoured.
+        if (targetId != null) {
+            event.targetSubscription(targetId).bypassPreferences();
+        }
         NotificationBus.get().publish(event);
         HttpResponse.sendJsonSuccess(out);
         return true;

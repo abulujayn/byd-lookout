@@ -37,7 +37,6 @@ public class KeepAliveAccessibilityService extends AccessibilityService {
     @Override
     public void onServiceConnected() {
         super.onServiceConnected();
-        instance = this;
 
         Log.i(TAG, "AccessibilityService connected — process is now protected");
 
@@ -66,7 +65,20 @@ public class KeepAliveAccessibilityService extends AccessibilityService {
         info.notificationTimeout = 100;
         info.flags |= AccessibilityServiceInfo.FLAG_REQUEST_FILTER_KEY_EVENTS
                 | AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS;
-        setServiceInfo(info);
+        // Wrap the info-set and publish instance=this ONLY on success. Previously
+        // `instance` was set before setServiceInfo(): if the info-set threw, the key
+        // filter wasn't wired yet in-proc isRunning() reported a false "healthy" while
+        // keys were dead. Setting instance only after the wiring is actually in force
+        // makes the liveness signal honest (a partial connect reads as not-live, so the
+        // watchdog rebinds rather than trusting a half-connected service).
+        try {
+            setServiceInfo(info);
+        } catch (Throwable t) {
+            Log.e(TAG, "setServiceInfo failed — key filtering NOT wired; leaving instance null "
+                    + "so the watchdog rebinds: " + t.getMessage());
+            return;
+        }
+        instance = this;
 
         // Prime the key-mapping snapshot off-thread so the first hardware key
         // press already has its bindings (onKeyEvent never reads disk itself).
@@ -74,6 +86,15 @@ public class KeepAliveAccessibilityService extends AccessibilityService {
             KeyMapDispatcher.INSTANCE.warmUp();
         } catch (Throwable t) {
             Log.w(TAG, "KeyMapDispatcher warmUp failed: " + t.getMessage());
+        }
+
+        // Start the phone call-state monitor in this (app) process — the daemon can't
+        // observe telephony. Idempotent + self-gates on the READ_PHONE_STATE permission,
+        // so this cleanly no-ops when the permission isn't granted.
+        try {
+            CallStateMonitor.start(getApplicationContext());
+        } catch (Throwable t) {
+            Log.w(TAG, "CallStateMonitor start failed: " + t.getMessage());
         }
 
         // No foreground notification needed — DaemonKeepaliveService already has one.

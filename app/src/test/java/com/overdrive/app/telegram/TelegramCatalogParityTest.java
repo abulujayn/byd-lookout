@@ -120,15 +120,11 @@ public class TelegramCatalogParityTest {
 
     private static void flatten(JSONObject object, String prefix, Map<String, Object> output)
             throws JSONException {
-        // keys() (Iterator), not keySet(): android.jar's org.json.JSONObject stub
-        // (present on the unit-test compile classpath alongside the real
-        // org.json:json test dependency) only declares keys() — keySet() is an
-        // upstream json.org addition Android's fork never picked up, so using it
-        // here made ./gradlew test fail to compile regardless of which
-        // JSONObject the classpath happened to resolve to.
-        java.util.Iterator<String> keys = object.keys();
-        while (keys.hasNext()) {
-            String name = keys.next();
+        // JSONObject.keySet() only exists in the standalone org.json artifact;
+        // Android's bootclasspath org.json (which wins on the unit-test compile
+        // classpath) exposes keys() instead, so iterate that for portability.
+        for (java.util.Iterator<String> it = object.keys(); it.hasNext(); ) {
+            String name = it.next();
             String path = prefix.isEmpty() ? name : prefix + "." + name;
             Object value = object.get(name);
             if (value instanceof JSONObject) {

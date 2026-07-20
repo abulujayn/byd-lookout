@@ -126,6 +126,20 @@ public final class AiLaneGl {
     private static final int DEFAULT_READBACK_MODULO = 3;
     private volatile int readbackModulo = DEFAULT_READBACK_MODULO;
 
+    // Wall-clock readback pacing (parked-idle throttle). When > 0 it SUPERSEDES
+    // the frame-count modulo for PASS A (motion readback): PASS A fires only if
+    // at least this many ms elapsed since the last readback, so the motion
+    // cadence is pinned to a fixed rate INDEPENDENT of the HAL delivery rate.
+    // This is what preserves detection parity when the HAL fps is dropped for
+    // idle power: at survFps=15 the target is 200ms (= today's 15/3 = 5 Hz), and
+    // holding 200ms means motion still runs at 5 Hz whether the HAL delivers 5
+    // or 15 fps — no ramp-transition undersample. 0 = disabled ⇒ pure modulo
+    // (byte-identical to today). Single-writer (control thread) / single-reader
+    // (GL handler thread); volatile is sufficient.
+    private volatile long readbackMinIntervalMs = 0L;
+    // GL-handler-thread confined: last time PASS A actually ran.
+    private long lastReadbackWallMs = 0L;
+
     /**
      * @param parentCore the encoder/main {@link EGLCore}. We create our
      *                   context from {@link EGLCore#createShared(EGLCore)}
@@ -155,6 +169,17 @@ public final class AiLaneGl {
     /** Adjust the GL-thread frame cadence at which we trigger AI readback. */
     public void setReadbackModulo(int modulo) {
         this.readbackModulo = Math.max(1, modulo);
+    }
+
+    /**
+     * Pin the motion-readback (PASS A) cadence to a fixed wall-clock interval,
+     * independent of the HAL delivery rate. Pass the target inter-sample period
+     * in ms (e.g. 200 for 5 Hz); pass 0 to disable and fall back to the
+     * frame-count modulo. Used by the parked-idle throttle so dropping the HAL
+     * fps does not change how often motion detection actually runs.
+     */
+    public void setReadbackMinIntervalMs(long ms) {
+        this.readbackMinIntervalMs = Math.max(0L, ms);
     }
 
     /**
@@ -261,8 +286,27 @@ public final class AiLaneGl {
         synchronized (camLock) {
             if (!cameraState.isCameraTextureValid()) return;
 
-            // Frame-modulo gate. Cheap; same semantics as before.
-            if (readbackModulo > 1 && (seq % readbackModulo) != 0) {
+            // Readback pacing gate. Two mutually-exclusive modes:
+            //  (1) wall-clock (readbackMinIntervalMs > 0, parked-idle throttle):
+            //      PASS A fires only every N ms, pinning motion cadence to a
+            //      fixed rate regardless of the HAL delivery rate. This is what
+            //      keeps detection identical when the HAL fps is dropped/ramped.
+            //  (2) frame-count modulo (legacy default): AI cadence scales with
+            //      HAL rate. Byte-identical to pre-throttle behaviour.
+            final long minIntervalMs = readbackMinIntervalMs;
+            final boolean skipReadback;
+            if (minIntervalMs > 0L) {
+                long nowMs = android.os.SystemClock.uptimeMillis();
+                // First tick after enabling (lastReadbackWallMs==0) always runs.
+                skipReadback = lastReadbackWallMs != 0L
+                        && (nowMs - lastReadbackWallMs) < minIntervalMs;
+                if (!skipReadback) {
+                    lastReadbackWallMs = nowMs;
+                }
+            } else {
+                skipReadback = readbackModulo > 1 && (seq % readbackModulo) != 0;
+            }
+            if (skipReadback) {
                 // Even though we skip readback, still let the foveated mailbox
                 // drain — the foveated cropper has its own 150ms throttle and
                 // is what carries event-correlated work.

@@ -33,7 +33,7 @@
         ];
     </script>
     <script src="../shared/app-tabs.js"></script>
-    <link rel="stylesheet" href="../shared/styles.css?v=17">
+    <link rel="stylesheet" href="../shared/styles.css?v=18">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
     <style>
@@ -102,6 +102,30 @@
                         <span class="status-badge inactive" id="survStatusBadge" data-i18n="status.off">OFF</span>
                     </div>
                     <div class="card-body">
+                        <!-- Operating mode: ON+OFF (keep working while parked) vs ON only (sleep after car off) -->
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-name" data-i18n="surveillance.operating_mode">Operating Mode</div>
+                                <div class="setting-desc" data-i18n="surveillance.operating_mode_desc">Whether Overdrive keeps running after the car is turned off. On Only fully shuts Overdrive down when you park; while-driving features (dashcam, trips, charging) are unaffected.</div>
+                            </div>
+                            <div class="setting-control">
+                                <div class="btn-group" id="operatingModeBtns">
+                                    <button class="btn-toggle" data-value="onAndOff" onclick="SurvSettings.setOperatingMode('onAndOff')" data-i18n="surveillance.operating_mode_on_off">On &amp; Off</button>
+                                    <button class="btn-toggle" data-value="onOnly" onclick="SurvSettings.setOperatingMode('onOnly')" data-i18n="surveillance.operating_mode_on_only">On Only</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="setting-hint" id="operatingModeHint" data-i18n="surveillance.operating_mode_hint_on_off">Overdrive keeps watching while parked — surveillance and background monitoring stay active. Uses a little battery overnight.</div>
+
+                        <!-- Shown only in "On Only" mode: the settings below govern
+                             post-vehicle-OFF surveillance, which is disabled when the head
+                             unit is set to sleep after the car is off. Visibility driven by
+                             SurvSettings.applyOperatingModeUI(). -->
+                        <div class="info-box-note" id="postOffDisabledNotice" style="display:none;margin-top:12px;">
+                            <svg class="info-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+                            <div class="info-note" data-i18n="surveillance.operating_mode_postoff_disabled_note">These settings control surveillance after the car is off. In On Only mode Overdrive shuts down when parked, so they don't apply. Switch to On &amp; Off to use them.</div>
+                        </div>
+
                         <div class="setting-row">
                             <div class="setting-info">
                                 <div class="setting-name" data-i18n="surveillance.enable">Enable Surveillance</div>
@@ -171,6 +195,27 @@
                         <div class="info-box-warning" id="survUsbPowerStorageNotice" style="display:none;margin-top:12px;">
                             <svg class="info-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
                             <div class="info-note" data-i18n="surveillance.usb_off_storage_notice">USB power is off, so the SD card is unpowered while parked. Surveillance records to Internal storage until USB power is turned back on.</div>
+                        </div>
+
+                        <!-- Low-power-while-parked toggle. Default OFF (byte-identical
+                             to today until opted in). When ON, drops the camera to a low
+                             idle frame rate while parked+armed with nothing happening, and
+                             ramps back to full rate the instant motion is detected — so
+                             detection is unchanged, only the idle capture rate drops.
+                             Drives BOTH the surveillance camera (camera.surveillanceIdleThrottle)
+                             and the OEM dashcam (oemDashcam.idleThrottleWhenParked) together.
+                             Persisted immediately (no Apply) via toggleLowPowerMode(). -->
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-name" data-i18n="surveillance.low_power_mode">Low-power mode while parked</div>
+                                <div class="setting-desc" data-i18n="surveillance.low_power_mode_desc">Saves battery while parked by running the camera at a low frame rate (about 5 fps) when nothing is happening, then instantly ramping back to full quality the moment motion is detected. Motion and object detection are unaffected — the same events are caught — but the recorded footage during quiet periods is choppier to save power. Takes effect while the car is parked and surveillance is armed.</div>
+                            </div>
+                            <div class="setting-control">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="survLowPowerMode" onchange="SurvSettings.toggleLowPowerMode()">
+                                    <span class="toggle-slider"></span>
+                                </label>
+                            </div>
                         </div>
 
                         <!-- HV-battery SoC cutoff for parked surveillance. At/below this %,
@@ -1391,7 +1436,7 @@
     <script src="../shared/pwa-init.js?v=index1"></script>
     <script src="../shared/core.js"></script>
     <script src="../shared/update-flow.js"></script>
-    <script src="../shared/surveillance.js?v=nightdiscard1"></script>
+    <script src="../shared/surveillance.js?v=dirtysave1"></script>
     <script src="../shared/safe-locations.js"></script>
     <script src="../shared/roi-schedule.js"></script>
     <script>

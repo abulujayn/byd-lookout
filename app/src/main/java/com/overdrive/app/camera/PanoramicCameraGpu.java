@@ -503,6 +503,14 @@ public class PanoramicCameraGpu {
 
     private int targetFps = 15;  // Desired frame rate for camera
 
+    // Cached AI-lane readback pacing (parked-idle throttle). The AiLaneGl is
+    // created/torn down lazily on the GL thread and is null while disarmed, so a
+    // control-thread setter caches the value here and re-applies it at bring-up
+    // (ensureAiLaneStarted) — mirroring how sentry.setCameraTargetFps is
+    // re-asserted. Default 0 = disabled ⇒ AiLaneGl uses its compiled modulo=3,
+    // byte-identical to today.
+    private volatile long aiReadbackMinIntervalMs = 0L;
+
     // Recorder draw stride. The render loop draws into the RECORDING encoder's
     // input surface (PASS 1A) only on every Nth camera frame; stream (PASS 1B)
     // and blind-spot (PASS 1C) are unaffected (separate encoders, drawn every
@@ -896,7 +904,19 @@ public class PanoramicCameraGpu {
             if (!cropperReady) {
                 logger.warn("Lazy AI-lane: FoveatedCropper init did not complete in 1.5s");
             }
+            // Publish the lane FIRST, then apply the cached idle-throttle readback
+            // pacing by RE-READING the volatile cache. Ordering matters: a
+            // control-thread setReadbackMinIntervalMs that races bring-up reads
+            // aiLaneGl and forwards to the live lane only if non-null, so once we
+            // publish here any subsequent setter reaches the lane directly; and by
+            // re-reading the cache AFTER publishing we also pick up a write that
+            // landed during the (blocking) bring-up above. If we instead applied
+            // the cache before publishing, a setter interleaving between the apply
+            // and the publish would see aiLaneGl==null, update only the cache, and
+            // leave the just-published lane on the stale value. 0 = disabled (lane
+            // keeps its modulo default).
             aiLaneGl = lane;
+            lane.setReadbackMinIntervalMs(aiReadbackMinIntervalMs);
             logger.info("AI lane started lazily (surveillance armed)");
         } catch (Throwable t) {
             logger.warn("Lazy AI-lane start failed: " + t.getMessage());
@@ -1740,7 +1760,7 @@ public class PanoramicCameraGpu {
     /**
      * Opens camera via AVMCamera reflection.
      *
-     * Strategy (mirrors DiPlus C4051a.m4446d() approach):
+     * Strategy (mirrors the reference implementation approach):
      *   1. Constructor: new AVMCamera(int) + .open() — required on this device.
      *      The static factory AVMCamera.open(int) returns null because
      *      BmmCameraInfo.isValidCamera() is empty (vehicle.config.cam_sort
@@ -3499,14 +3519,47 @@ public class PanoramicCameraGpu {
      */
     private void yieldCameraInternal() {
         logger.info("Yielding camera to native AVM app...");
-        
+
         // CRITICAL: Finalize active recording BEFORE closing camera.
+        // FIX: Same bounded-yield pattern as restartCameraAfterError — onPreYield()
+        // does muxer.stop() + FUSE rename which can wedge indefinitely on a flaky
+        // USB/SD mount. Run on a worker thread with heartbeat ticking.
         if (yieldListener != null) {
-            try {
-                yieldListener.onPreYield();
-                logger.info("Pre-yield: recording finalized");
-            } catch (Exception e) {
-                logger.warn("Pre-yield callback error: " + e.getMessage());
+            final java.util.concurrent.atomic.AtomicBoolean yieldDone =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+            final java.util.concurrent.atomic.AtomicReference<Exception> yieldError =
+                new java.util.concurrent.atomic.AtomicReference<>(null);
+            Thread yieldThread = new Thread(() -> {
+                try {
+                    yieldListener.onPreYield();
+                } catch (Exception e) {
+                    yieldError.set(e);
+                } finally {
+                    yieldDone.set(true);
+                }
+            }, "PreYield-Yield");
+            yieldThread.setDaemon(true);
+            yieldThread.start();
+
+            long yieldStart = System.currentTimeMillis();
+            long yieldTimeout = 8000;
+            while (!yieldDone.get() &&
+                   (System.currentTimeMillis() - yieldStart) < yieldTimeout) {
+                try { Thread.sleep(200); } catch (InterruptedException ignored) {}
+                lastGlThreadHeartbeat = System.currentTimeMillis();
+            }
+
+            if (yieldDone.get()) {
+                Exception err = yieldError.get();
+                if (err != null) {
+                    logger.warn("Pre-yield callback error: " + err.getMessage());
+                } else {
+                    logger.info("Pre-yield: recording finalized");
+                }
+            } else {
+                logger.error("Pre-yield: onPreYield TIMED OUT after " + yieldTimeout
+                    + "ms — FUSE mount wedged, proceeding with yield "
+                    + "(recording may be truncated)");
             }
         }
         
@@ -4003,12 +4056,56 @@ public class PanoramicCameraGpu {
 
         try {
             // CRITICAL: Finalize active recording BEFORE closing camera.
+            // FIX: onPreYield() calls muxer.stop() + FUSE rename which can block
+            // 10+ seconds on a wedged USB mount. Running it inline on the GL thread
+            // starves the heartbeat and the watchdog kills the daemon — the root
+            // cause of mid-drive trip loss. Run it on a bounded worker thread and
+            // keep the heartbeat alive while we wait. The recording MUST finalize
+            // before camera close (otherwise moov atom is never written), so we
+            // wait up to 8 seconds — well within the 10s warmup watchdog timeout.
             if (yieldListener != null) {
-                try {
-                    yieldListener.onPreYield();
-                    logger.info("Pre-restart: recording finalized");
-                } catch (Exception e) {
-                    logger.warn("Pre-restart callback error: " + e.getMessage());
+                final java.util.concurrent.atomic.AtomicBoolean yieldDone =
+                    new java.util.concurrent.atomic.AtomicBoolean(false);
+                final java.util.concurrent.atomic.AtomicReference<Exception> yieldError =
+                    new java.util.concurrent.atomic.AtomicReference<>(null);
+                Thread yieldThread = new Thread(() -> {
+                    try {
+                        yieldListener.onPreYield();
+                    } catch (Exception e) {
+                        yieldError.set(e);
+                    } finally {
+                        yieldDone.set(true);
+                    }
+                }, "PreYield-Finalize");
+                yieldThread.setDaemon(true);
+                yieldThread.start();
+
+                // Keep heartbeat alive while waiting for FUSE I/O to complete
+                long yieldStart = System.currentTimeMillis();
+                long yieldTimeout = 8000; // 8s — within the 10s warmup watchdog budget
+                while (!yieldDone.get() &&
+                       (System.currentTimeMillis() - yieldStart) < yieldTimeout) {
+                    try { Thread.sleep(200); } catch (InterruptedException ignored) {}
+                    lastGlThreadHeartbeat = System.currentTimeMillis();
+                }
+
+                if (yieldDone.get()) {
+                    Exception err = yieldError.get();
+                    if (err != null) {
+                        logger.warn("Pre-restart callback error: " + err.getMessage());
+                    } else {
+                        logger.info("Pre-restart: recording finalized");
+                    }
+                } else {
+                    // Timed out — the FUSE mount is wedged. The recording file will be
+                    // left as .tmp (recovered on next startup by orphan tmp sweep).
+                    // Proceeding with camera close is safe: the muxer is already writing
+                    // to a file descriptor (not the camera), so closing the camera won't
+                    // corrupt whatever did get flushed. The next onFileSaved will still
+                    // fire once the mount unblocks (or the file stays .tmp and is reaped).
+                    logger.error("Pre-restart: onPreYield TIMED OUT after " + yieldTimeout
+                        + "ms — FUSE mount wedged, proceeding with camera restart "
+                        + "(recording may be truncated)");
                 }
             }
             
@@ -4017,15 +4114,19 @@ public class PanoramicCameraGpu {
                 clearStreamingComponents();
                 logger.info("Pre-restart: streaming components detached");
             }
-            
+
+            // Update heartbeat before drainer join (which can block 2s each)
+            lastGlThreadHeartbeat = System.currentTimeMillis();
+
             // FORTIFY FIX: Stop encoder drainer threads BEFORE closing camera.
             if (encoder != null) {
                 encoder.stopDrainerForCameraClose();
             }
+            lastGlThreadHeartbeat = System.currentTimeMillis();
             if (streamEncoder != null) {
                 streamEncoder.stopDrainerForCameraClose();
             }
-            
+
             // Close with proper cleanup + notify service
             if (cameraObj != null) {
                 closeCameraForPath(cameraObj);
@@ -4038,7 +4139,7 @@ public class PanoramicCameraGpu {
 
             // Brief pause to let HAL settle
             Thread.sleep(500);
-            
+
             // Update heartbeat so watchdog doesn't kill us during restart
             lastGlThreadHeartbeat = System.currentTimeMillis();
             
@@ -4132,7 +4233,10 @@ public class PanoramicCameraGpu {
                 cameraCoordinator.setupEventCallback(cameraObj);
             }
             
-            // Resume recording/surveillance after camera restart
+            // Resume recording/surveillance after camera restart.
+            // Update heartbeat first: onPostReacquire → startRecording →
+            // ensureStorageReady can block up to 4s on a flaky mount.
+            lastGlThreadHeartbeat = System.currentTimeMillis();
             if (yieldListener != null) {
                 try {
                     yieldListener.onPostReacquire();
@@ -4141,9 +4245,9 @@ public class PanoramicCameraGpu {
                     logger.warn("Post-restart callback error: " + e.getMessage());
                 }
             }
-            
+
             logger.info("Camera restarted successfully after error");
-            
+
         } catch (Exception e) {
             logger.error("Camera restart failed: " + e.getMessage());
             // If restart fails, the watchdog will eventually kill the process
@@ -4692,6 +4796,23 @@ public class PanoramicCameraGpu {
      */
     public int getTargetFps() {
         return targetFps;
+    }
+
+    /**
+     * Pin the AI-lane motion-readback cadence to a fixed wall-clock interval
+     * (ms), independent of the HAL delivery rate; 0 restores the default
+     * frame-count modulo. Caches the value and forwards to the live AiLaneGl if
+     * present (re-applied at the next lazy bring-up otherwise). Used by the
+     * parked-idle throttle so dropping/ramping the HAL fps does NOT change how
+     * often motion detection runs.
+     */
+    public void setAiReadbackMinIntervalMs(long ms) {
+        long clamped = Math.max(0L, ms);
+        this.aiReadbackMinIntervalMs = clamped;
+        AiLaneGl lane = aiLaneGl;
+        if (lane != null) {
+            lane.setReadbackMinIntervalMs(clamped);
+        }
     }
 
     /**

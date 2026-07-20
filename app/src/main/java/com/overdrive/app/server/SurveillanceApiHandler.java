@@ -456,6 +456,15 @@ public class SurveillanceApiHandler {
         // lock state unreadable) | "power" (arm immediately on ACC-off, disarm on
         // ACC-on). Branched in CameraDaemon's ACC-off dispatch. Default lock.
         config.put("armMode", survConfig.optString("armMode", "lock"));
+        // Operating mode: "onAndOff" (full behaviour incl. post-OFF keep-awake +
+        // surveillance) | "onOnly" (let the head unit sleep after the car is off;
+        // only-while-ON features run). Default onAndOff. Read by every post-OFF gate.
+        config.put("operatingMode", survConfig.optString("operatingMode", "onAndOff"));
+        // True once the user has EXPLICITLY set the operating mode (onboarding or
+        // Settings). Lets the onboarding daemon-ready flush distinguish an untouched
+        // default from a deliberate choice, so a stale pending value never clobbers a
+        // later Settings change. Default false = never set by a user yet.
+        config.put("operatingModeSetByUser", survConfig.optBoolean("operatingModeSetByUser", false));
         // Keep ONLY the USB/data rail powered after ACC OFF (cameras unaffected).
         // Default true; read by AccSentryDaemon on the next ACC-OFF cycle.
         config.put("keepUsbPowerOnAccOff", survConfig.optBoolean("keepUsbPowerOnAccOff", true));
@@ -821,6 +830,47 @@ public class SurveillanceApiHandler {
                 sentryConfig.setMinObjectSize(minObjSize);
                 configChanged = true;
             }
+            // ALL-CLASSES-OFF GUARD. A save whose RESULTING state disables every
+            // object class silently degrades the whole trigger stack: aiEnabled
+            // flips false, the YOLO interpreter is unloaded, and the no-AI rate
+            // limit (NO_AI_MIN_GAP_MS) suppresses+resets motion sequences for 30s
+            // after every recording — real loiter events die without triggering
+            // (observed on-car 2026-07-19: a stale/mis-tapped Detection-tab Apply
+            // carried all four flags false alongside a preset change; detection
+            // was blind for 14 minutes until the next save). Compute the WOULD-BE
+            // state (request value where present, else current persisted value)
+            // and reject unless the caller explicitly confirms — the UI shows a
+            // confirmation dialog and retries with confirmDisableAllClasses:true.
+            boolean anyDetectFlagInRequest = configJson.has("detectPerson")
+                    || configJson.has("detectCar")
+                    || configJson.has("detectBike")
+                    || configJson.has("detectAnimal");
+            if (anyDetectFlagInRequest) {
+                boolean wouldPerson = configJson.has("detectPerson")
+                        ? configJson.optBoolean("detectPerson", true) : sentryConfig.isDetectPerson();
+                boolean wouldCar = configJson.has("detectCar")
+                        ? configJson.optBoolean("detectCar", true) : sentryConfig.isDetectCar();
+                boolean wouldBike = configJson.has("detectBike")
+                        ? configJson.optBoolean("detectBike", true) : sentryConfig.isDetectBike();
+                boolean wouldAnimal = configJson.has("detectAnimal")
+                        ? configJson.optBoolean("detectAnimal", false) : sentryConfig.isDetectAnimal();
+                boolean anyCurrentlyOn = sentryConfig.isDetectPerson() || sentryConfig.isDetectCar()
+                        || sentryConfig.isDetectBike() || sentryConfig.isDetectAnimal();
+                if (!wouldPerson && !wouldCar && !wouldBike && !wouldAnimal
+                        && anyCurrentlyOn
+                        && !configJson.optBoolean("confirmDisableAllClasses", false)) {
+                    CameraDaemon.log("WARN: config save would disable ALL object classes "
+                            + "(AI gate + YOLO off) — rejected without confirmDisableAllClasses");
+                    // Machine-readable code so the UI can key its confirm dialog
+                    // off it instead of matching localized error text.
+                    JSONObject rejection = new JSONObject();
+                    rejection.put("success", false);
+                    rejection.put("code", "all_classes_off");
+                    rejection.put("error", Messages.get("errors.surveillance_all_classes_off"));
+                    HttpResponse.sendJson(out, rejection.toString());
+                    return;
+                }
+            }
             if (configJson.has("detectPerson")) {
                 sentryConfig.setDetectPerson(configJson.optBoolean("detectPerson", true));
                 configChanged = true;
@@ -878,6 +928,56 @@ public class SurveillanceApiHandler {
                 } else {
                     CameraDaemon.log("Rejected armMode: " + armMode);
                 }
+            }
+
+            // Operating mode: onAndOff (default full behaviour) | onOnly (disable all
+            // post-vehicle-OFF work so the head unit can sleep). Pure persist — takes
+            // effect on the next ACC cycle when each daemon re-reads the mtime-gated
+            // config, matching armMode/keepUsbPowerOnAccOff (no mid-session restart).
+            // Invalid values are rejected; isVehicleOnOnlyMode() fails open to onAndOff.
+            if (configJson.has("operatingMode")) {
+                String opMode = configJson.optString("operatingMode", "onAndOff");
+                if ("onAndOff".equals(opMode) || "onOnly".equals(opMode)) {
+                    // Persist the mode AND a "user explicitly set this" marker in one
+                    // atomic write. The marker lets the onboarding daemon-ready flush
+                    // (OnboardingHost.flushPendingOperatingMode) tell an untouched default
+                    // ("onAndOff", never chosen) apart from a deliberate later Settings
+                    // change — without it, a stale pending onboarding choice could re-POST
+                    // over a change the user just made here. Every operatingMode write
+                    // (onboarding OR Settings) is a genuine user choice, so set it true.
+                    java.util.Map<String, Object> opModeVals = new java.util.HashMap<>();
+                    opModeVals.put("operatingMode", opMode);
+                    opModeVals.put("operatingModeSetByUser", true);
+                    boolean persisted = com.overdrive.app.config.UnifiedConfigManager.updateValues(
+                            "surveillance", opModeVals);
+                    if (!persisted) {
+                        CameraDaemon.log("Failed to persist operatingMode=" + opMode);
+                        HttpResponse.sendJsonError(out, "Failed to save operating mode");
+                        return;
+                    }
+                    CameraDaemon.log("Operating mode set to: " + opMode);
+                    configChanged = true;
+                } else {
+                    CameraDaemon.log("Rejected operatingMode: " + opMode);
+                }
+            } else if (configJson.has("operatingModeSetByUser")) {
+                // Standalone write of the "user explicitly chose a mode" marker WITHOUT an
+                // operatingMode change. Used by onboarding reset/replay to clear the flag
+                // (operatingModeSetByUser=false) so a wiped session no longer inherits a
+                // prior session's choice marker — otherwise the daemon-ready flush would
+                // wrongly drop a legitimate NEW replay pick as if it were stale. Only the
+                // false-write is meaningful here (true is set atomically with the mode
+                // above); accept the boolean as sent.
+                boolean setByUser = configJson.optBoolean("operatingModeSetByUser", false);
+                boolean persisted = com.overdrive.app.config.UnifiedConfigManager.updateValues(
+                        "surveillance", java.util.Collections.singletonMap("operatingModeSetByUser", setByUser));
+                if (!persisted) {
+                    CameraDaemon.log("Failed to persist operatingModeSetByUser=" + setByUser);
+                    HttpResponse.sendJsonError(out, "Failed to save operating mode marker");
+                    return;
+                }
+                CameraDaemon.log("operatingModeSetByUser set to: " + setByUser);
+                configChanged = true;
             }
 
             // SOTA: Deterrent action setting (silent / flash_lights / find_car)

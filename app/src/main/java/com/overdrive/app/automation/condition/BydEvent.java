@@ -32,6 +32,23 @@ public class BydEvent {
     public static final EventData LIGHTS_DRL = new EventData("lights", Map.of("area", "drl"));
     public static final EventData SLW = new EventData("slw");
     public static final EventData CPD = new EventData("cpd");
+    // Drive mode (normal/eco/sport/snow) on the SETTING drive-config axis, and the
+    // EV/HEV powertrain mode — both already on every telemetry snapshot (collectEnergy)
+    // and MQTT-published (op_mode / energy_mode). Published as words so a trigger can
+    // fire "when drive mode → sport" and a condition can gate "only if in eco".
+    public static final EventData DRIVE_MODE = new EventData("driveMode");
+    public static final EventData POWERTRAIN_MODE = new EventData("powertrainMode");
+    // Central-lock state (locked/unlocked), sourced from the SAME SDK read the sentry
+    // arm-gate uses — BYDAutoOtaDevice.getLFDoorLockState (the OTA device caches the LF
+    // lock signal even with the BCM asleep, ~1.5s latency), with the BYD-cloud snapshot
+    // as fallback. Published by CameraDaemon.applyLockEvent (the single funnel every lock
+    // source converges through) so a trigger can fire "when the car locks" and a
+    // condition can gate "only while locked". NOT read from the dead BYDAutoDoorLockDevice.
+    public static final EventData LOCK = new EventData("lock");
+    // Energy-recuperation / regen-braking strength (standard/high/max), read locally via
+    // BYDAutoSettingDevice.getEnergyFeedback (app-level 0/1/2) on the telemetry snapshot.
+    // A trigger fires "when regen → max"; a condition gates "only if regen is standard".
+    public static final EventData ENERGY_REGEN = new EventData("energyRegen");
     public static final EventData SEAT_HEAT_DRIVER = new EventData("seatClimate", Map.of("type", "heat", "area", "driver"));
     public static final EventData SEAT_HEAT_PASSENGER = new EventData("seatClimate", Map.of("type", "heat", "area", "passenger"));
     public static final EventData SEAT_COOL_DRIVER = new EventData("seatClimate", Map.of("type", "cool", "area", "driver"));
@@ -44,6 +61,15 @@ public class BydEvent {
     // weather by GPS) so an automation can key off "how cold is it outside" regardless
     // of power state without the cabin sensor ever leaking in.
     public static final EventData OUTSIDE_TEMPERATURE = new EventData("outsideTemp");
+    // Mean precipitation probability (%) over the next few hours, from Open-Meteo by
+    // GPS (same fetch as the weather temperature). Drives "rain likely soon" automations
+    // — distinct from the reactive autoWiper "raining now" proxy. Only published with a
+    // location fix + a successful fetch, so it never manufactures a false 0%.
+    public static final EventData RAIN_PROBABILITY = new EventData("rainProbability");
+    // Phone call state (idle/ringing/offhook), relayed from the app process (the daemon
+    // has no telephony access). Enables "mute media when a call comes in" etc. Published
+    // via Automations.publishExternalEvent from CallStateMonitor.
+    public static final EventData CALL_STATE = new EventData("callState");
     // The same "speed" event is stored twice under different units so a condition can
     // pick either without any runtime unit conversion — the km/h value is the canonical
     // BydVehicleData.speedKmh, the mph value is derived once here.
@@ -69,6 +95,13 @@ public class BydEvent {
     // Pushed once a minute by TimeEvent (not from a vehicle-data snapshot).
     public static final EventData TIME = new EventData("time");
     public static final EventData DAY = new EventData("day");
+    // Calendar + solar signals published by TimeEvent alongside TIME/DAY. dayOfMonth
+    // (1-31) and month (1-12) enable date/monthly automations; sunPhase (day/night)
+    // flips at local sunrise/sunset computed from GPS — the trigger fires on the
+    // transition, so "at sunset" = sunPhase becomes "night".
+    public static final EventData DAY_OF_MONTH = new EventData("dayOfMonth");
+    public static final EventData MONTH = new EventData("month");
+    public static final EventData SUN_PHASE = new EventData("sunPhase");
     // Pushed by NetworkEvent on a low-cadence poll (not from a vehicle-data snapshot).
     // wifiState is on/off; wifiSsid is the connected network name (or "" when off) so a
     // "bluetooth-by-name"-style condition can match a specific WiFi SSID.
@@ -87,6 +120,34 @@ public class BydEvent {
     // the existing zone list + Haversine, so the user picks locations exactly like
     // safe zones (down to a 15m radius).
     public static final EventData LOCATION_ZONE = new EventData("locationZone");
+    // Inbound MQTT: an external broker message (e.g. from Home Assistant) published to
+    // <base>/automation/<channel> becomes an automation signal keyed by channel, so a
+    // rule can trigger on "HA published X to channel Y". Built per-channel at publish
+    // time (mqttTrigger + {channel: <name>}); see Automations.publishMqttTrigger and the
+    // MqttPublisherService subscribe/messageArrived seam.
+    public static EventData mqttTrigger(String channel) {
+        return new EventData("mqttTrigger", java.util.Map.of("channel", channel));
+    }
+    // ── Surveillance / sentry events ──────────────────────────────────────
+    // Published by the surveillance engine (SurveillanceEngineGpu) — the daemon's
+    // parked-guard verdicts, so an automation can react to what the sentry sees
+    // (e.g. "when a person is detected while parked → flash lights"). These are
+    // published from the COLD per-event path (publishMotionFinal / arm / disarm),
+    // never the hot GL frame loop, and mirror LOCATION_ZONE's "daemon class calls
+    // Automations.update, no local latch" pattern. All are inherently gated by the
+    // sentry being armed (the pipeline only runs ACC-off + armed), which is the
+    // correct "while parked" semantics.
+    //
+    // surveillanceArmed: on when the sentry is armed/watching, off when disarmed —
+    // lets a rule gate on "while the car is being guarded".
+    public static final EventData SURVEILLANCE_ARMED = new EventData("surveillanceArmed");
+    // surveillanceThreat: the worst severity classified in the just-recorded event —
+    // notice / alert / critical. Fires once per event as the .mp4 finalizes.
+    public static final EventData SURVEILLANCE_THREAT = new EventData("surveillanceThreat");
+    // surveillanceObject: the headline object class seen in the event —
+    // person / vehicle / bike / animal (or "none" when motion recorded with no
+    // classified actor). Ranked person > bike > vehicle > animal.
+    public static final EventData SURVEILLANCE_OBJECT = new EventData("surveillanceObject");
     // ── Safety / ADAS events ─────────────────────────────────────────────
     // Emergency alarm (BODYWORK_EMERGENCY_ALARM). The closest signal this HAL
     // exposes to an "incident/accident" event — no true collision/airbag event
@@ -333,6 +394,32 @@ public class BydEvent {
             if (occ.length > 0) publishOccupant(OCCUPANT_DRIVER, occ[0]);
             if (occ.length > 1) publishOccupant(OCCUPANT_PASSENGER, occ[1]);
         }
+        // Drive mode on the config axis (1=normal..4=snow); only publish an in-band
+        // value so a trim without the drive-config getter (which can only see eco/sport
+        // via the energy fallback) never manufactures a spurious "normal"/"snow" edge.
+        String driveMode = driveModeToString(data.operationMode);
+        if (driveMode != null) Automations.update(DRIVE_MODE, driveMode);
+        // Powertrain EV/HEV (PHEV only). Raw SDK energy-mode int: ENERGY_MODE_EV=1,
+        // ENERGY_MODE_HEV=3 (0=STOP, NOT ev — matches the MQTT powertrain_mode mapping).
+        // Anything else (incl. STOP and the unavailable sentinel) is dropped.
+        if (data.energyMode == 1) Automations.update(POWERTRAIN_MODE, "ev");
+        else if (data.energyMode == 3) Automations.update(POWERTRAIN_MODE, "hev");
+
+        // Energy-recuperation (regen) level is published by the dedicated fast poller
+        // EnergyRegenEvent (1s, self-gated on isEventReferenced) — NOT here. Reading it on
+        // the ~5s snapshot lagged a regen change 2-4s (the reported delay); the fast poller
+        // catches it within ~1s. Kept off the snapshot so build() does no regen SDK read.
+    }
+
+    /** Map the drive-config axis to a word, or null if not an in-band reading. */
+    private static String driveModeToString(int mode) {
+        switch (mode) {
+            case 1:  return "normal";
+            case 2:  return "eco";
+            case 3:  return "sport";
+            case 4:  return "snow";
+            default: return null; // 0/-1/unset → unseeded (no spurious edge)
+        }
     }
 
     /** Publish one seat's occupancy: 1→occupied, 0→empty, else skip (unseeded). */
@@ -364,8 +451,9 @@ public class BydEvent {
      * Publish per-seat seatbelt buckled/unbuckled. The collector
      * ({@link com.overdrive.app.byd.BydDataCollector#collectSafetyBelt}) already
      * sanitizes to a clean {@code 0 = unbuckled}, {@code 1 = buckled}, or UNAVAILABLE,
-     * reading the instrument-device feature-ids the OEM firmware uses. seatbeltStatus is
-     * a 2-slot array: index 0 = driver, index 1 = front passenger.
+     * reading the instrument device's dedicated {@code getSafetyBeltStatus(int)} getter
+     * (the same live path the telemetry-recording overlay uses). seatbeltStatus is a
+     * 2-slot array: index 0 = driver, index 1 = front passenger.
      */
     private static void updateSeatbelts(BydVehicleData data) {
         int[] belts = data.seatbeltStatus;
@@ -535,6 +623,14 @@ public class BydEvent {
         double ambient = ambientTemperature(data);
         if (!Double.isNaN(ambient)) {
             Automations.update(OUTSIDE_TEMPERATURE, (int) Math.round(ambient));
+        }
+
+        // Rain-likely probability rides the SAME Open-Meteo fetch ambientTemperature()
+        // just kicked (getCachedPrecipProbability reads that shared cache). Publish only
+        // a real reading (>=0); -1 means not-yet-fetched/stale → leave unseeded.
+        int rain = com.overdrive.app.weather.WeatherTemperature.getCachedPrecipProbability();
+        if (rain >= 0) {
+            Automations.update(RAIN_PROBABILITY, rain);
         }
 
         // Smart TEMPERATURE: cabin (car on) preferred, else fall back to the ambient value.

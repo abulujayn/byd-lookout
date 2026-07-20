@@ -22,9 +22,21 @@ public class Automation {
     public static final String LOGIC_AND = "AND";
     public static final String LOGIC_OR = "OR";
 
+    // Max nesting depth for condition groups when parsing. The UI only builds 2 levels
+    // (top operator + one group layer), but the engine is recursive; this bounds a
+    // hand-edited / imported config so it can't build an unbounded tree that blows the
+    // stack on evaluate(). Generous enough to never limit a real rule.
+    // (public so the web editor can read it from the schema and never drift.)
+    public static final int MAX_GROUP_DEPTH = 8;
+
     private final LinkedHashSet<EventData> triggers;
     private final List<AutomationCondition> conditions;
     private final String conditionLogic;
+    // Optional nested condition groups, combined with the flat `conditions` as PEER
+    // terms under `conditionLogic`. Empty for every automation created before this
+    // feature (and for simple ones), in which case conditionsMet reduces to the exact
+    // flat evaluation below — so old automations are byte-identical and unaffected.
+    private final List<ConditionGroup> conditionGroups;
     private final int delay;
     private final List<AutomationAction> actions;
     // Optional "else" branch: actions run when the automation is triggered but its
@@ -36,6 +48,17 @@ public class Automation {
     // (stateChanged) and the queue worker thread (triggerActions) with no shared lock, so a plain field
     // could let those threads observe a stale enabled/disabled state and fire a just-disabled automation.
     private volatile boolean disabled;
+
+    // Optional user-given name (a label shown in the list + the automation-control
+    // target picker). Empty for automations created before this feature — the UI then
+    // falls back to the generated description, so nothing regresses. Mutable (set from
+    // fromJson / an edit); not part of the constructor chain to keep it stable.
+    private volatile String name = "";
+    // Lightweight run stats surfaced in the list ("last fired", "N times"). Written on
+    // the queue worker thread when the actions actually run; volatile for cross-thread
+    // visibility to the HTTP list read. Persisted so the count survives a restart.
+    private volatile long lastTriggered = 0L; // epoch ms, 0 = never
+    private volatile long triggerCount = 0L;
 
     /**
      * Backward-compatible constructor: AND logic, no else branch. Kept so any
@@ -73,10 +96,30 @@ public class Automation {
             List<AutomationAction> actions,
             List<AutomationAction> elseActions,
             boolean disabled) {
+        this(triggers, conditions, conditionLogic, null, delay, actions, elseActions, disabled);
+    }
+
+    /**
+     * Full constructor including optional nested {@code conditionGroups}. The 7-arg
+     * constructor delegates here with no groups, so every existing caller is unchanged.
+     *
+     * @param conditionGroups nested AND/OR groups combined with {@code conditions} as
+     *                        peer terms under {@code conditionLogic} (null → none)
+     */
+    public Automation(
+            List<EventData> triggers,
+            List<AutomationCondition> conditions,
+            String conditionLogic,
+            List<ConditionGroup> conditionGroups,
+            Integer delay,
+            List<AutomationAction> actions,
+            List<AutomationAction> elseActions,
+            boolean disabled) {
         this.triggers = new LinkedHashSet<>(triggers);
         this.conditions = conditions;
         // Normalize: only "OR" (case-insensitive) enables OR; everything else is AND.
         this.conditionLogic = LOGIC_OR.equalsIgnoreCase(conditionLogic) ? LOGIC_OR : LOGIC_AND;
+        this.conditionGroups = conditionGroups != null ? conditionGroups : new ArrayList<>();
         this.delay = Objects.requireNonNullElse(delay, 0);
         this.actions = actions;
         this.elseActions = elseActions != null ? elseActions : new ArrayList<>();
@@ -167,6 +210,28 @@ public class Automation {
         return triggers.contains(trigger);
     }
 
+    /** Optional user-given name (never null; empty when unnamed). */
+    public String getName() { return name == null ? "" : name; }
+    public void setName(String n) { this.name = (n == null) ? "" : n.trim(); }
+
+    /** Epoch-ms of the last time this automation's actions ran (0 = never). */
+    public long getLastTriggered() { return lastTriggered; }
+    public long getTriggerCount() { return triggerCount; }
+    /** Restore persisted stats on load. */
+    public void setStats(long lastTriggered, long triggerCount) {
+        this.lastTriggered = lastTriggered;
+        this.triggerCount = triggerCount;
+    }
+    /**
+     * Record that this automation just fired: bump the count and stamp the time. Called
+     * from the queue worker right before the actions run. {@code nowMs} is passed in
+     * (the daemon has a real clock) so this stays testable and clock-source-agnostic.
+     */
+    public void recordTriggered(long nowMs) {
+        this.triggerCount++;
+        this.lastTriggered = nowMs;
+    }
+
     /**
      * Whether all the conditions specified in this automation are met
      *
@@ -174,13 +239,56 @@ public class Automation {
      * @return true if all conditions match the state, false otherwise
      */
     public boolean conditionsMet(Map<EventData, Value> state) {
-        // No conditions → always met (unchanged behaviour), regardless of logic.
-        // This also keeps OR from vacuously returning false on an empty list.
-        if (conditions.isEmpty()) return true;
-        if (LOGIC_OR.equals(conditionLogic)) {
-            return conditions.stream().anyMatch(condition -> condition.compare(state.get(condition.getEventData())));
+        // FAST PATH — no nested groups (every automation created before this feature,
+        // and every simple one). Behaviour is byte-identical to the original flat
+        // evaluation, so nothing regresses.
+        if (conditionGroups.isEmpty()) {
+            // No conditions → always met (unchanged), regardless of logic. Also keeps
+            // OR from vacuously returning false on an empty list.
+            if (conditions.isEmpty()) return true;
+            if (LOGIC_OR.equals(conditionLogic)) {
+                return conditions.stream().anyMatch(c -> c.compare(state.get(c.getEventData())));
+            }
+            return conditions.stream().allMatch(c -> c.compare(state.get(c.getEventData())));
         }
-        return conditions.stream().allMatch(condition -> condition.compare(state.get(condition.getEventData())));
+        // NESTED PATH — flat conditions and each group are PEER terms combined under
+        // conditionLogic. Empty flat list + present groups is fine (the flat terms just
+        // don't contribute). "No terms at all" can't happen here (groups is non-empty).
+        boolean isOr = LOGIC_OR.equals(conditionLogic);
+        boolean any = false, all = true;
+        for (AutomationCondition c : conditions) {
+            boolean r = c.compare(state.get(c.getEventData()));
+            any = any || r;
+            all = all && r;
+        }
+        for (ConditionGroup g : conditionGroups) {
+            boolean r = g.evaluate(state);
+            any = any || r;
+            all = all && r;
+        }
+        return isOr ? any : all;
+    }
+
+    /** The nested condition groups (never null; empty when unused). */
+    public List<ConditionGroup> getConditionGroups() {
+        return conditionGroups;
+    }
+
+    /**
+     * ALL conditions referenced by this automation — the flat list PLUS every condition
+     * nested in any group (recursively). Callers that walk conditions to seed variables
+     * or decide which events to observe MUST use this, not {@link #getConditions}, or a
+     * condition living only inside a group would be missed (never seeded / its event
+     * never watched). {@link #getConditions} stays flat-only so {@link #toJson} still
+     * emits just the top-level conditions.
+     */
+    public List<AutomationCondition> getAllConditions() {
+        if (conditionGroups.isEmpty()) return conditions; // fast path — no copy
+        List<AutomationCondition> all = new ArrayList<>(conditions);
+        for (ConditionGroup g : conditionGroups) {
+            g.collectConditions(all);
+        }
+        return all;
     }
 
     /**
@@ -209,20 +317,13 @@ public class Automation {
     }
 
     /**
-     * Run a list of actions in order. Shared by {@link #triggerActions()} and
-     * {@link #triggerElseActions()} so both branches get the same null/unknown-type
-     * defense-in-depth.
+     * Run a list of actions in order. Delegates to the static, re-entrant
+     * {@link Automations#runActionList} so a control-flow action (loop/if) can run its
+     * nested children through the same runner with a shared depth guard. Behaviour for
+     * a flat list is identical to before (single level, depth 1).
      */
     private void runActions(List<AutomationAction> actionList) {
-        if (actionList == null) return;
-        for (AutomationAction automationAction : actionList) {
-            // Defense-in-depth: a hand-edited config.json can still yield a null or unknown-type
-            // action element; skip it so it can never NPE the queue drainer or the /test path.
-            if (automationAction == null) continue;
-            Action action = Automations.getAction(automationAction.getType());
-            if (action == null) continue;
-            action.trigger(automationAction);
-        }
+        Automations.runActionList(actionList);
     }
 
     /**
@@ -245,6 +346,15 @@ public class Automation {
             }
             json.put("conditions", conditions);
             json.put("conditionLogic", getConditionLogic());
+            // Emit nested groups ONLY when present, so an automation without them
+            // serializes byte-identically to before this feature (no new key appears).
+            if (!conditionGroups.isEmpty()) {
+                JSONArray groupsJson = new JSONArray();
+                for (ConditionGroup g : conditionGroups) {
+                    groupsJson.put(g.toJson());
+                }
+                json.put("conditionGroups", groupsJson);
+            }
             json.put("delay", getDelay());
             JSONArray actions = new JSONArray();
             for (AutomationAction action : getActions()) {
@@ -259,6 +369,13 @@ public class Automation {
             }
             json.put("elseActions", elseActionsJson);
             json.put("disabled", isDisabled());
+            // Optional name + run stats — emitted only when set, so an automation
+            // created before this feature serializes with no new keys (byte-identical).
+            if (!getName().isEmpty()) json.put("name", getName());
+            if (triggerCount > 0) {
+                json.put("triggerCount", triggerCount);
+                json.put("lastTriggered", lastTriggered);
+            }
         } catch (Exception e) {
             // JSONObject.put only throws on null key
         }
@@ -302,6 +419,21 @@ public class Automation {
             // automations saved before this field existed load and run unchanged.
             String conditionLogic = input.optString("conditionLogic", LOGIC_AND);
 
+            // Optional nested condition groups. Absent → empty list → conditionsMet
+            // takes the identical flat path (no behaviour change for old automations).
+            // Depth-capped so a hand-edited/imported config can't build an unbounded
+            // tree; an invalid leaf inside any group rejects the whole automation
+            // (mirrors flat-condition validation above).
+            List<ConditionGroup> conditionGroups = new ArrayList<>();
+            JSONArray groupsJson = input.optJSONArray("conditionGroups");
+            if (groupsJson != null) {
+                for (int i = 0; i < groupsJson.length(); i++) {
+                    ConditionGroup g = ConditionGroup.fromJson(groupsJson.getJSONObject(i), MAX_GROUP_DEPTH);
+                    if (g == null) return null;
+                    conditionGroups.add(g);
+                }
+            }
+
             int delay = input.optInt("delay", 0);
             if (!Automations.isValidDelay(delay)) return null;
 
@@ -322,7 +454,12 @@ public class Automation {
 
             boolean disabled = input.optBoolean("disabled", false);
 
-            return new Automation(triggers, conditions, conditionLogic, delay, actions, elseActions, disabled);
+            Automation a = new Automation(triggers, conditions, conditionLogic, conditionGroups,
+                    delay, actions, elseActions, disabled);
+            // Optional name + run stats (absent on pre-feature automations → defaults).
+            a.setName(input.optString("name", ""));
+            a.setStats(input.optLong("lastTriggered", 0L), input.optLong("triggerCount", 0L));
+            return a;
         } catch (Exception e) {
             return null;
         }
@@ -338,6 +475,32 @@ public class Automation {
      * @throws org.json.JSONException if the array shape is malformed (caller catches)
      */
     private static List<AutomationAction> parseActions(JSONArray actionsJson) throws org.json.JSONException {
+        return parseActions(actionsJson, MAX_ACTION_DEPTH);
+    }
+
+    /**
+     * Public entry to the same validated action-list parser {@link #fromJson} uses, so
+     * {@link ActionGroups} validates a group's actions through the identical gate
+     * (unknown/invalid action → null → the group is rejected). Returns null (not throw)
+     * on malformed JSON.
+     */
+    public static List<AutomationAction> parseActionsPublic(JSONArray actionsJson) {
+        try {
+            return parseActions(actionsJson, MAX_ACTION_DEPTH);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Parse an actions JSON array, recursing into nested {@code childActions}/
+     * {@code elseActions} for control-flow actions (loop/if) up to {@code depthLeft}
+     * levels. A flat (non-control-flow) action never carries child keys, so an old
+     * automation takes the identical single-level path. Returns null if any element is
+     * missing/unknown-type/invalid, or if a control-flow action nests past the depth
+     * cap — so a malformed/over-deep config is rejected whole, matching the flat path.
+     */
+    private static List<AutomationAction> parseActions(JSONArray actionsJson, int depthLeft) throws org.json.JSONException {
         List<AutomationAction> actions = new ArrayList<>();
         for (int i = 0; i < actionsJson.length(); i++) {
             JSONObject actionJson = actionsJson.getJSONObject(i);
@@ -346,8 +509,34 @@ public class Automation {
             if (action == null) return null;
             AutomationAction automationAction = action.fromJson(actionJson);
             if (automationAction == null) return null;
+            // Only control-flow actions carry nested lists; everything else is flat.
+            if (action.hasChildActions()) {
+                if (depthLeft <= 0) return null; // over-deep tree → reject the automation
+                List<AutomationAction> children = new ArrayList<>();
+                JSONArray childJson = actionJson.optJSONArray("childActions");
+                if (childJson != null) {
+                    children = parseActions(childJson, depthLeft - 1);
+                    if (children == null) return null;
+                }
+                List<AutomationAction> elseChildren = new ArrayList<>();
+                JSONArray elseJson = actionJson.optJSONArray("elseActions");
+                if (elseJson != null) {
+                    elseChildren = parseActions(elseJson, depthLeft - 1);
+                    if (elseChildren == null) return null;
+                }
+                automationAction = automationAction.withChildren(children, elseChildren);
+            }
             actions.add(automationAction);
         }
         return actions;
     }
+
+    // Max nesting depth for control-flow child actions (loop/if bodies). Bounds a
+    // hand-edited/imported config so a pathological tree can't blow the stack; the UI now
+    // reads this from the schema and stops offering If/Loop at the cap, so a user can't
+    // build an unsaveable automation. Set generously (8) — deeper than any realistic rule
+    // yet bounded. The runtime cycle guard (Automations.MAX_RUN_DEPTH) sits above this so a
+    // legal max-depth tree that also expands action groups still executes without tripping.
+    // (public so the web editor reads the SAME value and the two never drift.)
+    public static final int MAX_ACTION_DEPTH = 8;
 }

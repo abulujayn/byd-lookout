@@ -241,6 +241,18 @@ public class MqttPublisherService implements MqttCallback {
                 }
             }
 
+            // Inbound automation triggers: <base>/automation/<channel>. Independent of the
+            // HA/control gates above — an external broker message on this subtree fires an
+            // OverDrive automation (see messageArrived → Automations.publishMqttTrigger).
+            // Re-subscribed on every (re)connect since connect() is the reconnect path.
+            // Cheap and inert when no automation watches the channel.
+            try {
+                client.subscribe(config.topic + "/automation/+", config.qos);
+                logger.info("Subscribed to inbound automation-trigger topics under " + config.topic + "/automation/");
+            } catch (MqttException e) {
+                logger.warn("Automation-trigger subscribe failed: " + e.getMessage());
+            }
+
             logger.info("Connected to " + brokerUri);
             return true;
 
@@ -452,6 +464,27 @@ public class MqttPublisherService implements MqttCallback {
         return publishString(config.topic, payload.toString(), config.retainMessages, config.qos);
     }
 
+    /**
+     * Publish an arbitrary payload to an arbitrary topic — the seam the automation
+     * "Publish MQTT" action uses to notify Home Assistant (or any broker consumer). A
+     * relative topic (no leading '/') is scoped under this connection's base topic so a
+     * user needn't know the full prefix; an absolute topic (leading '/') is used as-is
+     * minus the leading slash. Returns false when the connection isn't running so a
+     * disabled/absent MQTT setup makes the action a clean no-op. Uses this connection's
+     * QoS; retain is caller-chosen (HA state topics want retain=true).
+     */
+    public synchronized boolean publishToTopic(String topic, String payload, boolean retain) {
+        if (!running) return false;
+        if (topic == null || topic.isEmpty() || payload == null) return false;
+        String full;
+        if (topic.startsWith("/")) {
+            full = topic.substring(1);
+        } else {
+            full = config.topic + "/" + topic;
+        }
+        return publishString(full, payload, retain, config.qos);
+    }
+
     /** Low-level single-message publish with reconnect + stats handling. */
     private boolean publishString(String topic, String payload, boolean retain, int qos) {
         if (!ensureConnected()) {
@@ -602,6 +635,24 @@ public class MqttPublisherService implements MqttCallback {
                 // Defer the differ.reset() to the publish thread — do NOT touch
                 // the differ from this Paho callback thread (it isn't thread-safe).
                 forceFullResend = true;
+            }
+            return;
+        }
+
+        // Inbound automation trigger: <base>/automation/<channel>. An external broker
+        // message (Home Assistant, Node-RED, …) becomes an automation signal keyed by
+        // channel, so a rule can fire on "HA published X to channel Y". Enqueue-only —
+        // Automations.publishMqttTrigger does an atomic map CAS + queues to the automation
+        // worker, so it's safe and non-blocking on this Paho callback thread (never runs
+        // action logic here). Inert at zero cost when no automation watches the channel.
+        String autoPrefix = config.topic + "/automation/";
+        if (topic != null && topic.startsWith(autoPrefix)) {
+            String channel = topic.substring(autoPrefix.length());
+            String payload = new String(message.getPayload());
+            try {
+                com.overdrive.app.automation.Automations.publishMqttTrigger(channel, payload);
+            } catch (Throwable t) {
+                logger.warn("Inbound MQTT automation trigger failed: " + t.getMessage());
             }
             return;
         }

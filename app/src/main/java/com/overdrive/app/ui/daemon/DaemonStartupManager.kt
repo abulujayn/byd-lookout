@@ -92,10 +92,105 @@ class DaemonStartupManager(
         fun startOnBoot(context: Context) {
             if (bootStarted) return
             bootStarted = true
+            // NOTE: recoveryInProgress is deliberately NOT reset here. Resetting it
+            // synchronously in startOnBoot loses the race it exists to win: the sibling
+            // services' onStartCommand can run AFTER this reset but BEFORE clearParkedMarker's
+            // async `rm` lands, so they'd see marker-present + flag-false and wrongly
+            // self-stop on the recovery edge. Instead it is reset from clearParkedMarker's
+            // rm-completion callback (below), i.e. only once the marker file is actually gone
+            // — at which point the exists() check the gates use is itself already false.
             userStoppedDaemons.clear()
             val manager = DaemonStartupManager(context, null)
             bootManager = manager
             manager.initializeOnBoot()
+        }
+
+        /**
+         * Stop the boot-scoped manager's 30s health-check (used by the onOnly parked
+         * standdown so the health-check stops probing/relaunching while parked). The
+         * MainActivity-scoped manager, if any, is stopped when the Activity is destroyed;
+         * and even if a health-check keeps ticking, relaunchDaemon's marker gate prevents
+         * any actual rebuild — so this is the compute-minimizing complement, not the
+         * correctness guarantee. Safe/no-op if no boot manager exists.
+         */
+        fun stopHealthChecks() {
+            try { bootManager?.cleanup() } catch (e: Exception) {
+                android.util.Log.w(TAG, "stopHealthChecks failed: ${e.message}")
+            }
+        }
+
+        /**
+         * ACC-on / boot RECOVERY from an onOnly park. Two things must happen and BOTH are
+         * load-bearing:
+         *  1. Clear the parked-shutdown marker (so redeployed watchdogs don't immediately
+         *     gate-exit on it).
+         *  2. RESET the `bootStarted` guard so startOnBoot() actually redeploys the
+         *     watchdogs. This is the subtle bug the naive path has: on this head unit the
+         *     app process is kept resident by KeepAliveAccessibilityService across a park,
+         *     so `bootStarted` (a process-lifetime static, never otherwise reset) is still
+         *     true from the pre-park boot — and `startOnBoot(){ if(bootStarted) return }`
+         *     would no-op, leaving the killed daemons permanently down. Resetting it here
+         *     lets recovery rebuild the stack.
+         * Called from BootReceiver.startDaemons on a recovery trigger. Ordered: clear marker
+         * FIRST (async shell), then reset the guard, then the caller's startOnBoot redeploys.
+         */
+        /**
+         * True from the instant an ACC-on recovery begins until the daemon stack has been
+         * asked to redeploy. DaemonKeepaliveService.onStartCommand consults this to avoid
+         * self-stopping on the recovery edge: clearParkedMarker's shell `rm` is async, so
+         * a synchronous File(marker).exists() check in onStartCommand — which runs on the
+         * main thread moments after recoverFromPark — can still see the marker present and
+         * wrongly self-stop. This in-memory flag flips synchronously so the service knows
+         * "recovery in progress, do not self-stop even if the marker file still lingers".
+         */
+        @JvmStatic
+        @Volatile
+        var recoveryInProgress = false
+            private set
+
+        fun recoverFromPark(context: Context) {
+            recoveryInProgress = true
+            clearParkedMarker(context)
+            // Allow startOnBoot to run again for the fresh ON session. The daemons + their
+            // watchdogs were killed by the reaper during the park, so a redeploy is exactly
+            // what we need — the double-launch this guard normally prevents cannot happen
+            // because nothing is currently running.
+            bootStarted = false
+            bootManager = null
+            android.util.Log.i(TAG, "recoverFromPark: cleared marker + reset bootStarted for ACC-on redeploy")
+        }
+
+        /**
+         * Static entry point to clear the "Vehicle ON only" parked-shutdown marker on the
+         * ACC-on / boot recovery edge (called from BootReceiver.startDaemons). Uses a
+         * short-lived launcher rather than requiring a live manager instance, since the
+         * recovery path may run in a freshly-revived process with no manager yet. The
+         * subsequent startOnBoot redeploys the watchdogs (marker now gone → they run).
+         */
+        fun clearParkedMarker(context: Context) {
+            try {
+                val launcher = AdbDaemonLauncher(context.applicationContext)
+                launcher.executeShellCommand(
+                    "rm -f ${com.overdrive.app.ui.model.ParkedShutdown.MARKER_PATH} 2>/dev/null; echo cleared",
+                    object : AdbDaemonLauncher.LaunchCallback {
+                        override fun onLog(message: String) {}
+                        // Reset recoveryInProgress ONLY once the async rm has actually
+                        // completed — at that point the marker file is gone, so any
+                        // sibling-service onStartCommand gate (marker && !recoveryInProgress)
+                        // that runs after this already reads exists()==false and stays up.
+                        // Resetting it any earlier (e.g. synchronously in startOnBoot) loses
+                        // the recovery-edge race the flag exists to win.
+                        override fun onLaunched() { recoveryInProgress = false }
+                        // On rm failure the marker may still be present; clearing the flag is
+                        // still correct because the 24h stale-clear + next recovery cover it,
+                        // and leaving it true forever would break the NEXT park's gate.
+                        override fun onError(error: String) { recoveryInProgress = false }
+                    }
+                )
+            } catch (e: Exception) {
+                android.util.Log.w(TAG, "clearParkedMarker(static) failed: ${e.message}")
+                recoveryInProgress = false
+            }
         }
     }
 
@@ -145,6 +240,13 @@ class DaemonStartupManager(
 
         // Enable AccessibilityService keep-alive immediately (doesn't need delay)
         enableAccessibilityKeepAlive()
+
+        // "Vehicle ON only" recovery: initializeOnAppLaunch only ever runs when the head
+        // unit is powered — i.e. the car is on (the screen is the app's only display, so a
+        // parked/off car can't launch the app) or booting. That is a recovery moment, so
+        // clear any parked-shutdown marker a prior park left behind, letting the stack come
+        // back up. Belt-and-suspenders with BootReceiver's ACC-on clear. No-op if absent.
+        clearParkedMarker(context.applicationContext)
 
         // Defensive sentinel cleanup on every app-launch path. If a previous
         // process crashed mid-stop, per-daemon `.disabled` files can be
@@ -821,12 +923,16 @@ class DaemonStartupManager(
         // EDGE_STALE, boot-path ADB fallback) funnels through here, so gating
         // once at this chokepoint covers them all.
         adbLauncher.executeShellCommand(
-            "test -f ${type.sentinelPath} && echo STOPPED || echo OK",
+            "test -f ${type.sentinelPath} -o -f ${com.overdrive.app.ui.model.ParkedShutdown.MARKER_PATH} && echo STOPPED || echo OK",
             object : com.overdrive.app.launcher.AdbDaemonLauncher.LaunchCallback {
                 override fun onLog(message: String) {
                     if (message.trim().contains("STOPPED")) {
-                        log.info(TAG, "Health check: ${type.displayName} is user-stopped " +
-                            "(disable sentinel present) — NOT relaunching")
+                        // STOPPED = user disable sentinel present, OR the "Vehicle ON only"
+                        // parked-shutdown marker present. In onOnly the whole stack is
+                        // terminated on park and MUST NOT be revived by the 30s health-check
+                        // until the ACC-on edge clears the marker.
+                        log.info(TAG, "Health check: ${type.displayName} is stopped " +
+                            "(disable sentinel or parked-shutdown marker present) — NOT relaunching")
                     } else {
                         doRelaunchDaemon(type)
                     }
@@ -919,7 +1025,51 @@ class DaemonStartupManager(
      * spawns a fresh AdbShellExecutor (single-thread non-daemon executor)
      * that's never shutdown(), so it leaks a parked thread per call.
      */
+    /**
+     * Fail-safe: force-clear the parked-shutdown marker if it is older than
+     * [ParkedShutdown.MAX_AGE_MS]. The marker embeds its park epoch-millis; a marker that
+     * outlives the max age can never be allowed to permanently suppress an active session
+     * (e.g. an ACC-on edge that was somehow never delivered). Invoked from
+     * [clearStaleSentinels] so it runs on every boot/launch. Shell-side age test keeps it
+     * cross-UID and avoids reading the file into the app process.
+     */
+    fun clearParkedMarkerIfStale() {
+        try {
+            val marker = com.overdrive.app.ui.model.ParkedShutdown.MARKER_PATH
+            val maxAgeSec = com.overdrive.app.ui.model.ParkedShutdown.MAX_AGE_MS / 1000
+            // now - parkEpochSec > maxAgeSec  → stale → rm. Marker holds epoch MILLIS;
+            // divide to seconds. Guard against a missing/garbage marker (non-numeric → skip).
+            val script =
+                "M=$marker; " +
+                "if [ -f \"\$M\" ]; then " +
+                "  TS=\$(cat \"\$M\" 2>/dev/null); " +
+                "  NOW=\$(date +%s); " +
+                "  case \"\$TS\" in *[!0-9]*|'') echo 'keep (unparseable)';; " +
+                "  *) PARK=\$((TS/1000)); AGE=\$((NOW-PARK)); " +
+                "     if [ \$AGE -gt $maxAgeSec ]; then rm -f \"\$M\" 2>/dev/null; echo 'cleared stale'; else echo keep; fi;; " +
+                "  esac; " +
+                "else echo 'no marker'; fi"
+            adbLauncher.executeShellCommand(script, object : AdbDaemonLauncher.LaunchCallback {
+                override fun onLog(message: String) {
+                    if (message.contains("cleared stale")) {
+                        log.warn(TAG, "Parked-shutdown marker exceeded max age — force-cleared (fail-safe)")
+                    }
+                }
+                override fun onLaunched() {}
+                override fun onError(error: String) { log.warn(TAG, "clearParkedMarkerIfStale onError: $error") }
+            })
+        } catch (e: Exception) {
+            log.warn(TAG, "clearParkedMarkerIfStale threw: ${e.message}")
+        }
+    }
+
     fun clearStaleSentinels() {
+        // Fail-safe first: drop the parked-shutdown marker if it is older than the max
+        // age (a marker must never permanently suppress an active session). This runs on
+        // every boot/launch. It is INTENTIONALLY separate from the .disabled rm below —
+        // the parked marker is NOT a per-daemon disable sentinel and is normally cleared
+        // by the ACC-on edge, not here.
+        clearParkedMarkerIfStale()
         // The outer try/catch is mostly belt-and-braces — executeShellCommand
         // is async and won't throw synchronously except on
         // RejectedExecutionException (executor already shut down).

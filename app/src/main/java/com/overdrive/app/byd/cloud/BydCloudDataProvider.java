@@ -201,9 +201,15 @@ public final class BydCloudDataProvider {
     }
 
     public void stopSubscriber() {
-        if (subscriber != null) {
-            subscriber.stop();
-            subscriber = null;
+        // Null the field into a local BEFORE calling stop(). If stop() (or
+        // anything it triggers) ever re-enters reset()/stopSubscriber(), the
+        // field is already null so the nested call no-ops instead of recursing
+        // on the same instance. This is the structural guard against the
+        // reentrant-teardown StackOverflow (see BydCloudMqttSubscriber.stop()).
+        BydCloudMqttSubscriber s = subscriber;
+        subscriber = null;
+        if (s != null) {
+            s.stop();
         }
         stopRealtimePoller();
         sharedClient = null;

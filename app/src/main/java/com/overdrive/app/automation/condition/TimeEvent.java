@@ -52,9 +52,51 @@ public class TimeEvent {
             // Store time as minutes since start of day to make comparison easier
             Automations.update(BydEvent.TIME, now.get(ChronoField.MINUTE_OF_DAY));
             Automations.update(BydEvent.DAY, now.getDayOfWeek().name().toLowerCase());
+            // Calendar signals for date/monthly automations. dayOfMonth is numeric
+            // (IntType condition, 1-31). month is published as a STRING ("1".."12") to
+            // match the month-name EnumType condition — an Integer would wrap as IntValue
+            // and never compare-equal to the enum's String ids (StringValue), silently
+            // never firing.
+            Automations.update(BydEvent.DAY_OF_MONTH, now.getDayOfMonth());
+            Automations.update(BydEvent.MONTH, String.valueOf(now.getMonthValue()));
+            // Solar phase (day/night) from GPS + local date. Only published when we
+            // have a location fix — otherwise unseeded (no bogus sunset at lat/lon 0,0).
+            publishSunPhase(now);
         } catch (Exception e) {
             logger.error("Failed to run time event", e);
         }
         scheduleTimeEvent();
+    }
+
+    /**
+     * Publish sunPhase = "day"/"night" using the current GPS fix + local date. The
+     * automation engine fires a trigger on the day→night (sunset) or night→day
+     * (sunrise) transition. Skipped entirely without a location fix so we never
+     * manufacture a phase from a null island (0,0) reading.
+     */
+    private static void publishSunPhase(LocalDateTime now) {
+        try {
+            com.overdrive.app.monitor.GpsMonitor gps = com.overdrive.app.monitor.GpsMonitor.getInstance();
+            if (gps == null || !gps.hasLocation()) return;
+            double lat = gps.getLatitude();
+            double lon = gps.getLongitude();
+            SolarCalculator.SunTimes st = SolarCalculator.compute(
+                    now.toLocalDate(), lat, lon, java.time.ZoneId.systemDefault());
+            if (st == null) return;
+            String phase;
+            if (st.alwaysUp) {
+                phase = "day";
+            } else if (st.alwaysDown) {
+                phase = "night";
+            } else {
+                int minuteOfDay = now.get(ChronoField.MINUTE_OF_DAY);
+                // Daytime = at/after sunrise and before sunset.
+                phase = (minuteOfDay >= st.sunriseMinute && minuteOfDay < st.sunsetMinute)
+                        ? "day" : "night";
+            }
+            Automations.update(BydEvent.SUN_PHASE, phase);
+        } catch (Throwable t) {
+            // Solar calc / GPS glitch — just skip this tick's phase publish.
+        }
     }
 }

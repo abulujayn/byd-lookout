@@ -51,7 +51,8 @@ object LanguagePickerDialog {
         "vi" to "Tiếng Việt",
         "hi" to "हिन्दी",
         "tr" to "Türkçe",
-        "ru" to "Русский"
+        "ru" to "Русский",
+        "ar" to "العربية"
     )
 
     @JvmOverloads

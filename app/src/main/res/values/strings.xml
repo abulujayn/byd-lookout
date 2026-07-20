@@ -1530,5 +1530,19 @@
     <string name="projection_done_adjusting">Done</string>
     <string name="projection_bounds_hint_idle">Mirror area</string>
     <string name="projection_status_adjust">Drag to move · drag a corner to resize.</string>
+    <!-- Scaling mode picker -->
+    <string name="projection_scale_title">Scaling</string>
+    <string name="projection_scale_desc">How the cluster fills the mirror area.</string>
+    <string name="projection_scale_fit">Fit</string>
+    <string name="projection_scale_fill">Stretch</string>
+    <string name="projection_scale_zoom">Zoom</string>
+    <!-- Auto-start on ACC-on -->
+    <string name="projection_autostart_title">Auto-start on power-on</string>
+    <string name="projection_autostart_desc">Cast the last-used app to the cluster automatically each time the car powers on. (The mirror opens when you visit this screen.)</string>
+    <string name="projection_autostart_need_app">Cast an app first, then turn this on.</string>
+    <string name="projection_autostart_conflict_title">RoadSense is using the cluster</string>
+    <string name="projection_autostart_conflict_body">RoadSense is set to auto-project the map to the driver cluster when the car powers on. The cluster can only show one thing at a time. Turn that off and auto-start this app instead?</string>
+    <string name="projection_autostart_conflict_confirm">Use this app</string>
+    <string name="projection_app_uninstalled">That app is no longer installed.</string>
 
 </resources>

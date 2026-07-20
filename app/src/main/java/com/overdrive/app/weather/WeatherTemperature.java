@@ -45,7 +45,24 @@ public final class WeatherTemperature {
     private static volatile long lastFetchTime = 0;
     private static final AtomicBoolean fetchInFlight = new AtomicBoolean(false);
 
+    // Mean precipitation probability (%) over the next PRECIP_HOURS hours, from the same
+    // Open-Meteo fetch (one round-trip serves temp + rain). -1 = not yet fetched/stale.
+    // Drives the "rain likely" automation trigger; kept on the same cache clock as temp.
+    private static final int PRECIP_HOURS = 6;
+    private static volatile int cachedPrecipProb = -1;
+
     private WeatherTemperature() {}
+
+    /**
+     * Mean precipitation probability (%) over roughly the next {@value #PRECIP_HOURS}
+     * hours, or -1 if none fetched yet / cache is stale. Never blocks. Pair with
+     * {@link #refreshAsync} on the poll thread the same way as {@link #getCached()}.
+     */
+    public static int getCachedPrecipProbability() {
+        if (cachedPrecipProb < 0) return -1;
+        if (System.currentTimeMillis() - lastFetchTime > STALE_MS) return -1;
+        return cachedPrecipProb;
+    }
 
     /**
      * The last fetched outside temperature (°C), or NaN if none has been fetched
@@ -92,8 +109,11 @@ public final class WeatherTemperature {
         // Serve fresh cache without a network round-trip.
         if (!Double.isNaN(cachedTemp) && (now - lastFetchTime) < CACHE_MS) return cachedTemp;
         try {
+            // One round-trip serves both signals: current temperature + the next-hours
+            // precipitation-probability series (for the "rain likely" automation trigger).
             String url = String.format(Locale.US,
-                    "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f&current=temperature_2m",
+                    "https://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
+                    + "&current=temperature_2m&hourly=precipitation_probability&forecast_days=1&timezone=auto",
                     lat, lon);
             Request request = new Request.Builder()
                     .url(url)
@@ -107,19 +127,64 @@ public final class WeatherTemperature {
             try (Response response = client.newCall(request).execute()) {
                 if (response.isSuccessful() && response.body() != null) {
                     String body = response.body().string();
-                    JSONObject current = new JSONObject(body).optJSONObject("current");
+                    JSONObject root = new JSONObject(body);
+                    // Parse precip first so a temp-only success still updates rain (and
+                    // vice versa); both share lastFetchTime set once below on any success.
+                    int precip = parseMeanPrecip(root);
+                    if (precip >= 0) cachedPrecipProb = precip;
+                    JSONObject current = root.optJSONObject("current");
                     if (current != null && current.has("temperature_2m")) {
                         double temp = current.getDouble("temperature_2m");
                         cachedTemp = temp;
                         lastFetchTime = System.currentTimeMillis();
-                        logger.debug("weather temp = " + String.format(Locale.US, "%.1f", temp) + "°C");
+                        logger.debug("weather temp=" + String.format(Locale.US, "%.1f", temp)
+                                + "°C precip=" + cachedPrecipProb + "%");
                         return temp;
                     }
+                    // Temp missing but precip parsed — still a useful refresh.
+                    if (precip >= 0) lastFetchTime = System.currentTimeMillis();
                 }
             }
         } catch (Exception e) {
             logger.debug("weather fetch failed: " + e.getMessage());
         }
         return getCached(); // stale cache or NaN
+    }
+
+    /**
+     * Mean precipitation probability (%) over the next {@value #PRECIP_HOURS} hourly
+     * buckets from Open-Meteo's {@code hourly.precipitation_probability} array. The
+     * array starts at 00:00 today; we start at the current hour so "next hours" is
+     * actually ahead of now. Returns -1 if the field is absent/empty.
+     */
+    private static int parseMeanPrecip(JSONObject root) {
+        try {
+            JSONObject hourly = root.optJSONObject("hourly");
+            if (hourly == null) return -1;
+            org.json.JSONArray times = hourly.optJSONArray("time");
+            org.json.JSONArray probs = hourly.optJSONArray("precipitation_probability");
+            if (probs == null || probs.length() == 0) return -1;
+            // Find the first bucket at/after the current wall-clock hour. Open-Meteo
+            // returns local time strings "YYYY-MM-DDTHH:00"; match on the "THH" hour.
+            int startIdx = 0;
+            if (times != null && times.length() == probs.length()) {
+                String hourTag = String.format(Locale.US, "T%02d",
+                        java.time.LocalTime.now().getHour());
+                for (int i = 0; i < times.length(); i++) {
+                    String ts = times.optString(i, "");
+                    if (ts.contains(hourTag)) { startIdx = i; break; }
+                }
+            }
+            long sum = 0; int n = 0;
+            for (int i = startIdx; i < probs.length() && n < PRECIP_HOURS; i++, n++) {
+                int p = probs.optInt(i, -1);
+                if (p >= 0) sum += p;
+                else n--; // skip nulls without counting them
+            }
+            if (n <= 0) return -1;
+            return (int) Math.round(sum / (double) n);
+        } catch (Exception e) {
+            return -1;
+        }
     }
 }

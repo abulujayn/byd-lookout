@@ -67,7 +67,10 @@ class CommunitySyncProvider(
         return httpGet("$base/automations/${enc(id)}", viewerDeviceId)
     }
 
-    /** POST /automations — publish. [rules] is the Automation.toJson() object. */
+    /** POST /automations — publish. [rules] is the Automation.toJson() object.
+     *  [actionGroups] (optional {id:{name,actions}}) carries the definitions of any action
+     *  groups the automation references, so a downloader can recreate them; omitted when
+     *  the automation uses no groups. */
     fun publish(
         deviceId: String,
         authorName: String,
@@ -76,6 +79,7 @@ class CommunitySyncProvider(
         category: String,
         rules: JSONObject,
         schemaVersion: Int,
+        actionGroups: JSONObject? = null,
     ): Result {
         val base = baseUrl() ?: return fail("no community worker URL configured")
         val payload = JSONObject()
@@ -86,7 +90,43 @@ class CommunitySyncProvider(
             .put("category", category)
             .put("schemaVersion", schemaVersion)
             .put("rules", rules)
+        if (actionGroups != null && actionGroups.length() > 0) payload.put("actionGroups", actionGroups)
         return post("$base/automations", deviceId, payload)
+    }
+
+    /** PUT /automations/{id} — author UPDATE of a published automation (device-match).
+     *  Same payload shape as publish; the server preserves ratings/downloads + the id. */
+    fun update(
+        id: String,
+        deviceId: String,
+        authorName: String,
+        name: String,
+        description: String,
+        category: String,
+        rules: JSONObject,
+        schemaVersion: Int,
+        actionGroups: JSONObject? = null,
+    ): Result {
+        val base = baseUrl() ?: return fail("no community worker URL configured")
+        val payload = JSONObject()
+            .put("deviceId", deviceId)
+            .put("authorName", authorName)
+            .put("name", name)
+            .put("description", description)
+            .put("category", category)
+            .put("schemaVersion", schemaVersion)
+            .put("rules", rules)
+        if (actionGroups != null && actionGroups.length() > 0) payload.put("actionGroups", actionGroups)
+        return try {
+            val req = Request.Builder()
+                .url("$base/automations/${enc(id)}")
+                .header("X-Device-Id", deviceId)
+                .put(payload.toString().toRequestBody(JSON))
+                .build()
+            exec(req)
+        } catch (t: Throwable) {
+            fail(t.message ?: "update error")
+        }
     }
 
     /** POST /automations/{id}/rate — stars 1..5. */

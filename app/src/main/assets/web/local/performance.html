@@ -21,12 +21,13 @@
         window.OT_TABS = [
             { id: 'battery', label: 'Battery', i18n: 'performance.tab_battery', svg: '<rect x="6" y="7" width="12" height="10" rx="1"/><path d="M6 10H4a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h2"/><path d="M18 10h2a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1h-2"/>' },
             { id: 'system',  label: 'System',  i18n: 'performance.tab_system',  svg: '<rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"/>' },
+            { id: 'data',    label: 'Data',    i18n: 'performance.tab_data',    svg: '<path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/>' },
             { id: 'live',    label: 'Live',    i18n: 'performance.tab_live',    svg: '<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>', readOnly: true },
             { id: 'reset',   label: 'Reset',   i18n: 'performance.tab_reset',   svg: '<polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>', readOnly: true }
         ];
     </script>
     <script src="../shared/app-tabs.js"></script>
-    <link rel="stylesheet" href="../shared/styles.css?v=17">
+    <link rel="stylesheet" href="../shared/styles.css?v=18">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
     <style>
@@ -190,6 +191,26 @@
             margin-top: 8px;
             opacity: 0.7;
         }
+
+        /* Data-usage toggle switch (in-card header) */
+        .du-toggle { display: inline-flex; align-items: center; cursor: pointer; user-select: none; }
+        .du-toggle > * + * { margin-left: 8px; }
+        .du-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+        .du-toggle-track {
+            position: relative; display: inline-block; width: 38px; height: 22px;
+            background: var(--border-subtle); border-radius: 11px; transition: background .2s;
+            flex: 0 0 auto;
+        }
+        .du-toggle-thumb {
+            position: absolute; top: 2px; left: 2px; width: 18px; height: 18px;
+            background: #fff; border-radius: 50%; transition: transform .2s;
+        }
+        .du-toggle input:checked + .du-toggle-track { background: var(--brand-secondary); }
+        .du-toggle input:checked + .du-toggle-track .du-toggle-thumb { transform: translateX(16px); }
+        .du-toggle-label { font-size: 13px; color: var(--text-muted); }
+        .du-hint { padding: 18px 4px; }
+        .du-hint p { font-size: 13px; color: var(--text-muted); line-height: 1.5; margin: 0; }
+        .du-note { font-size: 11px; color: var(--text-muted); text-align: center; margin-top: 10px; opacity: 0.8; }
         
         /* Stats Grid */
         .stats-row {
@@ -849,6 +870,51 @@
                     </div>
                 </div>
 
+                <!-- Data Usage Chart (Persistent - 30 days) -->
+                <div class="chart-card soc-chart-card" data-tab="data" id="dataUsageCard">
+                    <div class="chart-header">
+                        <div class="chart-title">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:20px;height:20px;margin-right:8px;stroke:var(--brand-secondary);">
+                                <path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/>
+                            </svg>
+                            <span data-i18n="performance.data_usage_title">Data Usage</span>
+                        </div>
+                        <label class="du-toggle" id="dataUsageToggle" title="">
+                            <input type="checkbox" id="dataUsageEnabled" onchange="BYD.performance.toggleDataUsage(this.checked)">
+                            <span class="du-toggle-track"><span class="du-toggle-thumb"></span></span>
+                            <span class="du-toggle-label" data-i18n="performance.data_usage_enabled">Enabled</span>
+                        </label>
+                    </div>
+
+                    <!-- Disabled / empty hint (shown when feature is off) -->
+                    <div class="du-hint" id="dataUsageHint" style="display:none;">
+                        <p data-i18n="performance.data_usage_hint">Track the data Overdrive uses (WiFi vs mobile, app vs background) over the last 30 days. Collection is off by default and uses negligible resources.</p>
+                    </div>
+
+                    <!-- Live content (shown when enabled) -->
+                    <div id="dataUsageContent" style="display:none;">
+                        <div class="soc-time-selector" id="dataUsageTimeSelector" style="margin-bottom:12px;">
+                            <button class="time-btn" data-days="7" onclick="BYD.performance.setDataUsageRange(7)" data-i18n="performance.range_7d">7 Days</button>
+                            <button class="time-btn active" data-days="30" onclick="BYD.performance.setDataUsageRange(30)" data-i18n="performance.range_30d">30 Days</button>
+                        </div>
+                        <div class="soc-stats-row">
+                            <div class="soc-stat"><span class="soc-stat-value" id="duTotal">--</span><span class="soc-stat-label" data-i18n="performance.data_usage_total">Total</span></div>
+                            <div class="soc-stat"><span class="soc-stat-value" id="duWifi">--</span><span class="soc-stat-label" data-i18n="performance.data_usage_wifi">WiFi</span></div>
+                            <div class="soc-stat"><span class="soc-stat-value" id="duMobile">--</span><span class="soc-stat-label" data-i18n="performance.data_usage_mobile">Mobile</span></div>
+                            <div class="soc-stat"><span class="soc-stat-value" id="duApp">--</span><span class="soc-stat-label" data-i18n="performance.data_usage_app">App</span></div>
+                            <div class="soc-stat"><span class="soc-stat-value" id="duSystem">--</span><span class="soc-stat-label" data-i18n="performance.data_usage_background">Background</span></div>
+                        </div>
+                        <div class="chart-container" style="height: 250px;">
+                            <canvas id="dataUsageChart" class="chart-canvas"></canvas>
+                        </div>
+                        <div class="chart-legend" style="margin-top:12px;justify-content:center;">
+                            <div class="legend-item"><span class="legend-dot" style="background:var(--brand-secondary);"></span><span data-i18n="performance.data_usage_wifi">WiFi</span></div>
+                            <div class="legend-item"><span class="legend-dot" style="background:var(--chart-warning);"></span><span data-i18n="performance.data_usage_mobile">Mobile</span></div>
+                        </div>
+                        <p class="du-note" id="dataUsageNote" style="display:none;"></p>
+                    </div>
+                </div>
+
                 <!-- CPU Usage Chart -->
                 <div class="chart-card" data-tab="live">
                     <div class="chart-header">
@@ -1004,7 +1070,7 @@
     <script src="../shared/auth.js"></script>
     <script src="../shared/core.js?v=14"></script>
     <script src="../shared/update-flow.js"></script>
-    <script src="../shared/performance.js?v=6"></script>
+    <script src="../shared/performance.js?v=10"></script>
     <script>
         function toggleSidebar() {
             document.getElementById('sidebar').classList.toggle('open');
@@ -1012,7 +1078,13 @@
         }
         BYD.i18n.init().then(function () {
             BYD.core.init();
-            BYD.performance.init();
+            // init() is async + fire-and-forget; catch so a sync throw in an
+            // early step (initCharts/startPolling) surfaces in the console
+            // instead of silently aborting the rest of init (which would leave
+            // late-initialized cards like Data Usage blank).
+            try { Promise.resolve(BYD.performance.init()).catch(function (e) {
+                console.error('[Performance] init failed:', e);
+            }); } catch (e) { console.error('[Performance] init threw:', e); }
         });
     </script>
 </body>

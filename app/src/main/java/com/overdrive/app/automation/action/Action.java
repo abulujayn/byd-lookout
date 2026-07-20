@@ -37,4 +37,14 @@ public interface Action {
      * @return An AutomationAction that can later be used to trigger this action
      */
     AutomationAction fromJson(JSONObject input);
+
+    /**
+     * Whether this action carries NESTED child action lists (a loop body, or if/else
+     * branches). Only the control-flow actions override this to true; every ordinary
+     * action leaves it false, so the parser never looks for {@code childActions} on a
+     * flat action and a pre-existing automation is unaffected.
+     *
+     * @return true if this action's JSON may contain childActions/elseActions to parse
+     */
+    default boolean hasChildActions() { return false; }
 }

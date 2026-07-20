@@ -58,7 +58,7 @@
             : __OT_ALL_TABS;
     </script>
     <script src="../shared/app-tabs.js"></script>
-    <link rel="stylesheet" href="../shared/styles.css?v=17">
+    <link rel="stylesheet" href="../shared/styles.css?v=18">
     <link rel="manifest" href="/manifest.json">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
@@ -180,6 +180,29 @@
         .notif-btn:hover { background: rgba(0,229,255,0.15); }
         .notif-btn.danger { border-color: rgba(255,107,107,0.4); background: rgba(255,107,107,0.08); color: #FF6B6B; }
         .notif-btn.disabled { opacity: 0.5; cursor: not-allowed; pointer-events: none; }
+        /* Minimum-importance segmented control. ES5/Chrome-58 safe (flexbox,
+           no gap on the segments themselves — border-collapse look via -1px). */
+        .notif-seg {
+            display: flex; width: 100%;
+            border: 1px solid var(--border-subtle); border-radius: 8px;
+            overflow: hidden;
+        }
+        .notif-seg-btn {
+            flex: 1 1 0; min-width: 0;
+            padding: 10px 12px;
+            border: 0; border-left: 1px solid var(--border-subtle);
+            background: transparent; color: var(--text-secondary);
+            font-family: inherit; font-size: 13px; font-weight: 500;
+            line-height: 1.2; cursor: pointer; white-space: nowrap;
+            text-overflow: ellipsis; overflow: hidden;
+        }
+        .notif-seg-btn:first-child { border-left: 0; }
+        .notif-seg-btn:hover { background: rgba(0,229,255,0.08); }
+        .notif-seg-btn[aria-checked="true"] {
+            background: rgba(0,229,255,0.15); color: #00E5FF;
+        }
+        .notif-seg.disabled { opacity: 0.5; pointer-events: none; }
+        .notif-seg-hint { font-size: 12px; color: var(--text-muted); margin-top: 10px; }
         .notif-status {
             font-size: 13px; padding: 12px 16px; border-radius: 8px;
             margin: 12px 0; line-height: 1.5;
@@ -768,6 +791,26 @@
                         </div>
                     </div>
 
+                    <div class="notif-section" data-tab="push">
+                        <h2 data-i18n="notif.min_importance">Minimum importance</h2>
+                        <p class="notif-section-sub" data-i18n="notif.min_importance_sub">
+                            A device-wide floor applied on top of the categories above. Raise it to silence lower-importance pushes in one place — e.g. "Warn and up" drops every Notice/Info push (routine surveillance, charging started/stopped) while keeping Alerts and Criticals. Off tiers are still recorded in the log.
+                        </p>
+                        <div class="notif-card" id="minSeverityCard">
+                            <!-- Starts disabled + hint shown to match renderMinSeverity's
+                                 no-subscription default; the async init flips it on once a
+                                 subscription is confirmed. Without this the control would
+                                 look active + clickable during the load window and a tap
+                                 would show a false "enable first" warning. -->
+                            <div class="notif-seg disabled" id="minSeveritySeg" role="radiogroup" aria-label="Minimum importance">
+                                <button type="button" class="notif-seg-btn" data-sev="info" role="radio" aria-checked="true" data-i18n="notif.min_info">Everything</button>
+                                <button type="button" class="notif-seg-btn" data-sev="warn" role="radio" aria-checked="false" data-i18n="notif.min_warn">Warn &amp; up</button>
+                                <button type="button" class="notif-seg-btn" data-sev="critical" role="radio" aria-checked="false" data-i18n="notif.min_critical">Critical only</button>
+                            </div>
+                            <div class="notif-seg-hint" id="minSeverityHint" data-i18n="notif.enable_first">Enable notifications on this device first.</div>
+                        </div>
+                    </div>
+
                     <!-- ===== Telegram tab ===== -->
                     <div class="notif-section" data-tab="telegram" id="telegramSection">
                         <h2 data-i18n="notif.telegram">Telegram delivery</h2>
@@ -1349,6 +1392,15 @@
             categories: [],
             currentSubscriptionId: null,
             muted: new Set(),
+            // Whether state.muted reflects this device's SAVED preferences
+            // (loadSubscriptions found our row) vs. is still the empty
+            // pre-load default. Until prefs are loaded, renderCategories falls
+            // back to each category's registry `defaultEnabled` so a
+            // default-off category (surveillance notice, doors) doesn't flash
+            // ON before the saved prefs arrive. Mirrors the server, which now
+            // seeds a new subscription's mutes from defaultEnabled.
+            mutedLoaded: false,
+            minSeverity: 'info',
             backendReady: false
         };
 
@@ -1627,7 +1679,15 @@
                 // preference has nowhere to apply, so render them inactive.
                 var hasSubscription = !!state.currentSubscriptionId;
                 groups[g].forEach(function (c) {
-                    var enabled = hasSubscription && !state.muted.has(c.id);
+                    // Enabled = subscribed AND not muted. Before this device's
+                    // saved prefs have loaded (mutedLoaded=false), fall back to
+                    // the registry's defaultEnabled so a default-off category
+                    // doesn't briefly render ON — matching the server, which
+                    // seeds a new subscription's mutes from defaultEnabled.
+                    var muted = state.mutedLoaded
+                        ? state.muted.has(c.id)
+                        : (c.defaultEnabled === false);
+                    var enabled = hasSubscription && !muted;
                     var row = document.createElement('div');
                     row.className = 'notif-row';
                     var description = c.note || categoryDescription(c.id);
@@ -1683,6 +1743,85 @@
             }
         }
 
+        // Paint the minimum-importance segmented control from state. Disabled
+        // (and shows the "enable first" hint) until this device is subscribed,
+        // mirroring the category toggles.
+        function renderMinSeverity() {
+            var seg = document.getElementById('minSeveritySeg');
+            var hint = document.getElementById('minSeverityHint');
+            if (!seg) return;
+            var hasSubscription = !!state.currentSubscriptionId;
+            var current = (state.minSeverity || 'info').toLowerCase();
+            var btns = seg.querySelectorAll('.notif-seg-btn');
+            for (var i = 0; i < btns.length; i++) {
+                var on = btns[i].getAttribute('data-sev') === current;
+                btns[i].setAttribute('aria-checked', on ? 'true' : 'false');
+            }
+            if (hasSubscription) seg.classList.remove('disabled');
+            else seg.classList.add('disabled');
+            if (hint) hint.style.display = hasSubscription ? 'none' : '';
+        }
+
+        async function setMinSeverity(sev) {
+            if (!state.currentSubscriptionId) {
+                showStatus('warn', BYD.i18n.t('notif.enable_first'));
+                return;
+            }
+            sev = (sev || 'info').toLowerCase();
+            if (sev !== 'info' && sev !== 'warn' && sev !== 'critical') return;
+            if (sev === (state.minSeverity || 'info').toLowerCase()) return;
+            var prev = state.minSeverity;
+            state.minSeverity = sev;      // optimistic
+            renderMinSeverity();
+            function revert() {
+                // Only revert if nothing newer superseded this request. A rapid
+                // second tap (info→warn→critical) launches concurrent POSTs;
+                // without this guard a failed EARLIER request would clobber a
+                // later value the UI already moved to. We only own the revert
+                // when the displayed value is still the one WE set.
+                if ((state.minSeverity || 'info').toLowerCase() !== sev) return;
+                state.minSeverity = prev;
+                renderMinSeverity();
+            }
+            try {
+                var r = await BYDAuth.fetch('/api/push/preferences', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        id: state.currentSubscriptionId,
+                        minSeverity: sev
+                    })
+                });
+                // BYDAuth.fetch only throws on 401/network — a 400/404/500
+                // (e.g. the sub row was removed on another device) resolves
+                // normally, so check r.ok explicitly or the UI would keep
+                // claiming a floor the server never accepted.
+                if (!r || !r.ok) {
+                    revert();
+                    showStatus('error', BYD.i18n.t('notif.save_pref_failed'));
+                }
+            } catch (e) {
+                // Revert so the UI never claims a floor the server didn't take.
+                revert();
+                if (isNetworkError(e)) showTunnelUnreachable();
+                else showStatus('error', BYD.i18n.t('notif.save_pref_failed'));
+            }
+        }
+
+        (function wireMinSeverity() {
+            var seg = document.getElementById('minSeveritySeg');
+            if (!seg) return;
+            seg.addEventListener('click', function (ev) {
+                var btn = ev.target;
+                while (btn && btn !== seg && !btn.getAttribute('data-sev')) {
+                    btn = btn.parentNode;
+                }
+                if (btn && btn.getAttribute && btn.getAttribute('data-sev')) {
+                    setMinSeverity(btn.getAttribute('data-sev'));
+                }
+            });
+        })();
+
         // SHA-256 first 12 bytes of endpoint, base64url no-padding — matches
         // SubscriptionStore.idForEndpoint on the server.
         async function localIdForEndpoint(endpoint) {
@@ -1717,6 +1856,18 @@
                     } catch (_) { /* localId stays null */ }
                 }
 
+                // Fall back to the id the /subscribe call returned (stored as
+                // currentSubscriptionId) when the service worker isn't
+                // controlling yet and getPushSubscription() couldn't derive the
+                // endpoint hash. Same value (server idForEndpoint == the derived
+                // localId), so this correctly flags "this device" AND lets us
+                // resolve our row to load the real prefs — without it, a freshly
+                // enabled device leaves currentSubscriptionId set but mutedLoaded
+                // false and state.muted empty, so the control stays stuck in the
+                // disabled paint and a category toggle would persist a mute set
+                // that's missing the server-seeded defaults.
+                if (!localId) localId = state.currentSubscriptionId;
+
                 renderDevices(subs, localId);
 
                 if (!localId) return;
@@ -1724,7 +1875,10 @@
                 if (found) {
                     state.currentSubscriptionId = found.id;
                     state.muted = new Set(found.mutedCategories || []);
+                    state.mutedLoaded = true;
+                    state.minSeverity = found.minSeverity || 'info';
                     renderCategories();
+                    renderMinSeverity();
                 }
             } catch (e) {
                 // Network-level failure (zrok host stopped resolving while
@@ -1856,6 +2010,12 @@
                 state.currentSubscriptionId = result.id;
                 await refreshPermissionUI();
                 await loadSubscriptions();
+                // loadSubscriptions re-renders when it resolves our row, but it
+                // early-returns if /subscriptions is unreachable (503/!ok). Paint
+                // here too so the just-enabled control leaves its disabled state
+                // even on that path — symmetric with the disable handler.
+                renderCategories();
+                renderMinSeverity();
                 showStatus('ok', BYD.i18n.t('notif.enable_success'));
             } catch (e) {
                 showStatus('error', BYD.i18n.t('notif.enable_failed', {error: (e && e.message ? e.message : e)}));
@@ -1868,8 +2028,17 @@
             try {
                 if (window.OverdrivePush) await window.OverdrivePush.unsubscribe();
                 state.currentSubscriptionId = null;
+                // Reset per-device prefs so the category toggles revert to the
+                // registry default paint and the min-importance control shows
+                // its disabled state — loadSubscriptions early-returns without a
+                // localId, so re-render both here.
+                state.mutedLoaded = false;
+                state.muted = new Set();
+                state.minSeverity = 'info';
                 await refreshPermissionUI();
                 await loadSubscriptions();
+                renderCategories();
+                renderMinSeverity();
                 showStatus('ok', 'Notifications disabled on this device.');
             } catch (e) {
                 showStatus('error', 'Disable failed: ' + (e && e.message ? e.message : e));
@@ -1880,10 +2049,19 @@
         if (testBtnEl) testBtnEl.addEventListener('click', async function () {
             hideStatus();
             try {
+                // Send this device's id so the server delivers the test ONLY
+                // here (and bypasses this device's mute/floor so the test isn't
+                // hidden by a default-muted category or a raised floor). Only
+                // include id when we actually have one — a JSON null would be
+                // read as the string "null" by the server's optString and match
+                // no device. With no id the server broadcasts to all, prefs
+                // honoured (the pre-existing behaviour).
+                var testBody = { severity: 'info' };
+                if (state.currentSubscriptionId) testBody.id = state.currentSubscriptionId;
                 var r = await BYDAuth.fetch('/api/push/test', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ severity: 'info' })
+                    body: JSON.stringify(testBody)
                 });
                 if (r.status === 503) {
                     showStatus('warn', 'Backend not initialized. Reserve a Zrok URL first.');
@@ -1960,6 +2138,10 @@
             await refreshPermissionUI();
             await loadCategories();
             if (state.backendReady) await loadSubscriptions();
+            // Paint the min-importance control once after load. loadSubscriptions
+            // already re-paints it when this device has a saved row; this covers
+            // the no-subscription-yet case (renders it in the disabled state).
+            renderMinSeverity();
         })();
     </script>
 </body>

@@ -213,6 +213,12 @@ class DaemonLauncher(
                 "LOG_FILE=\"$ACC_SENTRY_DAEMON_LOG\"",
                 "LOCK_FILE=\"$lockFile\"",
                 "SENTINEL=\"/data/local/tmp/acc_sentry_daemon.disabled\"",
+                // "Vehicle ON only" parked-shutdown marker (ParkedShutdown.MARKER_PATH).
+                // Present → the whole stack is terminated for the parked window; the
+                // watchdog must exit instead of respawning, same as the user .disabled
+                // sentinel. Cleared on the ACC-on edge. Never exists in onAndOff mode, so
+                // this gate is inert there (watchdog behaves byte-identically).
+                "PARKED=\"/data/local/tmp/overdrive_parked_shutdown\"",
                 "PROXY_ARGS=\"$proxyArgs\"",
                 "",
                 "/system/bin/device_config put activity_manager max_phantom_processes 2147483647 > /dev/null 2>&1",
@@ -222,7 +228,7 @@ class DaemonLauncher(
                 "echo \"[\$(date)] Waiting for system boot to complete...\" >> \$LOG_FILE",
                 "BOOT_WAIT=0",
                 "while [ \"\$(getprop sys.boot_completed)\" != \"1\" ] && [ \$BOOT_WAIT -lt 120 ]; do",
-                "  if [ -f \"\$SENTINEL\" ]; then",
+                "  if [ -f \"\$SENTINEL\" ] || [ -f \"\$PARKED\" ]; then",
                 "    echo \"[\$(date)] Daemon disabled by user during boot-wait. Exiting watchdog.\" >> \"\$LOG_FILE\"",
                 "    exit 0",
                 "  fi",
@@ -241,7 +247,7 @@ class DaemonLauncher(
                 // per respawn). Both truncate in place — see helper docs.
                 *logRotateGuardLines().toTypedArray(),
                 "",
-                "  if [ -f \"\$SENTINEL\" ]; then",
+                "  if [ -f \"\$SENTINEL\" ] || [ -f \"\$PARKED\" ]; then",
                 "    echo \"[\$(date)] Daemon disabled by user (sentinel file exists). Exiting watchdog.\" >> \"\$LOG_FILE\"",
                 "    exit 0",
                 "  fi",
@@ -254,7 +260,7 @@ class DaemonLauncher(
                 "  wait \$DAEMON_PID",
                 "  EXIT_CODE=\$?",
                 "  kill \$ROTATE_PID 2>/dev/null; wait \$ROTATE_PID 2>/dev/null",
-                "  if [ -f \"\$SENTINEL\" ]; then",
+                "  if [ -f \"\$SENTINEL\" ] || [ -f \"\$PARKED\" ]; then",
                 "    echo \"[\$(date)] Daemon disabled by user (sentinel written during shutdown). Exiting watchdog.\" >> \"\$LOG_FILE\"",
                 "    exit 0",
                 "  fi",
@@ -301,6 +307,7 @@ class DaemonLauncher(
                 "LOG_FILE=\"$TELEGRAM_DAEMON_LOG\"",
                 "LOCK_FILE=\"/data/local/tmp/telegram_bot_daemon.lock\"",
                 "SENTINEL=\"/data/local/tmp/telegram_bot_daemon.disabled\"",
+                "PARKED=\"/data/local/tmp/overdrive_parked_shutdown\"",
                 "RETRY_COUNT=0",
                 "HEALTHY_UPTIME_SEC=300",
                 "",
@@ -308,7 +315,7 @@ class DaemonLauncher(
                 // Catch a log left oversized by a previous run before relaunch;
                 // real-time bounding is the poller co-process below.
                 *logRotateGuardLines().toTypedArray(),
-                "  if [ -f \"\$SENTINEL\" ]; then",
+                "  if [ -f \"\$SENTINEL\" ] || [ -f \"\$PARKED\" ]; then",
                 "    echo \"[\$(date)] Daemon disabled by user (sentinel file exists). Exiting watchdog.\" >> \"\$LOG_FILE\"",
                 "    exit 0",
                 "  fi",
@@ -324,7 +331,7 @@ class DaemonLauncher(
                 "  END_EPOCH=\$(awk '{print int(\$1)}' /proc/uptime 2>/dev/null || date +%s)",
                 "  UPTIME_SEC=\$((END_EPOCH - START_EPOCH))",
                 "  if [ \$UPTIME_SEC -lt 0 ]; then UPTIME_SEC=0; fi",
-                "  if [ -f \"\$SENTINEL\" ]; then",
+                "  if [ -f \"\$SENTINEL\" ] || [ -f \"\$PARKED\" ]; then",
                 "    echo \"[\$(date)] Daemon disabled by user (sentinel written during shutdown). Exiting watchdog.\" >> \"\$LOG_FILE\"",
                 "    exit 0",
                 "  fi",
@@ -381,6 +388,7 @@ class DaemonLauncher(
                 "LOG_FILE=\"$CAMERA_DAEMON_LOG\"",
                 "LOCK_FILE=\"/data/local/tmp/camera_daemon.lock\"",
                 "SENTINEL=\"/data/local/tmp/camera_daemon.disabled\"",
+                "PARKED=\"/data/local/tmp/overdrive_parked_shutdown\"",
                 "RETRY_COUNT=0",
                 "HEALTHY_UPTIME_SEC=300",
                 // Record THIS supervisor loop's PID so the kill-readers
@@ -395,7 +403,7 @@ class DaemonLauncher(
                 // Catch a log left oversized by a previous run before relaunch;
                 // real-time bounding is the poller co-process below.
                 *logRotateGuardLines().toTypedArray(),
-                "  if [ -f \"\$SENTINEL\" ]; then",
+                "  if [ -f \"\$SENTINEL\" ] || [ -f \"\$PARKED\" ]; then",
                 "    echo \"[\$(date)] Daemon disabled by user (sentinel file exists). Exiting watchdog.\" >> \"\$LOG_FILE\"",
                 "    exit 0",
                 "  fi",
@@ -411,7 +419,7 @@ class DaemonLauncher(
                 "  END_EPOCH=\$(awk '{print int(\$1)}' /proc/uptime 2>/dev/null || date +%s)",
                 "  UPTIME_SEC=\$((END_EPOCH - START_EPOCH))",
                 "  if [ \$UPTIME_SEC -lt 0 ]; then UPTIME_SEC=0; fi",
-                "  if [ -f \"\$SENTINEL\" ]; then",
+                "  if [ -f \"\$SENTINEL\" ] || [ -f \"\$PARKED\" ]; then",
                 "    echo \"[\$(date)] Daemon disabled by user (sentinel written during shutdown). Exiting watchdog.\" >> \"\$LOG_FILE\"",
                 "    exit 0",
                 "  fi",

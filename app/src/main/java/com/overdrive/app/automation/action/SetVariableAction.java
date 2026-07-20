@@ -4,6 +4,7 @@ import com.overdrive.app.automation.AutomationAction;
 import com.overdrive.app.automation.Automations;
 import com.overdrive.app.automation.condition.BydEvent;
 import com.overdrive.app.automation.condition.EventData;
+import com.overdrive.app.automation.type.DynamicStringType;
 import com.overdrive.app.automation.type.StringType;
 import com.overdrive.app.automation.type.Type;
 import com.overdrive.app.automation.value.Label;
@@ -42,7 +43,9 @@ public class SetVariableAction extends BaseAction {
     private final String description;
     private final List<Type> variables = List.of(
             new StringType(new Label("name", "automation.variable_name"), MAX_NAME),
-            new StringType(new Label("value", "automation.variable_value"), MAX_VALUE));
+            // Value is dynamic-capable: a constant, or ${signal:TYPE}/${var:NAME} captured
+            // live at fire time ("Set variable from state"). Resolved in trigger().
+            new DynamicStringType(new Label("value", "automation.variable_value"), MAX_VALUE));
 
     public SetVariableAction(Label label, String description) {
         this.label = label;
@@ -77,6 +80,16 @@ public class SetVariableAction extends BaseAction {
         name = name.trim();
         if (name.length() > MAX_NAME) name = name.substring(0, MAX_NAME);
         if (value == null) value = "";
+        // "Set variable FROM STATE": when the value is a dynamic reference token
+        // (${signal:TYPE} or ${var:NAME}) resolve it to the live value NOW and store that
+        // snapshot, so "set DRL_State = ${signal:drl}" captures the current DRL on/off. A
+        // token that can't be resolved (never-fired signal / unknown) stores an empty
+        // string rather than the literal "${…}", so a downstream compare sees "unset", not
+        // a bogus literal. A plain constant takes the identical path as before.
+        if (com.overdrive.app.automation.AutomationCondition.isDynamicRef(value)) {
+            String resolved = com.overdrive.app.automation.AutomationCondition.resolveDynamicToString(value);
+            value = (resolved != null) ? resolved : "";
+        }
         if (value.length() > MAX_VALUE) value = value.substring(0, MAX_VALUE);
         // Publish into the shared state — this transitions the variable and fires any
         // automation triggered on it, exactly like a vehicle event.

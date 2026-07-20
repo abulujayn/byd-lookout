@@ -28,6 +28,15 @@ public final class AutomationApiHandler {
         if (path.equals("/api/automations/schema") && method.equals("GET")) {
             return getSchema(out);
         }
+        // Lightweight [{id,name}] list for the "Control Automation" target picker.
+        // Optional ?self=<id> excludes that automation (so a rule can't pick itself).
+        if (path.startsWith("/api/automations/picker") && method.equals("GET")) {
+            String self = null;
+            int q = path.indexOf("?self=");
+            if (q >= 0) self = java.net.URLDecoder.decode(path.substring(q + "?self=".length()), "UTF-8");
+            HttpResponse.sendJson(out, Automations.listForPicker(self).toString());
+            return true;
+        }
         if (path.equals("/api/automations/automation") && method.equals("POST")) {
             return addOrUpdateAutomation(null, body, out);
         }
@@ -68,7 +77,124 @@ public final class AutomationApiHandler {
         if (path.equals("/api/automations/settings") && method.equals("POST")) {
             return saveSettings(body, out);
         }
+        // Export the full automation set as a downloadable JSON backup, and import one
+        // back (merge or replace). Import validates every entry via the same fromJson
+        // gate as a single create, so a bad file can't corrupt the store.
+        if (path.equals("/api/automations/export") && method.equals("GET")) {
+            return exportAutomations(out);
+        }
+        if (path.equals("/api/automations/import") && method.equals("POST")) {
+            return importAutomations(body, out);
+        }
+        // Publish an EXTERNAL automation event from the app process (things the daemon
+        // can't observe itself — e.g. phone call state, which needs an app-process
+        // TelephonyManager). Tightly whitelisted so the relay can only touch a known,
+        // safe set of event keys, never arbitrary automation state.
+        if (path.equals("/api/automations/event") && method.equals("POST")) {
+            return publishExternalEvent(body, out);
+        }
+        // Reusable action groups: list / create / update / delete. A group is a named,
+        // validated action sequence invoked by the "actionGroup" action (and keymap).
+        if (path.equals("/api/action-groups/list") && method.equals("GET")) {
+            HttpResponse.sendJson(out, com.overdrive.app.automation.ActionGroups.listJson().toString());
+            return true;
+        }
+        if (path.equals("/api/action-groups") && method.equals("GET")) {
+            HttpResponse.sendJson(out, com.overdrive.app.automation.ActionGroups.toJson().toString());
+            return true;
+        }
+        if (path.equals("/api/action-groups") && method.equals("POST")) {
+            return saveActionGroup(null, body, out);
+        }
+        if (path.startsWith("/api/action-groups/") && method.equals("PUT")) {
+            String id = path.substring("/api/action-groups/".length());
+            if (isBlankId(id)) return rejectBlankId(out);
+            return saveActionGroup(id, body, out);
+        }
+        if (path.startsWith("/api/action-groups/") && method.equals("DELETE")) {
+            String id = path.substring("/api/action-groups/".length());
+            if (isBlankId(id)) return rejectBlankId(out);
+            boolean ok = com.overdrive.app.automation.ActionGroups.delete(id);
+            if (ok) HttpResponse.sendJsonSuccess(out);
+            else HttpResponse.sendError(out, 404, "Action group not found.");
+            return true;
+        }
         return false;
+    }
+
+    /** Create/update an action group from { name, actions:[...] }. */
+    private static boolean saveActionGroup(String id, String body, OutputStream out) throws Exception {
+        if (body == null || body.isEmpty()) { HttpResponse.sendError(out, 400, "Missing body."); return true; }
+        JSONObject json;
+        try { json = new JSONObject(body); }
+        catch (JSONException e) { HttpResponse.sendError(out, 400, "Malformed JSON body."); return true; }
+        String savedId = com.overdrive.app.automation.ActionGroups.save(id, json);
+        if (savedId != null) {
+            JSONObject resp = new JSONObject();
+            resp.put("success", true);
+            resp.put("id", savedId);
+            HttpResponse.sendJson(out, resp.toString());
+        } else {
+            HttpResponse.sendError(out, 400, "Invalid action group (need a name and valid actions).");
+        }
+        return true;
+    }
+
+    /**
+     * Whitelisted external-event ingress. Body: { "event": "&lt;key&gt;", "value": "&lt;string&gt;" }.
+     * Only the keys in {@link Automations#publishExternalEvent} are accepted; anything
+     * else is rejected. This is the app→daemon bridge for signals the daemon can't read
+     * directly (call state today; a small, curated set going forward).
+     */
+    private static boolean publishExternalEvent(String body, OutputStream out) throws Exception {
+        if (body == null || body.isBlank()) { HttpResponse.sendJsonError(out, "Empty request body"); return true; }
+        JSONObject json;
+        try { json = new JSONObject(body); }
+        catch (JSONException e) { HttpResponse.sendError(out, 400, "Malformed JSON body."); return true; }
+        String event = json.optString("event", "");
+        String value = json.optString("value", "");
+        boolean ok = Automations.publishExternalEvent(event, value);
+        JSONObject resp = new JSONObject();
+        resp.put("success", ok);
+        if (!ok) resp.put("error", "Unknown or unsupported external event: " + event);
+        HttpResponse.sendJson(out, resp.toString());
+        return true;
+    }
+
+    /** GET the full set as a backup { version, exportedAt, automations:{...} }. */
+    private static boolean exportAutomations(OutputStream out) throws Exception {
+        JSONObject resp = new JSONObject();
+        resp.put("version", 1);
+        // Timestamp is informational only (the daemon has a real clock); the import
+        // path ignores it and reads only `automations`.
+        resp.put("exportedAt", System.currentTimeMillis());
+        resp.put("automations", Automations.toJson());
+        HttpResponse.sendJson(out, resp.toString());
+        return true;
+    }
+
+    /**
+     * POST an exported backup back. Body: { automations:{id:...}, replace?:bool } — or,
+     * for convenience, a bare {id:...} map (treated as merge). replace=true wipes the
+     * current set first; default merges (add/overwrite by id). Responds with the count
+     * actually imported so the UI can report "imported N".
+     */
+    private static boolean importAutomations(String body, OutputStream out) throws Exception {
+        if (body == null || body.isBlank()) { HttpResponse.sendJsonError(out, "Empty request body"); return true; }
+        JSONObject json;
+        try { json = new JSONObject(body); }
+        catch (JSONException e) { HttpResponse.sendError(out, 400, "Malformed JSON body."); return true; }
+        // Accept either the wrapped export shape or a bare id→automation map.
+        JSONObject map = json.optJSONObject("automations");
+        boolean replace = json.optBoolean("replace", false);
+        if (map == null) map = json; // bare map (no wrapper) → merge
+        int count = Automations.importAutomations(map, replace);
+        JSONObject resp = new JSONObject();
+        resp.put("success", count > 0);
+        resp.put("imported", count);
+        if (count == 0) resp.put("error", "No valid automations found in the file");
+        HttpResponse.sendJson(out, resp.toString());
+        return true;
     }
 
     /** GET automation-wide settings: { allowShell }. Fresh read for cross-UID. */

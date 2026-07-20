@@ -455,6 +455,15 @@ input, select { font-family: inherit; }
 /* === MAIN CONTENT === */
 .main-content {
     flex: 1;
+    /* A flex item defaults to min-width:auto, which lets it grow to its widest
+       non-wrapping descendant instead of the flex container's width. On a narrow
+       (mobile) viewport a long, nowrap child — e.g. a key-mapping binding row's
+       action name — then stretched .main-content past the screen, and because
+       .card / .page-body are overflow:hidden the surplus was CLIPPED off the right
+       edge (the reported crop). min-width:0 lets the item shrink to the container
+       so the descendants' own overflow:hidden + text-overflow:ellipsis truncate as
+       intended. No effect when content already fits (verified: desktop unchanged). */
+    min-width: 0;
     margin-left: var(--sidebar-width);
     min-height: 100vh;
     min-height: calc(var(--vh, 1vh) * 100);

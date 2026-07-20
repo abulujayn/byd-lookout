@@ -5,8 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
@@ -69,7 +71,8 @@ class DaemonKeepaliveService : Service() {
     
     private var wakeLock: PowerManager.WakeLock? = null
     private var screenOffReceiver: ScreenOffReceiver? = null
-    
+    private var powerStateReceiver: BroadcastReceiver? = null
+
     override fun onCreate() {
         super.onCreate()
         Log.i(TAG, "Service onCreate")
@@ -80,6 +83,25 @@ class DaemonKeepaliveService : Service() {
         postOrUpdateSummary()
         acquireWakeLock()
         registerScreenOffReceiver()
+        // GATE (G3): in "Vehicle ON only" mode the app-process keep-alive wakelock
+        // ("Overdrive:DaemonKeepalive") must NOT pin the CPU 24/7 while parked, or the
+        // head unit can never sleep even after the daemon-side gates (G1/G4) let it.
+        // There is no reliable ACC-OFF broadcast in the app process (only ACC_ON/IGN_ON
+        // are directionally trustworthy — see OnboardingGate), so we use SCREEN_OFF as
+        // the parked-proxy release signal and SCREEN_ON/ACC_ON/IGN_ON to re-acquire.
+        // Releasing on SCREEN_OFF is safe: a PARTIAL_WAKE_LOCK only has any effect when
+        // the system would otherwise sleep, and while ACC is ON the vehicle powers the
+        // AP awake regardless — so a transient screen-off during a drive costs nothing.
+        // The release is MODE-GATED at fire time, so onAndOff keeps holding the lock
+        // exactly as before (byte-identical behaviour).
+        registerPowerStateReceiver()
+        // ...but SCREEN_OFF is an EDGE broadcast: if this service is (re)created while
+        // the vehicle is ALREADY parked with the screen already off — e.g. a START_STICKY
+        // respawn or a ProcessRevival-driven relaunch while parked — no SCREEN_OFF will
+        // follow, so the unconditional acquire above would pin the wakelock for the whole
+        // parked window and defeat onOnly. Reconcile against the CURRENT screen state
+        // once at startup: in onOnly, if the screen is already off, release now.
+        reconcileWakeLockToScreenState()
 
         // Seed out-of-process revival watchdog. If this service was started
         // by the watchdog itself, this just re-arms the next alarm.
@@ -92,6 +114,29 @@ class DaemonKeepaliveService : Service() {
     
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         Log.i(TAG, "Service onStartCommand")
+
+        // "Vehicle ON only" parked-shutdown gate. START_STICKY respawns this service after
+        // the process is killed — but while parked in onOnly (marker present) that respawn
+        // must NOT rebuild the daemon stack or it would defeat the terminate. Stop self so
+        // the app process can die again and the head unit stays asleep. The ACC-on recovery
+        // path (BootReceiver) clears the marker and relaunches everything. Guard on onOnly
+        // too (fail-open) so a stray marker can never suppress an onAndOff user.
+        try {
+            if (com.overdrive.app.config.UnifiedConfigManager.isVehicleOnOnlyMode() &&
+                java.io.File(com.overdrive.app.ui.model.ParkedShutdown.MARKER_PATH).exists() &&
+                !DaemonStartupManager.recoveryInProgress) {
+                // Marker present AND we're not in the middle of an ACC-on recovery → this
+                // is a START_STICKY respawn while genuinely parked; don't rebuild. The
+                // recoveryInProgress guard avoids self-stopping on the recovery edge, where
+                // clearParkedMarker's async `rm` may not have landed yet even though the
+                // car is on and we SHOULD stay up.
+                Log.i(TAG, "onOnly + parked-shutdown marker present (not recovering) — not rebuilding; stopping keepalive service")
+                stopSelf()
+                return START_NOT_STICKY
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "parked-marker onStartCommand gate failed (${e.message}) — proceeding")
+        }
 
         // Skip daemon startup when a post-update launch is in progress.
         // MainActivity is the sole orchestrator after an install: it runs
@@ -165,6 +210,7 @@ class DaemonKeepaliveService : Service() {
         }
 
         unregisterScreenOffReceiver()
+        unregisterPowerStateReceiver()
         releaseWakeLock()
 
         super.onDestroy()
@@ -350,6 +396,148 @@ class DaemonKeepaliveService : Service() {
         screenOffReceiver?.let {
             ScreenOffReceiver.unregister(this, it)
             screenOffReceiver = null
+        }
+    }
+
+    /**
+     * GATE (G3): drive the keep-alive wakelock by ACC/parked state so "Vehicle ON only"
+     * mode lets the head unit sleep. Registered unconditionally; the RELEASE action is
+     * mode-gated at fire time so a runtime mode flip is honoured without a service
+     * restart, and onAndOff mode keeps the lock held exactly as before.
+     *
+     * PRIMARY signal is the vendor ACC edge (the same HAL-backed broadcast the daemon,
+     * PinLockActivity and OnboardingGate key off):
+     *   com.byd.action.ACC_OFF          → release iff onOnly (authoritative parked edge)
+     *   com.byd.action.ACC_ON / IGN_ON  → always re-acquire (idempotent)
+     * SCREEN_OFF is kept as a SECONDARY release trigger (belt-and-suspenders for a park
+     * where the ACC edge is somehow missed) and SCREEN_ON as a secondary re-acquire.
+     * Releasing on either edge in onOnly is safe: a PARTIAL_WAKE_LOCK only matters when
+     * the system would otherwise sleep, and while ACC is ON the vehicle powers the AP
+     * awake regardless, so a spurious release during a drive costs nothing and the next
+     * ACC_ON/SCREEN_ON re-acquires. re-acquire is idempotent (no-op in onAndOff / when
+     * already held), so the CPU is guaranteed awake the instant the car starts.
+     */
+    private fun registerPowerStateReceiver() {
+        if (powerStateReceiver != null) return
+        val r = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    "com.byd.action.ACC_OFF" -> {
+                        // Authoritative parked edge → FULL app-side standdown in onOnly:
+                        // the daemon stack is being terminated (reaper + parkTerminate), so
+                        // the app must also stop keeping itself/anything alive.
+                        if (com.overdrive.app.config.UnifiedConfigManager.isVehicleOnOnlyMode()) {
+                            Log.i(TAG, "onOnly + ACC_OFF — full app-side standdown (release wakelock, stop health-check, cancel revival, stop service)")
+                            parkStanddown(applicationContext)
+                        }
+                    }
+                    Intent.ACTION_SCREEN_OFF -> {
+                        // Secondary/belt-and-suspenders: SCREEN_OFF can fire mid-drive, so
+                        // only release the wakelock here (safe — moot while ACC powers the
+                        // AP). Do NOT do the heavy standdown on a mere screen-off.
+                        if (com.overdrive.app.config.UnifiedConfigManager.isVehicleOnOnlyMode()) {
+                            Log.i(TAG, "onOnly + SCREEN_OFF — releasing keep-alive wakelock (secondary)")
+                            releaseWakeLock()
+                        }
+                    }
+                    Intent.ACTION_SCREEN_ON,
+                    "com.byd.action.ACC_ON",
+                    "com.byd.action.IGN_ON" -> {
+                        // Re-acquire for the awake/ON session. Idempotent (acquireWakeLock
+                        // early-returns if already held), so this is a no-op in onAndOff.
+                        acquireWakeLock()
+                    }
+                }
+            }
+        }
+        val filter = IntentFilter().apply {
+            addAction("com.byd.action.ACC_OFF")
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction("com.byd.action.ACC_ON")
+            addAction("com.byd.action.IGN_ON")
+        }
+        try {
+            // Cross-UID vendor broadcasts (BYD system UID) + platform SCREEN_* — the
+            // un-flagged registration is correct here (targetSdk 25 exempt), matching
+            // OnboardingGate / PinLockActivity / ScreenOffReceiver.
+            @Suppress("UnspecifiedRegisterReceiverFlag")
+            registerReceiver(r, filter)
+            powerStateReceiver = r
+            Log.i(TAG, "PowerStateReceiver registered (G3 wakelock gating)")
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to register PowerStateReceiver: ${t.message}")
+        }
+    }
+
+    private fun unregisterPowerStateReceiver() {
+        powerStateReceiver?.let {
+            try { unregisterReceiver(it) } catch (t: Throwable) {
+                Log.w(TAG, "Error unregistering PowerStateReceiver: ${t.message}")
+            }
+            powerStateReceiver = null
+        }
+    }
+
+    /**
+     * "Vehicle ON only" full app-side standdown on the authoritative ACC_OFF edge. The
+     * daemon stack is being terminated (AccSentryDaemon reaper + CameraDaemon.parkTerminate),
+     * so the app process must stop keeping anything alive so it too can die and the head
+     * unit can sleep. Order:
+     *  1. Stop the 30s health-check (no more relaunch probes).
+     *  2. Cancel the RTC revival alarms now (don't wait for the next fire).
+     *  3. Release the keep-alive wakelock.
+     *  4. Stop this foreground service (and mark START_NOT_STICKY-equivalent by stopSelf).
+     * The onStartCommand marker-gate handles any subsequent START_STICKY respawn. Recovery
+     * on ACC-on (BootReceiver) clears the marker and restarts the whole stack.
+     */
+    private fun parkStanddown(appCtx: Context) {
+        try { DaemonStartupManager.stopHealthChecks() } catch (t: Throwable) {
+            Log.w(TAG, "parkStanddown: stopHealthChecks failed: ${t.message}")
+        }
+        try { ProcessRevivalReceiver.cancel(appCtx) } catch (t: Throwable) {
+            Log.w(TAG, "parkStanddown: revival cancel failed: ${t.message}")
+        }
+        // Also stand down the sibling foreground services so no app-side loop keeps
+        // running against the now-dead daemon (LocationSidecar's 1Hz GPS→IPC, StatusOverlay's
+        // 10s /status poll). Their own onStartCommand parked-marker gate keeps them down
+        // across any START_STICKY respawn; this stops them now. Recovery restarts them.
+        try { com.overdrive.app.overlay.StatusOverlayService.stop(appCtx) } catch (t: Throwable) {
+            Log.w(TAG, "parkStanddown: StatusOverlayService.stop failed: ${t.message}")
+        }
+        try {
+            appCtx.stopService(Intent(appCtx,
+                com.overdrive.app.services.LocationSidecarService::class.java))
+        } catch (t: Throwable) {
+            Log.w(TAG, "parkStanddown: LocationSidecarService stop failed: ${t.message}")
+        }
+        releaseWakeLock()
+        try { stopSelf() } catch (t: Throwable) {
+            Log.w(TAG, "parkStanddown: stopSelf failed: ${t.message}")
+        }
+    }
+
+    /**
+     * One-shot startup reconciliation for the G3 wakelock. SCREEN_OFF is an edge-only
+     * broadcast, so a service (re)start while the vehicle is already parked with the
+     * screen already off would never receive the release edge — leaving the
+     * "Overdrive:DaemonKeepalive" wakelock pinned for the whole parked window and
+     * re-establishing the CPU keep-awake onOnly is meant to remove. Here we read the
+     * CURRENT interactive state directly and, in onOnly with the screen already off,
+     * release immediately. In onAndOff (or when the screen is on) this is a no-op, so
+     * the default behaviour is unchanged. PowerManager.isInteractive() is a synchronous
+     * app-process read — it mirrors the SCREEN_ON/OFF edges the receiver keys off.
+     */
+    private fun reconcileWakeLockToScreenState() {
+        try {
+            if (!com.overdrive.app.config.UnifiedConfigManager.isVehicleOnOnlyMode()) return
+            val pm = getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return
+            if (!pm.isInteractive) {
+                Log.i(TAG, "onOnly + screen already off at startup — releasing keep-alive wakelock so AP can sleep")
+                releaseWakeLock()
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "reconcileWakeLockToScreenState failed: ${t.message}")
         }
     }
 }

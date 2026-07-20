@@ -26,7 +26,7 @@
         };
     </script>
     <script src="../shared/app-tabs.js"></script>
-    <link rel="stylesheet" href="../shared/styles.css?v=17">
+    <link rel="stylesheet" href="../shared/styles.css?v=18">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
     <style>
@@ -141,6 +141,13 @@
         }
         .km-step-move:hover { color: var(--brand-primary); }
         .km-step-move:disabled { opacity: 0.3; cursor: default; }
+        /* Disabled binding row — muted so the user can see it's inactive. */
+        .km-binding.km-disabled { opacity: 0.5; }
+        .km-binding.km-disabled .km-key { color: var(--text-muted); background: rgba(128,128,128,0.08); }
+        /* Small toggle switch for inline use in binding rows. Shares the
+           .toggle-switch/toggle-slider classes but scaled down so it fits
+           the compact binding-row height without bloating it. */
+        .toggle-switch-sm { transform: scale(0.75); flex: none; }
         /* Empty-state styling. The shared .empty-state rules live in
            automations.css, which this page does NOT load — without these the
            bindings empty-state icon renders at its full intrinsic size with no
@@ -211,7 +218,7 @@
                                 </label>
                             </div>
                         </div>
-                        <div class="setting-row" style="border-bottom:none;">
+                        <div class="setting-row">
                             <div class="setting-info">
                                 <div class="setting-name" data-i18n="keymap.allow_advanced">Advanced actions</div>
                                 <div class="setting-desc" data-i18n="keymap.allow_advanced_desc">Allow bindings that run a raw shell command. Leave off unless you know exactly what you're sending.</div>
@@ -223,6 +230,23 @@
                                 </label>
                             </div>
                         </div>
+                        <div class="setting-row">
+                            <div class="setting-info">
+                                <div class="setting-name" data-i18n="keymap.double_tap_window">Double-tap speed</div>
+                                <div class="setting-desc" data-i18n="keymap.double_tap_window_desc">How long to wait for a second tap before a double-tap binding gives up and the single-tap fires. Raise it if your double-taps often trigger the single action; lower it if a single tap feels laggy.</div>
+                            </div>
+                            <div class="setting-control" style="display:flex;align-items:center;">
+                                <input type="range" id="kmDoubleTapWindow" min="250" max="1500" step="50"
+                                       oninput="KM.onDoubleTapWindowInput()" onchange="KM.onDoubleTapWindowChange()"
+                                       style="vertical-align:middle;">
+                                <span id="kmDoubleTapWindowVal" style="margin-left:10px;min-width:40px;display:inline-block;text-align:right;">0.5s</span>
+                            </div>
+                        </div>
+                        <!-- Shared driver-cluster size, injected by cluster-projection.js.
+                             Writes blindspot.clusterSizeProfile — the SAME setting the map +
+                             blind-spot use, and the "Cast app to cluster" binding. Shown here
+                             so a user binding a cluster cast can match it to their cluster. -->
+                        <div id="kmClusterSizeMount"></div>
                     </div>
                 </div>
 
@@ -297,11 +321,30 @@
                                 <div class="setting-name" data-i18n="keymap.press_type">Press type</div>
                             </div>
                             <div class="setting-control">
-                                <select id="kmPressType" class="select-control">
+                                <select id="kmPressType" class="select-control" onchange="KM.onPressTypeChange()">
                                     <option value="single" data-i18n="keymap.press_single">Single press</option>
                                     <option value="double" data-i18n="keymap.press_double">Double press</option>
                                     <option value="long" data-i18n="keymap.press_long">Long press</option>
                                 </select>
+                            </div>
+                        </div>
+
+                        <!-- Block-native-single: only meaningful for a DOUBLE-press
+                             binding. Off (default) = the button's native single-click
+                             still fires on the first tap (then the double promotes). On
+                             = the native single is suppressed; a lone tap is replayed
+                             after the double window so the button still works. Shown
+                             only when Press type = double (toggled in onPressTypeChange). -->
+                        <div class="setting-row" id="kmBlockNativeRow" style="display:none;">
+                            <div class="setting-info">
+                                <div class="setting-name" data-i18n="keymap.block_native_single">Block single-click action</div>
+                                <div class="setting-desc" data-i18n="keymap.block_native_single_desc">Stop the button's normal single-click from firing before your double-click action. A single tap still works, just after a short delay.</div>
+                            </div>
+                            <div class="setting-control">
+                                <label class="toggle-switch">
+                                    <input type="checkbox" id="kmBlockNativeSingle">
+                                    <span class="toggle-slider"></span>
+                                </label>
                             </div>
                         </div>
 
@@ -444,7 +487,8 @@
     <script src="../shared/auth.js"></script>
     <script src="../shared/pwa-init.js?v=index1"></script>
     <script src="../shared/core.js"></script>
-    <script src="../shared/key-mapping.js?v=14"></script>
+    <script src="../shared/key-mapping.js?v=28"></script>
+    <script src="../shared/cluster-projection.js?v=1"></script>
     <script>
         function toggleSidebar() {
             document.getElementById('sidebar').classList.toggle('open');
@@ -454,6 +498,7 @@
             BYD.i18n.init().then(function () {
                 BYD.core.init();
                 KM.init();
+                if (window.ClusterProjection) ClusterProjection.renderInto('kmClusterSizeMount', 'kmClusterSize');
             });
         });
     </script>

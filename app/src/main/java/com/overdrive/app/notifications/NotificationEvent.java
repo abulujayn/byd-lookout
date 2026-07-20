@@ -47,6 +47,35 @@ public final class NotificationEvent {
      */
     private boolean pushSuppressed = false;
 
+    /**
+     * Transient delivery hint — NOT serialized, NOT persisted. When true,
+     * {@link com.overdrive.app.notifications.sinks.PushSink} delivers this event
+     * to every subscription REGARDLESS of that device's muted categories,
+     * severity floor, or quiet hours.
+     *
+     * <p>Reserved for user-initiated diagnostics — the "Send test" button, whose
+     * entire purpose is "does Web Push reach this device at all". Gating a test on
+     * the very preferences the user is trying to verify would make the button
+     * appear broken (e.g. on a fresh device where the default category is muted by
+     * default, or when the user has raised the severity floor). Mutually exclusive
+     * in practice with {@link #pushSuppressed}; if both were somehow set,
+     * suppression wins (checked first in PushSink). Default false = honour prefs.
+     */
+    private boolean preferencesBypassed = false;
+
+    /**
+     * Transient delivery hint — NOT serialized, NOT persisted. When non-null,
+     * {@link com.overdrive.app.notifications.sinks.PushSink} delivers this event
+     * ONLY to the subscription whose id matches, skipping every other device.
+     *
+     * <p>Reserved for the user-initiated "Send test" — a test must land on the
+     * phone that asked for it, not fan out to every registered device (which,
+     * combined with {@link #preferencesBypassed}, would otherwise buzz a
+     * sleeping phone in its quiet hours). Null = deliver to all eligible
+     * subscriptions, the normal broadcast behaviour.
+     */
+    private String pushTargetId = null;
+
     public NotificationEvent(String category, Severity severity, String title, String body,
                              String tag, String clickUrl, JSONObject data) {
         if (category == null) throw new IllegalArgumentException("category required");
@@ -76,6 +105,38 @@ public final class NotificationEvent {
     /** @return true if PushSink should skip Web Push for this event. */
     public boolean isPushSuppressed() {
         return pushSuppressed;
+    }
+
+    /**
+     * Mark this event to bypass per-device push preferences (mute / severity
+     * floor / quiet hours) — see {@link #preferencesBypassed}. Returns {@code
+     * this} for chaining. For user-initiated diagnostics only.
+     */
+    public NotificationEvent bypassPreferences() {
+        this.preferencesBypassed = true;
+        return this;
+    }
+
+    /** @return true if PushSink should ignore this device's mute/floor/quiet-hours. */
+    public boolean isPreferencesBypassed() {
+        return preferencesBypassed;
+    }
+
+    /**
+     * Restrict this event to a single subscription id (see {@link #pushTargetId}).
+     * Returns {@code this} for chaining. Null-safe: a null/empty id is ignored
+     * (falls back to broadcast).
+     */
+    public NotificationEvent targetSubscription(String subscriptionId) {
+        if (subscriptionId != null && !subscriptionId.isEmpty()) {
+            this.pushTargetId = subscriptionId;
+        }
+        return this;
+    }
+
+    /** @return the single subscription id to deliver to, or null to broadcast. */
+    public String getPushTargetId() {
+        return pushTargetId;
     }
 
     /** Build the wire envelope sent inside the encrypted Web Push payload. */

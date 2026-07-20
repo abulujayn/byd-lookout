@@ -117,6 +117,16 @@ public final class BatteryVoltageMonitorV2 {
     }
 
     public static synchronized void startMonitor(Context context) {
+        // GATE (defense-in-depth): in "Vehicle ON only" mode this voltage-driven
+        // MCU sleep/wake monitor — a purely post-vehicle-OFF battery-management loop
+        // that holds its own recovery-window wakelock — must never arm. Today the only
+        // caller is AccSentryDaemon's SentrySetup worker, which G1 already skips in
+        // onOnly; this guard makes the monitor self-safe against any future/respawn
+        // caller. Placed before the `running` check so no wakelock is ever acquired.
+        if (com.overdrive.app.config.UnifiedConfigManager.isVehicleOnOnlyMode()) {
+            logger.info("startMonitor: onOnly mode — voltage-driven keep-awake/MCU-sleep monitor disabled");
+            return;
+        }
         if (running) {
             logger.info("startMonitor: already running");
             return;

@@ -296,6 +296,23 @@ public class StatusOverlayService extends Service {
         createNotificationChannel();
         startOverlayForeground();
 
+        // "Vehicle ON only" parked-shutdown gate: the status overlay polls /status every
+        // 10s against the now-dead daemon and re-arms itself via AlarmManager on task
+        // removal. If the stack was terminated for the parked window, stop and stay down
+        // until ACC-on recovery clears the marker. onOnly-guarded (fail-open) so onAndOff
+        // is unaffected; recoveryInProgress guard avoids self-stopping on the recovery edge.
+        try {
+            if (com.overdrive.app.config.UnifiedConfigManager.isVehicleOnOnlyMode()
+                    && new java.io.File(com.overdrive.app.ui.model.ParkedShutdown.MARKER_PATH).exists()
+                    && !com.overdrive.app.ui.daemon.DaemonStartupManager.getRecoveryInProgress()) {
+                Log.w(TAG, "onOnly + parked-shutdown marker present — stopping status overlay");
+                stopSelf();
+                return START_NOT_STICKY;
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "parked-marker gate failed (" + t.getMessage() + ") — proceeding");
+        }
+
         if (!Settings.canDrawOverlays(this)) {
             Log.w(TAG, "SYSTEM_ALERT_WINDOW not granted — stopping");
             stopSelf();

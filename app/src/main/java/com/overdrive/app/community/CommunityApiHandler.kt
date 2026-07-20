@@ -76,6 +76,8 @@ object CommunityApiHandler {
 
                 pathOnly.startsWith("${PREFIX}automation/") && method == "GET" ->
                     return getOne(idFrom(pathOnly, "${PREFIX}automation/"), out)
+                pathOnly.startsWith("${PREFIX}automation/") && method == "PUT" ->
+                    return updateOwn(idFrom(pathOnly, "${PREFIX}automation/"), body, out)
                 pathOnly.startsWith("${PREFIX}automation/") && method == "DELETE" ->
                     return deleteOwn(idFrom(pathOnly, "${PREFIX}automation/"), out)
                 pathOnly.startsWith("${PREFIX}import/") && method == "POST" ->
@@ -146,8 +148,17 @@ object CommunityApiHandler {
         val name = json.optString("name", "").trim()
         if (name.isEmpty()) { safeError(out, 400, "name required"); return true }
         val description = json.optString("description", "").trim()
+        // A description is REQUIRED so the community list always explains what a shared
+        // automation does (mirrors the client-side gate; defense-in-depth).
+        if (description.isEmpty()) { safeError(out, 400, "description required"); return true }
         var category = json.optString("category", "other").trim().lowercase()
         if (category.isEmpty()) category = "other"
+
+        // Referenced action groups, validated + canonicalized through the SAME gate as the
+        // automation (a group is a named action list). null return = a group failed the
+        // no-shell/schema gate and sanitize wrote the error response.
+        val bundledGroups = sanitizeBundledGroups(json.optJSONObject("actionGroups"), out)
+            ?: return true
 
         // Author name: prefer the request, else the remembered value; persist it for next time.
         var authorName = json.optString("authorName", "").trim()
@@ -160,7 +171,96 @@ object CommunityApiHandler {
         // server stores as author_device and later matches on delete, so the author can
         // still remove their upload after a RoadSense id rotation.
         val publisherId = CommunityConfig.publisherId()
-        val res = provider.publish(publisherId, authorName, name, description, category, canonical, SCHEMA_VERSION)
+        val res = provider.publish(publisherId, authorName, name, description, category, canonical, SCHEMA_VERSION, bundledGroups)
+        forward(res, out)
+        return true
+    }
+
+    /**
+     * Validate + canonicalize the optional bundled action groups from a publish/update
+     * body. Input shape {id:{name,actions}} (from the client's _collectActionGroups). Each
+     * group's actions are re-parsed through [Automation.parseActionsPublic] (the same
+     * validator the automation body uses) and re-serialized, and rejected if any carries a
+     * shell action — a group must never smuggle shell into the catalog. Returns:
+     *   - a canonical {id:{name,actions}} object (possibly empty) on success, OR
+     *   - null after writing a 403/400 error to [out] when a group is invalid/shell.
+     * A null/empty input yields an empty object (no groups bundled).
+     */
+    private fun sanitizeBundledGroups(groups: JSONObject?, out: OutputStream): JSONObject? {
+        val result = JSONObject()
+        if (groups == null || groups.length() == 0) return result
+        val ids = groups.keys()
+        while (ids.hasNext()) {
+            val id = ids.next()
+            val g = groups.optJSONObject(id) ?: continue
+            val gName = g.optString("name", "").trim()
+            val actionsJson = g.optJSONArray("actions")
+            if (gName.isEmpty() || actionsJson == null || actionsJson.length() == 0) {
+                safeError(out, 400, "bundled action group '$id' is empty or unnamed")
+                return null
+            }
+            val parsedActions = try { Automation.parseActionsPublic(actionsJson) } catch (_: Throwable) { null }
+            if (parsedActions == null || parsedActions.isEmpty()) {
+                safeError(out, 400, "bundled action group '$id' does not match the schema")
+                return null
+            }
+            val canonActions = JSONArray()
+            for (a in parsedActions) canonActions.put(a.toJson())
+            // A group's actions carry no top-level trigger/condition wrapper, so scan the
+            // action array directly for shell (containsShellAction expects an automation
+            // object with an "actions" array — wrap it).
+            val wrapper = JSONObject().put("actions", canonActions)
+            if (containsShellAction(wrapper)) {
+                safeError(out, 403, "an action group cannot contain a shell action")
+                return null
+            }
+            result.put(id, JSONObject().put("name", gName).put("actions", canonActions))
+        }
+        return result
+    }
+
+    /**
+     * PUT automation/{id} — UPDATE an automation THIS install already published. Same
+     * server-authoritative validation as [publish] (re-parse via Automation.fromJson,
+     * block shell), then PUT to the Worker, which gates on the publishing-device match
+     * and preserves the row's ratings/downloads + id. This is how a user edits a shared
+     * automation (edit locally → Update) instead of delete-and-republish (which would
+     * reset stars/downloads and mint a new id). A non-owner / unknown id gets the
+     * Worker's 404 forwarded as-is.
+     */
+    private fun updateOwn(id: String?, body: String?, out: OutputStream): Boolean {
+        if (id.isNullOrBlank()) { safeError(out, 400, "missing id"); return true }
+        val json = parseBody(body) ?: run { safeError(out, 400, "invalid JSON body"); return true }
+        val rules = json.optJSONObject("rules") ?: run { safeError(out, 400, "rules required"); return true }
+
+        // Authoritative validate + canonicalize (identical gate to publish).
+        val parsed = Automation.fromJson(rules)
+        if (parsed == null) { safeError(out, 400, "automation does not match the schema"); return true }
+        val canonical = parsed.toJson()
+        if (containsShellAction(canonical)) {
+            safeError(out, 403, "shell automations cannot be shared to the community catalog")
+            return true
+        }
+
+        val name = json.optString("name", "").trim()
+        if (name.isEmpty()) { safeError(out, 400, "name required"); return true }
+        val description = json.optString("description", "").trim()
+        if (description.isEmpty()) { safeError(out, 400, "description required"); return true }
+        var category = json.optString("category", "other").trim().lowercase()
+        if (category.isEmpty()) category = "other"
+
+        val bundledGroups = sanitizeBundledGroups(json.optJSONObject("actionGroups"), out)
+            ?: return true
+
+        var authorName = json.optString("authorName", "").trim()
+        if (authorName.isEmpty()) authorName = CommunityConfig.snapshot(forceReload = true).authorName ?: ""
+        if (authorName.isEmpty()) { safeError(out, 400, "authorName required"); return true }
+        CommunityConfig.setAuthorName(authorName)
+
+        // Same stable publisher id as publish/delete — the Worker matches it against the
+        // stored author_device, so only the original publisher can update the row.
+        val publisherId = CommunityConfig.publisherId()
+        val res = provider.update(id, publisherId, authorName, name, description, category, canonical, SCHEMA_VERSION, bundledGroups)
         forward(res, out)
         return true
     }
@@ -176,13 +276,39 @@ object CommunityApiHandler {
         if (id.isNullOrBlank()) { safeError(out, 400, "missing id"); return true }
         val res = provider.get(id)
         if (!res.ok || res.body == null) { forward(res, out); return true }
-        val rules = res.body.optJSONObject("automation")?.optJSONObject("rules")
+        val automation = res.body.optJSONObject("automation")
+        val rules = automation?.optJSONObject("rules")
         if (rules == null) { safeError(out, 502, "shared automation had no rules"); return true }
 
         // Never import a shell automation, regardless of the local shell gate.
         if (containsShellAction(rules)) {
             safeError(out, 403, "this automation contains a shell action and cannot be imported")
             return true
+        }
+
+        // Recreate any bundled action groups the automation references (call-by-reference,
+        // so the "Run action group" action stores a groupId that must resolve locally).
+        // Preserve the ORIGINAL group id so the reference still matches; skip an id that
+        // already exists locally (never clobber the importer's own group of that id — and
+        // if it's the same shared group re-imported, it's already present). Each group was
+        // validated + no-shell-checked at publish; re-validate here via ActionGroups.save
+        // (which re-parses + rejects a bad group) so a tampered Worker payload can't inject
+        // one. Best-effort: a group that fails to save just leaves its action a no-op,
+        // exactly the pre-bundling behaviour — never blocks the automation import.
+        val groups = automation.optJSONObject("actionGroups")
+        if (groups != null) {
+            val gids = groups.keys()
+            while (gids.hasNext()) {
+                val gid = gids.next()
+                try {
+                    if (com.overdrive.app.automation.ActionGroups.exists(gid)) continue
+                    val g = groups.optJSONObject(gid) ?: continue
+                    val saved = com.overdrive.app.automation.ActionGroups.save(gid, g)
+                    if (saved == null) logger.warn("Import: bundled action group $gid rejected (invalid) — its action will no-op")
+                } catch (t: Throwable) {
+                    logger.warn("Import: failed to recreate action group $gid: ${t.message}")
+                }
+            }
         }
 
         // Import-as-disabled: the user reviews the rules before enabling.
@@ -271,10 +397,24 @@ object CommunityApiHandler {
      * case-insensitively / by substring, defensively, mirroring the Worker's check.
      */
     private fun containsShellAction(rules: JSONObject): Boolean {
-        val actions = rules.optJSONArray("actions") ?: return false
+        // Scan the primary actions AND the automation-level else branch, RECURSING into
+        // every action's nested childActions/elseActions. A shell action buried inside a
+        // loop / if / action-group child list must NOT bypass the no-shell wall — this
+        // is a security guarantee, so the scan follows the full action tree, not just
+        // the top level.
+        return scanActionsForShell(rules.optJSONArray("actions")) ||
+                scanActionsForShell(rules.optJSONArray("elseActions"))
+    }
+
+    /** Recursively true if any action (or nested child action) has a shell-ish type. */
+    private fun scanActionsForShell(actions: org.json.JSONArray?): Boolean {
+        if (actions == null) return false
         for (i in 0 until actions.length()) {
-            val type = actions.optJSONObject(i)?.optString("type")?.trim()?.lowercase() ?: continue
+            val obj = actions.optJSONObject(i) ?: continue
+            val type = obj.optString("type").trim().lowercase()
             if (type.contains("shell")) return true
+            if (scanActionsForShell(obj.optJSONArray("childActions"))) return true
+            if (scanActionsForShell(obj.optJSONArray("elseActions"))) return true
         }
         return false
     }

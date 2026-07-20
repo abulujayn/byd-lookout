@@ -511,6 +511,13 @@ public class SentryDaemon {
     }
     
     private static void enableWifi() {
+        // Honor an explicit user "WiFi off" automation / key-mapping (radio action set
+        // the suppression flag). Without such a rule the flag is false (default) and
+        // WiFi is enabled as before. Fail-open: a read error returns false → we enable.
+        if (com.overdrive.app.config.UnifiedConfigManager.isWifiKeepAliveSuppressed()) {
+            log("WiFi enable skipped — user radio rule keeps WiFi off");
+            return;
+        }
         log("Enabling WiFi...");
         execShell(CMD_WIFI_ENABLE());
         execShell(CMD_WIFI_ENABLE_ALT());
@@ -855,13 +862,33 @@ public class SentryDaemon {
                     // Check if Location service is running
                     String result = execShell("dumpsys activity services " + LOCATION_SERVICE_NAME + " 2>/dev/null");
                     
-                    boolean isRunning = result.contains("ServiceRecord") && 
+                    boolean isRunning = result.contains("ServiceRecord") &&
                                        result.contains("app=ProcessRecord") &&
                                        !result.contains("app=null");
-                    
+
                     if (!isRunning) {
-                        log("Location Monitor: Service not running, restarting...");
-                        restartLocationService();
+                        // GATE (G6): in "Vehicle ON only" mode, don't re-exec shell +
+                        // restart the location sidecar while the car is OFF — that keeps
+                        // the parked system busy every 15s. Only suppress the RESTART
+                        // side-effect (not the loop cadence), so location resumes the
+                        // instant ACC returns or the mode flips back. Mode is read LIVE
+                        // (mtime-gated, cheap) so a runtime flip is honoured without a
+                        // daemon restart. ACC state uses probeAccState() — a HAL-direct
+                        // read that works in THIS UID-1000 process; AccMonitor.isAccOn()
+                        // would NOT (its cache is only updated inside AccSentryDaemon's
+                        // UID-2000 process and would read false here forever, over-
+                        // suppressing location even while driving). probeAccState returns
+                        // true only when ACC is confirmed OFF → on ON/unknown we restart
+                        // as usual (fail-open, current behaviour preserved).
+                        boolean suppressWhileParked =
+                            com.overdrive.app.config.UnifiedConfigManager.isVehicleOnOnlyMode()
+                            && com.overdrive.app.monitor.AccMonitor.probeAccState(appContext);
+                        if (suppressWhileParked) {
+                            log("Location Monitor: onOnly + ACC OFF — skipping restart so system can sleep");
+                        } else {
+                            log("Location Monitor: Service not running, restarting...");
+                            restartLocationService();
+                        }
                     }
                     
                 } catch (InterruptedException e) {

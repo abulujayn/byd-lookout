@@ -167,6 +167,15 @@ public final class VehicleControlCatalog {
                         payload = next ? "on" : "off";
                     } else if (options != null && !options.isEmpty()) {
                         payload = nextCyclePayload();
+                    } else if (onVal != null) {
+                        // (c) SET-ONLY SWITCH with no state reader and no option list (mirror
+                        // fold). No live readback exists, so flip off the last-commanded value
+                        // (default OFF → first press turns ON, i.e. folds). This is the "blind
+                        // flip" the keymap/automation UI advertises; without it "toggle" fell
+                        // through and truthy("toggle")==false made every press UNFOLD.
+                        String last = LAST_SWITCH_PAYLOAD.get(key);
+                        boolean wasOn = last != null && last.equalsIgnoreCase(onVal);
+                        payload = wasOn ? offVal : onVal;
                     }
                     // Anything else: "toggle" falls through to the builder unchanged
                     // (which treats the unknown payload via its own default).
@@ -177,6 +186,13 @@ public final class VehicleControlCatalog {
                 if (action != null && options != null && !options.isEmpty()
                         && payload != null && !"toggle".equalsIgnoreCase(payload.trim())) {
                     LAST_SELECT_PAYLOAD.put(key, payload);
+                }
+                // Same for a set-only switch (mirror fold): record the concrete on/off value
+                // just commanded so the next "toggle" flips from it.
+                if (action != null && state == null && (options == null || options.isEmpty())
+                        && onVal != null && payload != null
+                        && !"toggle".equalsIgnoreCase(payload.trim())) {
+                    LAST_SWITCH_PAYLOAD.put(key, truthy(payload) ? onVal : offVal);
                 }
                 return action;
             } catch (Exception e) { return null; }
@@ -334,6 +350,12 @@ public final class VehicleControlCatalog {
     // from first option", which is fine (the first press picks a deterministic option).
     private static final Map<String, String> LAST_SELECT_PAYLOAD = new java.util.concurrent.ConcurrentHashMap<>();
 
+    // Last concrete payload commanded per readback-less SWITCH entity (mirror fold — a
+    // set-only on/off switch with no fold-state getter). Lets a "toggle" press flip off the
+    // last-commanded value, which is the "blind flip" the keymap/automation UI promises.
+    // Same lifecycle/concurrency notes as LAST_SELECT_PAYLOAD.
+    private static final Map<String, String> LAST_SWITCH_PAYLOAD = new java.util.concurrent.ConcurrentHashMap<>();
+
     private static void register(ControlEntity e) { ENTITIES.put(e.key, e); }
 
     public static Collection<ControlEntity> all() { return ENTITIES.values(); }
@@ -461,6 +483,17 @@ public final class VehicleControlCatalog {
 
         // ── Windows (all) — cover, command-only (per-window + position: Tier 2) ──
         register(cover("windows_all", "Windows", "mdi:car-door", "window", true, null, (sub, payload, snap) -> {
+            // CLOSE-all routes to the dedicated CloseAllWindowsCommand (CLOUD_FIRST with
+            // SDK fallback), NOT the bare local setAllWindowState(2,2,2,2). On this
+            // generation the local all-windows CLOSE is unreliable (anti-pinch / the HAL
+            // often ignores a simultaneous 4-window raise), which is exactly why the
+            // composite cloud CLOSEWINDOW command exists — that's the path that actually
+            // raises the windows. OPEN/STOP keep the direct local move (they work locally
+            // and must stay instant/offline). This fixes "windows up (close) mapping does
+            // nothing" while "down (open) works".
+            if ("CLOSE".equalsIgnoreCase(payload)) {
+                return ControlAction.of(new VehicleCommandRouter.CloseAllWindowsCommand());
+            }
             int action = "OPEN".equalsIgnoreCase(payload) ? 1 : "STOP".equalsIgnoreCase(payload) ? 3 : 2;
             return ControlAction.of(new VehicleCommandRouter.WindowMoveCommand(0, action, null));
         }));
@@ -514,6 +547,17 @@ public final class VehicleControlCatalog {
                 (sub, payload, snap) -> ControlAction.of(new VehicleCommandRouter.LightsCommand(truthy(payload))),
                 snap -> snap == null ? null : snap.dayTimeLight));
 
+        // ── Hazard (double-flash) lights — switch, real readback ─────────────
+        // State published to light_hazard (getLightStatus(8) → snap.hazard), which is
+        // reliable. The SET (double-flash COMMAND feature) is UNCONFIRMED on this
+        // firmware — no reference-app precedent and an inferred feature id — so the
+        // write may be refused by the HAL; setHazardLights returns false in that case.
+        // Validate actuation via GET /api/debug/light/fire?candidate=A before relying
+        // on it; the readback (and hazard condition/trigger) work regardless.
+        register(sw("hazard", "Hazard Lights", "mdi:car-light-alert", null, "light_hazard", "1", "0",
+                (sub, payload, snap) -> ControlAction.of(new VehicleCommandRouter.HazardCommand(truthy(payload))),
+                snap -> snap == null ? null : snap.hazard));
+
         // ── Ambient lights colour — number (real state, 1-based palette index) ──
         register(number("ambient_colour", "Ambient Lights Colour", "mdi:format-color-fill", "config",
                 "ambient_colour", 1, 31, 1, "", (sub, payload, snap) ->
@@ -564,14 +608,75 @@ public final class VehicleControlCatalog {
                 // Raw childPresenceDetection: 1=on, 2=off, 3=delay. "on" iff == 1.
                 snap -> snap == null ? null : (snap.childPresenceDetection == 1)));
 
+        // ── Expanded ADAS matrix ─────────────────────────────────────────────
+        // All route to adasDevice via BydDataCollector (feature-id or reflection). No
+        // telemetry state field is published for these, so state is optimistic (echo).
+        // Feature ids / polarity are per the OEM SDK and UNVERIFIED on every trim —
+        // verify via GET /api/vehicle/adas before relying on any given one. The
+        // auto-brake / lane-keep entries are SAFETY controls (labelled at the action
+        // layer); AEB is enable-only there.
+        register(sw("adas_bsd", "Blind Spot Detection", "mdi:car-side", "config", null, "1", "0",
+                (sub, payload, snap) -> ControlAction.echo(
+                        new VehicleCommandRouter.AdasBlindSpotCommand(truthy(payload)),
+                        "adas_bsd", truthy(payload) ? "1" : "0")));
+        register(sw("adas_tsr", "Traffic Sign Recognition", "mdi:sign-real-estate", "config", null, "1", "0",
+                (sub, payload, snap) -> ControlAction.echo(
+                        new VehicleCommandRouter.AdasTrafficSignCommand(truthy(payload)),
+                        "adas_tsr", truthy(payload) ? "1" : "0")));
+        register(sw("adas_rcta", "Rear Cross Traffic Alert", "mdi:car-back", "config", null, "1", "0",
+                (sub, payload, snap) -> ControlAction.echo(
+                        new VehicleCommandRouter.AdasRearCrossTrafficCommand(truthy(payload)),
+                        "adas_rcta", truthy(payload) ? "1" : "0")));
+        register(sw("adas_fcta", "Front Cross Traffic Alert", "mdi:car", "config", null, "1", "0",
+                (sub, payload, snap) -> ControlAction.echo(
+                        new VehicleCommandRouter.AdasFrontCrossTrafficCommand(truthy(payload)),
+                        "adas_fcta", truthy(payload) ? "1" : "0")));
+        register(sw("adas_tla", "Traffic Light Attention", "mdi:traffic-light", "config", null, "1", "0",
+                (sub, payload, snap) -> ControlAction.echo(
+                        new VehicleCommandRouter.AdasTrafficLightAttentionCommand(truthy(payload)),
+                        "adas_tla", truthy(payload) ? "1" : "0")));
+        register(sw("adas_dow", "Door Open Warning", "mdi:car-door", "config", null, "1", "0",
+                (sub, payload, snap) -> ControlAction.echo(
+                        new VehicleCommandRouter.AdasOpenDoorWarningCommand(truthy(payload)),
+                        "adas_dow", truthy(payload) ? "1" : "0")));
+        register(sw("adas_rcw", "Rear Collision Warning", "mdi:car-back", "config", null, "1", "0",
+                (sub, payload, snap) -> ControlAction.echo(
+                        new VehicleCommandRouter.AdasRearCollisionWarningCommand(truthy(payload)),
+                        "adas_rcw", truthy(payload) ? "1" : "0")));
+        register(sw("adas_islc", "Speed Limit Control", "mdi:speedometer", "config", null, "1", "0",
+                (sub, payload, snap) -> ControlAction.echo(
+                        new VehicleCommandRouter.AdasSpeedLimitControlCommand(truthy(payload)),
+                        "adas_islc", truthy(payload) ? "1" : "0")));
+        register(sw("adas_elka", "Emergency Lane Keeping", "mdi:road-variant", "config", null, "1", "0",
+                (sub, payload, snap) -> ControlAction.echo(
+                        new VehicleCommandRouter.AdasEmergencyLaneKeepCommand(truthy(payload)),
+                        "adas_elka", truthy(payload) ? "1" : "0")));
+        register(sw("adas_rctb", "Rear Cross Traffic Brake", "mdi:car-brake-alert", "config", null, "1", "0",
+                (sub, payload, snap) -> ControlAction.echo(
+                        new VehicleCommandRouter.AdasRearCrossBrakeCommand(truthy(payload)),
+                        "adas_rctb", truthy(payload) ? "1" : "0")));
+        register(sw("adas_fctb", "Front Cross Traffic Brake", "mdi:car-brake-alert", "config", null, "1", "0",
+                (sub, payload, snap) -> ControlAction.echo(
+                        new VehicleCommandRouter.AdasFrontCrossBrakeCommand(truthy(payload)),
+                        "adas_fctb", truthy(payload) ? "1" : "0")));
+        register(sw("adas_aeb", "Automatic Emergency Braking", "mdi:car-brake-abs", "config", null, "1", "0",
+                (sub, payload, snap) -> ControlAction.echo(
+                        new VehicleCommandRouter.AdasEmergencyBrakingCommand(truthy(payload)),
+                        "adas_aeb", truthy(payload) ? "1" : "0")));
+        register(select("adas_fcw", "Forward Collision Warning", "mdi:car-emergency", "config", null,
+                java.util.Arrays.asList("0", "1", "2", "3"),
+                (sub, payload, snap) -> ControlAction.echo(
+                        new VehicleCommandRouter.AdasFcwLevelCommand(pInt(payload, 0)),
+                        "adas_fcw", String.valueOf(pInt(payload, 0)))));
+
         // ── Charge cap (BEV) — switch + number, optimistic state ────────
         register(sw("charge_cap_enabled", "Charge Limit", "mdi:battery-charging-100", "config", null, "1", "0",
                 (sub, payload, snap) -> ControlAction.echo(
                         new VehicleCommandRouter.ChargeCapToggleCommand(truthy(payload)),
                         "charge_cap_enabled", truthy(payload) ? "1" : "0")));
         register(number("charge_cap_percent", "Charge Limit %", "mdi:battery-charging-80", "config",
-                "charge_cap_percent", 50, 100, 5, "%", (sub, payload, snap) -> {
-            int pct = Math.max(50, Math.min(100, pInt(payload, 80)));
+                "charge_cap_percent", 15, 100, 5, "%", (sub, payload, snap) -> {
+            int pct = Math.max(15, Math.min(100, pInt(payload, 70)));
             return ControlAction.echo(new VehicleCommandRouter.ChargeCapPercentCommand(pct),
                     "charge_cap_percent", String.valueOf(pct));
         }));
@@ -589,6 +694,13 @@ public final class VehicleControlCatalog {
                 (sub, payload, snap) -> ControlAction.echo(
                         new VehicleCommandRouter.ChildLockCommand(truthy(payload)),
                         "child_lock", truthy(payload) ? "1" : "0")));
+        // Mirror fold/unfold — set-only (no fold-state getter on this platform), so
+        // like child_lock it echoes the commanded value to the last-command cache;
+        // a "toggle" press flips off that cache (blind toggle). on=fold, off=unfold.
+        register(sw("mirror_fold", "Fold Mirrors", "mdi:car-side", null, null, "1", "0",
+                (sub, payload, snap) -> ControlAction.echo(
+                        new VehicleCommandRouter.MirrorFoldCommand(truthy(payload)),
+                        "mirror_fold", truthy(payload) ? "1" : "0")));
         register(sw("wireless_charging", "Phone Wireless Charger", "mdi:battery-charging-wireless", null, null, "1", "0",
                 (sub, payload, snap) -> ControlAction.echo(
                         new VehicleCommandRouter.WirelessChargingCommand(truthy(payload)),
@@ -633,6 +745,17 @@ public final class VehicleControlCatalog {
                     return ControlAction.echo(new VehicleCommandRouter.EnergyModeCommand(m),
                             "energy_mode", m == 3 ? "hev" : "ev");
                 }));
+        // hold_battery: a friendly alias for "switch to HEV" — the ONLY lever this SDK
+        // exposes for the requested "hold battery at current SOC" behaviour (there is no
+        // settable target-SOC anywhere in the HAL). Switching to HEV makes the ICE drive
+        // the car without recharging the pack above its current level, so the battery is
+        // effectively held. Any payload commands HEV (3); the single "on" option keeps the
+        // UI a one-tap action. Mirrors energy_mode state as hev.
+        register(select("hold_battery", "Hold Battery Charge", "mdi:battery-lock", null, "energy_mode",
+                java.util.Arrays.asList("on"),
+                "{% set m = value | int(-1) %}{{ 'on' if m == 3 else 'off' }}",
+                (sub, payload, snap) ->
+                    ControlAction.echo(new VehicleCommandRouter.EnergyModeCommand(3), "energy_mode", "hev")));
         // regen_level: normalized user level fed to BydDataCollector.setEnergyFeedback,
         // which maps 0..2 -> MCU 2..4. standard = 0 (SETTING_ENERGY_FEEDBACK_STANDARD),
         // high = 1 (SETTING_ENERGY_FEEDBACK_LARGE) — per the OEM firmware convention.

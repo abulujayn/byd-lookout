@@ -155,8 +155,12 @@ public class AccSentryDaemon {
     /** Process-local app context. Returns null before main() initialises it. */
     public static Context getAppContext() { return appContext; }
 
-    // WakeLock for guaranteed CPU cycles
-    private static PowerManager.WakeLock wakeLock;
+    // WakeLock for guaranteed CPU cycles. volatile + synchronized accessors
+    // (acquireWakeLock/releaseWakeLock) because on dilink4 TWO HAL listeners
+    // (BYDAutoBodyworkDevice + BYDAutoPowerDevice) fire enter/exitSentryMode
+    // concurrently on independent binder threads — an unsynchronized check-then-act
+    // here would let both create + acquire a non-ref-counted lock and orphan one.
+    private static volatile PowerManager.WakeLock wakeLock;
 
     // Original screen timeout (saved before sentry mode)
     private static String originalScreenTimeout = "60000";
@@ -298,7 +302,7 @@ public class AccSentryDaemon {
 
     /**
      * Toggles the "Remote Surveillance" power flags in the Gateway/BCM.
-     * Matches Diplus C1310c implementation exactly:
+     * Matches the reference implementation exactly:
      *
      * DISABLE path:
      *   - SpecialDevice 782237711 = 0 (sentry keep-alive OFF)
@@ -311,7 +315,7 @@ public class AccSentryDaemon {
      *   - PowerDevice  -1442840502 = 1 ON dilink4 ONLY — esco kh/C6861d.java:344
      *     writes this on its sentry wake path. Without it the byd_apa MCU
      *     drops the AVM/ISP rail seconds after ACC OFF and any subsequent
-     *     AVMCamera frames are all-zero. Legacy DiPlus path skips this write
+     *     AVMCamera frames are all-zero. legacy path skips this write
      *     (untouched, bit-exact 90% fleet behaviour).
      *
      * ENABLE path (MCU needs wake):
@@ -395,7 +399,7 @@ public class AccSentryDaemon {
     // (configurePeripheralPower DISABLE branch). The matching set=1 was
     // missing on the enable branches, by mistake.
     //
-    // Gated to dilink4 — legacy DiPlus path stays bit-exact unchanged.
+    // Gated to dilink4 — legacy path stays bit-exact unchanged.
     private static final int ESCO_MCU_POWER_HOLD_ID = -1442840502;
 
     private static void applyEscoMcuPowerHold(boolean enable) {
@@ -412,7 +416,7 @@ public class AccSentryDaemon {
     // ==================== ESCO-PARITY SENTRY KEYS (DILINK 4) ====================
 
     // Esco's BatteryVoltageMonitorV2 sentry keep-alive IDs. Different magic
-    // numbers from our 782237711 / 782237728 (which are DiPlus-derived, kept
+    // numbers from our 782237711 / 782237728 (which are reference-derived, kept
     // additive and unchanged for legacy fleet). On byd_apa firmware the
     // AVMCamera HAL gates frame production on these specific BYD-internal
     // peripheral-power flags being held active; without them the producer
@@ -442,7 +446,7 @@ public class AccSentryDaemon {
 
     // The OEM BYD Sentry Mode app (com.byd.sentrymode) casts a dedicated
     // camera/ISP power vote on its sentry-arm path that NONE of our existing
-    // keep-alive writes cover. The DiPlus keys (782237711/782237728) hold the
+    // keep-alive writes cover. The reference keys (782237711/782237728) hold the
     // 5V/modem/USB rails; the esco keys (1901/1902) and MCU hold (-1442840502)
     // hold the byd_apa AVM rail on dilink4. But the OEM's "409" pair is the
     // sentry-mode CAMERA/ISP power request specifically. Without it, on certain
@@ -606,8 +610,22 @@ public class AccSentryDaemon {
                 // Test instrument device (charging power)
                 //testInstrumentDevice();
 
-                // Acquire WakeLock for guaranteed CPU cycles
-                acquireWakeLock();
+                // Acquire WakeLock for guaranteed CPU cycles.
+                // GATE (G4a): in "Vehicle ON only" mode, do NOT hold the process-wide
+                // AccSentry:Core wakelock while the car is already OFF at daemon start.
+                // This matters on a watchdog/revival RESPAWN while parked: no ACC power
+                // edge fires on a respawn, so enterSentryMode()'s G1 gate never runs and
+                // the freshly-spawned daemon would otherwise pin the CPU awake forever.
+                // probeAccState() returns true only when ACC is CONFIRMED OFF; on ACC-ON
+                // or any reflection/HAL failure it returns false → we still acquire
+                // (fail-open, current behaviour preserved). The wakelock is re-acquired
+                // on the ACC-ON edge in exitSentryMode() (G4b).
+                if (com.overdrive.app.config.UnifiedConfigManager.isVehicleOnOnlyMode()
+                        && com.overdrive.app.monitor.AccMonitor.probeAccState(appContext)) {
+                    log("onOnly + ACC currently OFF: skipping core wakelock so AP can sleep");
+                } else {
+                    acquireWakeLock();
+                }
                 //forceSmartSleepReflection();
                 
                 // CRITICAL: Whitelist our app from ACC power management killing
@@ -790,7 +808,7 @@ public class AccSentryDaemon {
 
     // ==================== WAKELOCK MANAGEMENT ====================
 
-    private static void acquireWakeLock() {
+    private static synchronized void acquireWakeLock() {
         if (wakeLock != null && wakeLock.isHeld()) return;
         if (appContext == null) return;
 
@@ -806,7 +824,7 @@ public class AccSentryDaemon {
         }
     }
 
-    private static void releaseWakeLock() {
+    private static synchronized void releaseWakeLock() {
         if (wakeLock != null && wakeLock.isHeld()) {
             try {
                 wakeLock.release();
@@ -931,7 +949,7 @@ public class AccSentryDaemon {
      *
      * BYD's BgDataCacheService accepts the shell UID (2000), so calls from this
      * daemon succeed where the same call from MainActivity (UID 10xxx) hits the
-     * AppOps gate. Mirrors DiPlus's vanss daemon, which arrives at shell UID via
+     * AppOps gate. Mirrors the reference privileged daemon, which arrives at shell UID via
      * an ADB-localhost tunnel and then makes this exact call.
      *
      * SDK ≥ 31 → byd_datacached.setAppStartupData(uid, 0)
@@ -1200,8 +1218,19 @@ public class AccSentryDaemon {
             String levelName = (level == 0) ? "LOW" : (level == 1) ? "NORMAL" : "INVALID";
             log("Car battery level: " + levelName);
             
-            // Emergency action on LOW level
-            if (level == 0 && inSentryMode) {
+            // Emergency action on LOW level.
+            // GATE (onOnly): this HAL-delivered low-battery callback is event-driven and
+            // independent of the SentrySetup worker that G1 gates — AccListener is
+            // registered unconditionally at daemon init and inSentryMode stays true for
+            // the whole park, so without this guard forceMcuWakeUp() would fire in onOnly
+            // and (with the default Keep-USB toggle ON) force the AP awake via
+            // performSystemWakeUp(), defeating "let the head unit sleep". In onOnly the
+            // daemon deliberately runs no post-OFF voltage management (G1 skipped
+            // initVehicleDataMonitor / BatteryVoltageMonitorV2), so this emergency wake is
+            // suppressed too — the system is meant to sleep and rely on the vehicle's own
+            // BMS for low-SoC protection, consistent with the mode's contract.
+            if (level == 0 && inSentryMode
+                    && !com.overdrive.app.config.UnifiedConfigManager.isVehicleOnOnlyMode()) {
                 log("CRITICAL: Battery level LOW - triggering emergency wake");
                 forceMcuWakeUp();
 
@@ -1286,6 +1315,31 @@ public class AccSentryDaemon {
         // This mirrors exitSentryMode() which also calls notifyAccState() first.
         notifyAccState(true);  // accOff=true → ACC is OFF
 
+        // GATE (G4c): in onOnly, release the core wakelock HERE — inline on the BYD HAL
+        // listener thread — not on the SentrySetup worker below. exitSentryMode()'s
+        // re-acquire (G4b) also runs on this listener thread, and the BYD bodywork
+        // callbacks are single-threaded, so releasing here is strictly serialized against
+        // the next ACC-ON acquire: OFF releases, next ON re-acquires, no interleave. Doing
+        // the release on the async worker (as the first cut did) raced a rapid ACC-ON that
+        // could re-acquire via G4b and flip inSentryMode=false, after which the lagging
+        // worker would clobber the lock for the whole ON session. Guarded on inSentryMode
+        // (still true here — we set it above and the listener is single-threaded) purely
+        // for symmetry with the onAndOff path. onAndOff never enters this branch.
+        if (com.overdrive.app.config.UnifiedConfigManager.isVehicleOnOnlyMode()) {
+            releaseWakeLock();
+            log("onOnly mode: released core wakelock on ACC-OFF (inline) — letting head unit sleep");
+            // TERMINATE-ON-PARK: launch the detached reaper that plants the parked marker,
+            // removes the watchdog start-scripts, waits a grace window for CameraDaemon's
+            // own graceful self-terminate (parkTerminate closes its H2 cleanly) and for the
+            // watchdogs to gate-exit on the marker, then backstop-kills any survivor and
+            // self-deletes. The reaper reparents to init (nohup &) so it outlives THIS
+            // acc_sentry_daemon, which it will also kill. We do NOT run the keep-awake
+            // SentrySetup worker below in onOnly. notifyAccState(true) above already told
+            // CameraDaemon to finalize + self-terminate; the reaper handles everything else.
+            launchParkReaper();
+            return;
+        }
+
         // Background thread for setup
         new Thread(() -> {
             try {
@@ -1307,6 +1361,26 @@ public class AccSentryDaemon {
                     log("Cleared stale screen-deterrent flags on SentrySetup worker (coalesced)");
                 } catch (Throwable t) {
                     log("WARN: failed to clear stale screen-deterrent flags: " + t.getMessage());
+                }
+
+                // GATE (G1): "Vehicle ON only" operating mode. When the user selected
+                // onOnly, EVERYTHING below this point is post-vehicle-OFF keep-awake and
+                // must NOT run — the head unit is allowed to sleep normally when the car
+                // is off. We still ran notifyAccState(true) inline above (line ~1287) so
+                // CameraDaemon finalises the last drive segment, stops pollers, and
+                // mounts the SD card for playback; only the keep-awake stack
+                // (MCU wake, peripheral/USB/AP wake, keep-alive loop, voltage + SoC
+                // monitors, Telegram auto-start) is skipped. Read fresh (mtime-gated) so
+                // a Settings toggle applies on this next ACC-OFF without a daemon restart.
+                // Fail-open: a read glitch returns false → full keep-awake, never a
+                // silent battery-drain suppression for an on-and-off user.
+                if (com.overdrive.app.config.UnifiedConfigManager.isVehicleOnOnlyMode()) {
+                    // The core wakelock was already released inline on the listener thread
+                    // (G4c, in enterSentryMode before this worker was spawned) so it can't
+                    // race a concurrent ACC-ON re-acquire. Here the worker just skips the
+                    // entire post-OFF keep-awake stack so the head unit can sleep.
+                    log("onOnly mode: skipping post-OFF keep-awake stack — letting head unit sleep");
+                    return;
                 }
 
                 // 1. Initialize voltage monitoring FIRST (for battery protection)
@@ -1408,6 +1482,15 @@ public class AccSentryDaemon {
      * inline; everything heavy runs on SentryTeardown.
      */
     private static void exitSentryMode() {
+        // GATE (G4b): re-acquire the core wakelock on the ACC-ON edge. In onOnly mode
+        // G4a may have skipped the acquisition at daemon start (ACC was OFF), so the ON
+        // session needs it back for reliable CPU cycles. Placed BEFORE the !inSentryMode
+        // early-return on purpose: on a respawn-while-parked (ACC OFF at boot → sentry
+        // was never entered → inSentryMode is false), the subsequent ACC-ON still calls
+        // exitSentryMode() and must re-arm here. acquireWakeLock() is idempotent (guards
+        // isHeld) so this is a harmless no-op on the onAndOff path and when already held.
+        acquireWakeLock();
+
         if (!inSentryMode) {
             log("Not in sentry mode");
             return;
@@ -2087,6 +2170,32 @@ public class AccSentryDaemon {
             // power AND network connectivity while parked. Re-asserting on a slow
             // cadence holds them up. 48 ticks * 10s = 8 min.
             final long MCU_REWAKE_EVERY_TICKS = 48;  // 48 * 10s = 8 min
+            // Reactive SD-rail recovery. On-car (log 2026-07-19): the USB-bridged
+            // SD rail collapses DURING the ACC-OFF transition itself
+            // (sys.byd.isSDExist flips false seconds after sentry entry), so the
+            // one-shot enterSentryMode wake was too early to help and the FIRST
+            // periodic re-assert at 8 min was too late — a 4.5-min park session
+            // ran its whole life with the SD dead (all events fell back to
+            // internal), and an 8-min session only recovered the card exactly at
+            // the first re-wake (sm mount succeeded within one watchdog tick of
+            // it). Rather than blind early ticks, PROBE the vendor card-detect
+            // prop each tick (reflection SystemProperties read — microseconds)
+            // and fire the same MCU+rail re-assert only when the rail is actually
+            // dead AND the user has SD configured as a storage target. Backoff
+            // doubles per attempt (30s → 1m → 2m → 4m → capped at the 8-min
+            // cadence) so a genuinely absent card (user pulled it) degenerates
+            // to the existing periodic behaviour instead of waking the MCU every
+            // 30s all night. Backoff resets whenever the rail reads alive, so a
+            // LATER mid-park drop is again recovered within ~30s. First probe at
+            // tick 3 (~30s) — the MCU needs a beat to stabilize post-transition;
+            // probing earlier just burns a wake on a rail that's still settling.
+            final long SD_RECOVERY_MIN_TICK = 3;            // ~30s after entry
+            final long SD_RECOVERY_BASE_BACKOFF_TICKS = 3;  // 30s between attempts
+            long sdRecoveryBackoffTicks = SD_RECOVERY_BASE_BACKOFF_TICKS;
+            // NOT Long.MIN_VALUE: `tick - lastSdRecoveryTick` would overflow to
+            // a negative value and the backoff gate would never open. Seeding
+            // one backoff below zero makes the first eligible tick pass exactly.
+            long lastSdRecoveryTick = -SD_RECOVERY_BASE_BACKOFF_TICKS;
             long tick = 0;
 
             while (running && inSentryMode) {  // Check BOTH flags
@@ -2202,10 +2311,34 @@ public class AccSentryDaemon {
                     // before re-writing the rails, so this is the exact same
                     // proven entry-path call, just re-run on a slow cadence to
                     // counter the BCM drifting the MCU back to sleep mid-park.
-                    if (tick > 0 && tick % MCU_REWAKE_EVERY_TICKS == 0
+                    // Reactive SD-rail probe (see constants above). Only when the
+                    // rail is confirmed dead, SD is a configured storage target,
+                    // the backoff window has elapsed, and keep-USB is ON.
+                    boolean sdRecoveryTick = false;
+                    if (tick >= SD_RECOVERY_MIN_TICK
+                            && (tick - lastSdRecoveryTick) >= sdRecoveryBackoffTicks
+                            && isKeepUsbPowerOnAccOff()
+                            && isSdConfiguredAsStorageTarget()) {
+                        if (isSdRailDead()) {
+                            sdRecoveryTick = true;
+                            lastSdRecoveryTick = tick;
+                            // Exponential backoff, capped at the periodic cadence.
+                            sdRecoveryBackoffTicks = Math.min(
+                                sdRecoveryBackoffTicks * 2, MCU_REWAKE_EVERY_TICKS);
+                        } else {
+                            // Rail alive — reset so a later mid-park drop gets the
+                            // fast 30s response again.
+                            sdRecoveryBackoffTicks = SD_RECOVERY_BASE_BACKOFF_TICKS;
+                        }
+                    }
+                    if ((sdRecoveryTick || (tick > 0 && tick % MCU_REWAKE_EVERY_TICKS == 0))
                             && isKeepUsbPowerOnAccOff()) {
                         try {
-                            log("Periodic MCU re-wake + rail re-assert (8-min cadence)");
+                            log("Periodic MCU re-wake + rail re-assert ("
+                                + (sdRecoveryTick
+                                    ? "SD-rail-dead recovery, tick " + tick
+                                        + ", next backoff " + sdRecoveryBackoffTicks + " ticks"
+                                    : "8-min cadence") + ")");
                             // Re-assert the MCU + peripheral rails (idempotent;
                             // self-wakes the MCU if the BCM slept it).
                             configurePeripheralPower(true);
@@ -2346,6 +2479,50 @@ public class AccSentryDaemon {
     }
 
     /**
+     * True when the vendor SD card-detect prop reports the card ABSENT. On the
+     * affected fleet the USB-bridged SD reader loses power during the ACC-OFF
+     * transition; the MCU's card-detect pin then drives sys.byd.isSDExist to
+     * 'false' even though a card is physically inserted. The keepalive loop
+     * uses this as the "rail is dead" trigger for a reactive MCU+rail
+     * re-assert. Deliberately conservative: only an EXPLICIT 'false' counts —
+     * an empty/unreadable prop (trim without the vendor prop, reflection
+     * blocked) returns false here so those units never wake the MCU on a
+     * signal they don't actually have.
+     */
+    private static boolean isSdRailDead() {
+        try {
+            Class<?> sp = Class.forName("android.os.SystemProperties");
+            java.lang.reflect.Method get = sp.getMethod("get", String.class, String.class);
+            String v = (String) get.invoke(null, "sys.byd.isSDExist", "");
+            return "false".equalsIgnoreCase(v);
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
+     * True when the user has the SD card configured as the storage target for
+     * ANY stream (surveillance / recordings / trips). Gates the reactive
+     * SD-rail recovery so an internal-storage-only install never pays the
+     * extra MCU wakes for a rail it doesn't use. Reads the same mtime-gated
+     * loadConfig() cache as the other keepalive gates; defaults false (skip
+     * recovery) on read failure — the periodic 8-min re-assert still covers
+     * the rail as a backstop.
+     */
+    private static boolean isSdConfiguredAsStorageTarget() {
+        try {
+            org.json.JSONObject st = com.overdrive.app.config.UnifiedConfigManager.loadConfig()
+                    .optJSONObject("storage");
+            if (st == null) return false;
+            return "SD_CARD".equals(st.optString("surveillanceStorageType", ""))
+                || "SD_CARD".equals(st.optString("recordingsStorageType", ""))
+                || "SD_CARD".equals(st.optString("tripsStorageType", ""));
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
+    /**
      * True when CameraDaemon's GPU pipeline is actively consuming camera
      * frames. CameraDaemon refreshes a lease deadline ~8s ahead of now while
      * gpuPipeline.isRunning(); we read it here to skip the keepalive's
@@ -2434,8 +2611,15 @@ public class AccSentryDaemon {
      * Equivalent to: Runtime.getRuntime().exec("svc wifi enable");
      */
     private static void ensureWifiEnabled() {
+        // Respect a user's explicit "WiFi off" automation / key-mapping: when the radio
+        // action set the suppression flag, the keep-alive stands down so the deliberate
+        // off state isn't clobbered every 10s tick. With no such rule the flag is false
+        // (default) and keep-alive behaves exactly as before. Fail-open (read returns
+        // false on error → we re-enable), so a config glitch can never strand WiFi off.
+        if (com.overdrive.app.config.UnifiedConfigManager.isWifiKeepAliveSuppressed()) {
+            return;
+        }
         // We use a lightweight check to avoid spamming the shell log
-        // In the decompiled code, they just blindly ran "svc wifi enable"
         // running it blindly is safer for persistence.
         execShell(CMD_WIFI_ENABLE());
     }
@@ -4001,6 +4185,103 @@ public class AccSentryDaemon {
             log("Disable BYD traffic monitor: " + result);
         } catch (Exception e) {
             log("Failed to disable BYD traffic monitor: " + e.getMessage());
+        }
+    }
+
+    /**
+     * "Vehicle ON only" parked reaper. Writes a detached shell script and launches it with
+     * {@code nohup ... &} so it reparents to init and OUTLIVES this acc_sentry_daemon (which
+     * it kills). Sequence:
+     *   1. (Re-)plant the parked-shutdown marker (chmod 666) — the single arbiter that makes
+     *      every watchdog gate-exit and every app-side rebuild path stand down.
+     *   2. rm the watchdog start-scripts + cam_watchdog.pid so nothing can re-exec.
+     *   3. sleep GRACE so (a) CameraDaemon's own parkTerminate (graceful H2 close, up to
+     *      ~15s SD work) finishes and (b) any live watchdog loop re-checks the marker and
+     *      exit 0's (≤2s). The marker is already set, so nothing rebuilds during the grace.
+     *   4. Backstop psAwkKill any survivor (watchdog shells + daemon processes) — excludes
+     *      the reaper's own PID; no pattern matches the reaper script name.
+     *   5. rm stale *_daemon.lock, then self-delete. Does NOT clear the marker (that is the
+     *      whole point — it stays until the ACC-on edge clears it).
+     * This mirrors UpdateLifecycle.hardResetDaemons's proven kill cascade, swapped to the
+     * parked marker and with no end-of-run marker clear.
+     */
+    private static void launchParkReaper() {
+        final String marker = com.overdrive.app.ui.model.ParkedShutdown.MARKER_PATH;
+        final String reaperPath = "/data/local/tmp/overdrive_park_reaper.sh";
+        // psAwkKill helper line: kill by argv match, excluding our own PID; SIGKILL.
+        StringBuilder sb = new StringBuilder();
+        sb.append("#!/system/bin/sh\n");
+        // 1. (Re-)assert the marker with the park timestamp (epoch millis), world rw.
+        sb.append("echo ").append(System.currentTimeMillis()).append(" > ").append(marker).append(" 2>/dev/null\n");
+        sb.append("chmod 666 ").append(marker).append(" 2>/dev/null\n");
+        // 2. Remove re-exec ability immediately — core daemon watchdogs AND the optional
+        //    tunnel/proxy watchdogs (start_zrok.sh etc.), or a surviving tunnel watchdog
+        //    loop would re-exec its daemon during/after the grace window and keep the AP
+        //    awake (sentry_proxy holds a /sys/power/wake_lock; zrok/tailscale loop-respawn).
+        sb.append("rm -f /data/local/tmp/start_cam_daemon.sh /data/local/tmp/start_acc_sentry.sh ")
+          .append("/data/local/tmp/start_telegram.sh /data/local/tmp/cam_watchdog.pid ")
+          .append("/data/local/tmp/start_zrok.sh /data/local/tmp/start_singbox.sh ")
+          .append("/data/local/tmp/start_cloudflared.sh /data/local/tmp/start_tailscale.sh 2>/dev/null\n");
+        // 3. Grace window: let CameraDaemon.parkTerminate finish its graceful close (it
+        //    owns the H2 recordings/trips DBs — a SIGKILL mid-close risks corruption) and
+        //    let watchdog loops gate-exit on the marker. Instead of a blind fixed sleep,
+        //    POLL for CameraDaemon's absence up to a ceiling and break the instant it's
+        //    gone, so a graceful self-terminate that legitimately takes ~15-18s (slow SD
+        //    force-remount: 8s sm-mount + 10s FUSE poll, all BEFORE the H2 close) is never
+        //    clobbered. Ceiling comfortably exceeds the code's own worst case (~30s). Only
+        //    survivors past the ceiling get the backstop kill below.
+        sb.append("i=0\n");
+        sb.append("while [ $i -lt 40 ]; do\n");
+        sb.append("  if ! ps -A -o ARGS 2>/dev/null | grep -F 'byd_cam_daemon' | grep -qv grep; then break; fi\n");
+        sb.append("  sleep 1\n");
+        sb.append("  i=$((i+1))\n");
+        sb.append("done\n");
+        // Small settle so the other daemons/watchdogs also observe the marker and exit.
+        sb.append("sleep 2\n");
+        // 4. Backstop kill of any survivor: core daemon watchdogs + daemon app_process
+        //    children, AND the optional tunnel/proxy stack (sentry_proxy holds a wakelock;
+        //    the others hold the network / loop-respawn). Mirrors the UpdateLifecycle /
+        //    AppUpdater kill lists, which include these exact process names.
+        String[] patterns = {
+            "start_cam_daemon", "start_acc_sentry", "start_telegram",
+            "byd_cam_daemon", "cam_daemon", "sentry_daemon", "acc_sentry_daemon", "telegram_bot_daemon",
+            "start_zrok", "start_singbox", "start_cloudflared", "start_tailscale",
+            "sentry_proxy", "sing-box", "cloudflared", "zrok", "tailscaled"
+        };
+        for (String p : patterns) {
+            sb.append("MY_PID=$$; ps -A -o PID,ARGS | grep -F '").append(p).append("' | grep -v grep")
+              .append(" | awk '{print $1}' | while read pid; do")
+              .append(" if [ \"$pid\" != \"$MY_PID\" ]; then kill -9 $pid 2>/dev/null; fi; done\n");
+        }
+        // 4b. Explicitly release sentry_proxy's KERNEL wakelock. GlobalProxyDaemon acquires
+        //     a userspace sysfs wakelock via `echo GlobalProxyDaemon > /sys/power/wake_lock`
+        //     (+ `svc power stayon true` fallback). That is a NAMED GLOBAL wakeup source not
+        //     bound to the process — kill -9 above does NOT run its JVM shutdown hook, so the
+        //     kernel wakelock (and stayon) would persist and pin the AP awake for the whole
+        //     park, defeating onOnly. Release it directly here, matching
+        //     GlobalProxyDaemon.releaseWakeLock (tag "GlobalProxyDaemon"). Harmless no-op if
+        //     the proxy was never running / the sysfs node is absent.
+        sb.append("echo GlobalProxyDaemon > /sys/power/wake_unlock 2>/dev/null\n");
+        sb.append("svc power stayon false 2>/dev/null\n");
+        // 5. Clean stale locks, then self-delete. Do NOT clear the marker.
+        sb.append("sleep 1\n");
+        sb.append("rm -f /data/local/tmp/*_daemon.lock 2>/dev/null\n");
+        sb.append("rm -f ").append(reaperPath).append(" 2>/dev/null\n");
+        try {
+            java.io.FileWriter fw = new java.io.FileWriter(reaperPath);
+            fw.write(sb.toString());
+            fw.close();
+            try { new java.io.File(reaperPath).setReadable(true, false);
+                  new java.io.File(reaperPath).setExecutable(true, false); } catch (Exception ignored) {}
+            // Detached launch: reparent to init so it survives our imminent death.
+            Runtime.getRuntime().exec(new String[]{"sh", "-c",
+                "nohup sh " + reaperPath + " >/dev/null 2>&1 &"});
+            log("Park reaper launched (detached): " + reaperPath);
+        } catch (Exception e) {
+            log("WARNING: failed to launch park reaper: " + e.getMessage());
+            // Fallback: at least plant the marker inline so watchdogs stand down even if the
+            // detached reaper couldn't launch. The app-side standdown still runs off ACC_OFF.
+            execShell("echo " + System.currentTimeMillis() + " > " + marker + " 2>/dev/null; chmod 666 " + marker + " 2>/dev/null");
         }
     }
 

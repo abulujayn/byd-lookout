@@ -994,4 +994,26 @@ public class MqttConnectionManager {
     public MqttConnectionStore getStore() { return store; }
     public boolean isInitialized() { return initialized; }
     public int getActiveCount() { return publishers.size(); }
+
+    /**
+     * Publish a message to every active connection — the fan-out the automation
+     * "Publish MQTT" action calls. Each publisher scopes a relative topic under its own
+     * base topic (see {@link MqttPublisherService#publishToTopic}). Returns the number of
+     * connections that accepted the publish (0 when none are configured/connected, which
+     * makes the action a clean no-op on a car with no MQTT setup). Never throws.
+     *
+     * @param topic   relative (scoped under each connection's base) or absolute ("/…")
+     * @param payload the message body (any string; JSON or plain)
+     * @param retain  whether the broker should retain it (HA state topics want true)
+     * @return count of connections that published successfully
+     */
+    public int publishToAll(String topic, String payload, boolean retain) {
+        int ok = 0;
+        for (MqttPublisherService pub : publishers.values()) {
+            try {
+                if (pub.publishToTopic(topic, payload, retain)) ok++;
+            } catch (Throwable ignored) { /* one bad connection never blocks the rest */ }
+        }
+        return ok;
+    }
 }

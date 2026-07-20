@@ -1,15 +1,16 @@
 package com.overdrive.app.automation.action;
 
 import com.overdrive.app.automation.AutomationAction;
+import com.overdrive.app.automation.AutomationCondition;
 import com.overdrive.app.automation.Automations;
 import com.overdrive.app.automation.condition.BydEvent;
 import com.overdrive.app.automation.condition.EventData;
+import com.overdrive.app.automation.type.DynamicIntType;
 import com.overdrive.app.automation.type.EnumType;
 import com.overdrive.app.automation.type.IntType;
 import com.overdrive.app.automation.type.Type;
 import com.overdrive.app.automation.value.IntValue;
 import com.overdrive.app.automation.value.Label;
-import com.overdrive.app.automation.value.Value;
 import com.overdrive.app.server.Messages;
 
 import java.util.List;
@@ -70,7 +71,8 @@ public class WaitUntilAction extends BaseAction {
                         new Label("outsideTemp", "automation.outside_temperature")),
                 // Reuse the shared IntValue comparator set (eq/neq/gt/lt/gte/lte).
                 cloneComparators(),
-                new IntType(new Label("value", "automation.value"), -540, 1000),
+                // RHS: a constant OR a dynamic ${var:…}/${signal:…} token (resolved live).
+                new DynamicIntType(new Label("value", "automation.value"), -540, 1000),
                 new IntType(new Label("timeout", "automation.wait_timeout"), 1, MAX_TIMEOUT_S));
     }
 
@@ -117,7 +119,7 @@ public class WaitUntilAction extends BaseAction {
         Map<String, Object> vars = automationAction.getVariables();
         EventData event = resolveEvent(str(vars.get("event")));
         String comparator = str(vars.get("comparator"));
-        Integer target = toInt(vars.get("value"));
+        Object target = vars.get("value");   // constant OR ${var:…}/${signal:…}
         int timeoutS = clampTimeout(toInt(vars.get("timeout")));
 
         if (event == null || comparator == null || target == null) {
@@ -126,10 +128,11 @@ public class WaitUntilAction extends BaseAction {
         }
 
         long deadline = System.currentTimeMillis() + timeoutS * 1000L;
-        // Compare using the SAME IntValue semantics conditions use: build an IntValue
-        // from the live state and compare it against the target with the comparator.
+        // Poll the shared state, comparing through the shared condition path so a dynamic
+        // ${var:…}/${signal:…} RHS is resolved fresh each tick (a variable another action
+        // sets during the wait, or a live signal, is honoured).
         while (true) {
-            if (conditionMet(event, comparator, target)) {
+            if (AutomationCondition.evaluate(event, comparator, target)) {
                 logger.info("WaitUntilAction: satisfied (" + event.getType() + " " + comparator + " " + target + ")");
                 return;
             }
@@ -146,18 +149,6 @@ public class WaitUntilAction extends BaseAction {
                 return;
             }
         }
-    }
-
-    /**
-     * Whether the live value of {@code event} satisfies (comparator, target). A
-     * never-fired signal (null state) is treated as "not yet met" so the wait keeps
-     * polling until it appears or times out — never NPEs.
-     */
-    private static boolean conditionMet(EventData event, String comparator, int target) {
-        Value current = Automations.getStateValue(event);
-        if (current == null) return false;
-        Boolean r = current.compare(target, comparator);
-        return Boolean.TRUE.equals(r);
     }
 
     private static int clampTimeout(Integer t) {

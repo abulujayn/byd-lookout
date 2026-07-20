@@ -780,8 +780,12 @@ public class HttpServer {
             return MqttApiHandler.handle(method, path, body, out);
         }
 
-        // Automations API
-        if (path.startsWith("/api/automations")) {
+        // Automations API — plus the reusable Action Groups CRUD, which
+        // AutomationApiHandler.handle() also implements but lives under the SEPARATE
+        // /api/action-groups prefix (hyphen), so it must be routed here explicitly.
+        // Without this line those requests fell through to 404 → "failed to save" in the
+        // group editor.
+        if (path.startsWith("/api/automations") || path.startsWith("/api/action-groups")) {
             return AutomationApiHandler.handle(method, path, body, out);
         }
 
@@ -857,6 +861,15 @@ public class HttpServer {
                 HttpResponse.sendJsonError(out, "Charging analytics not initialized");
                 return true;
             }
+        }
+
+        // Audio/video library raw stream — Range-aware so a streaming MediaPlayer
+        // (Play Video's VideoView / the audio service) can seek to an MP4's moov atom.
+        // Routed here (ahead of the generic /api/audio/ handler) because that handler's
+        // signature has no rangeHeader; without 206 support, non-faststart MP4s never
+        // prepare() and "Play Video" did nothing.
+        if (path.startsWith("/api/audio/library/raw") && method.equals("GET")) {
+            return AudioApiHandler.handleRawRanged(path, rangeHeader, out);
         }
 
         // Audio API (library playback + AVAS speaker)

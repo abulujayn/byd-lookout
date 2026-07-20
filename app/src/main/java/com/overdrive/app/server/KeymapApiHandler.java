@@ -56,6 +56,17 @@ import java.io.OutputStream;
  *       path automations use — so it can only ever reach the curated control
  *       surface (/api/vehicle, /api/surveillance, /api/recording/mode), never the
  *       sensitive /api/debug|backup|update|... endpoints.
+ *   { "kind":"automation", "id":"&lt;uuid&gt;" }
+ *       Run a saved automation's actions on a keypress — the physical-key
+ *       equivalent of the automation's trigger. Enqueued on the shared
+ *       {@link com.overdrive.app.automation.AutomationQueue} (checkConditions=true,
+ *       so the automation's own conditions still gate it, and its run-stats update),
+ *       NOT run inline — a chain may block for minutes on pause/waitUntil and must
+ *       never tie up this HTTP worker. Deliberately NOT routed through the automation
+ *       API allowlist (which excludes /api/automations on purpose): this is a
+ *       dedicated in-process call, like {@code manualClip}. An unknown id is rejected;
+ *       a disabled automation still enqueues but the worker skips it (logged no-op),
+ *       matching how a disabled automation ignores its normal trigger.
  *   { "kind":"openApp", "package":"com.foo.bar", "label":"Foo" }
  *       Launch an installed app (resolves its launcher activity). Not gated —
  *       opening an app is no more privileged than a user tapping its icon.
@@ -114,8 +125,12 @@ public final class KeymapApiHandler {
     // healthy/idle; the loop snaps back to WATCHDOG_POLL_MS the instant a tick sees
     // a not-bound (potential-wedge) or precondition-missing state, so wedge
     // detection latency is unchanged in the case that matters. Cuts the steady-state
-    // enabled dumpsys rate ~5×, and is a no-op when disabled (idle path never execs).
-    private static final long WATCHDOG_HEALTHY_POLL_MS = 300_000L;
+    // enabled dumpsys rate ~2×, and is a no-op when disabled (idle path never execs).
+    // Tuned DOWN from 300s: a wedge beginning right after a healthy tick was invisible
+    // for up to 5 min (dead keys the whole time). 120s halves that worst case while
+    // keeping most of the dumpsys savings — the wedge is field-observed to recur, so
+    // faster detection matters more than shaving the last of the (cheap) poll cost.
+    private static final long WATCHDOG_HEALTHY_POLL_MS = 120_000L;
     // Delay the first check so we never mistake the app's own startup (or a fresh
     // post-restart bind) for a wedge. The daemon is itself launched ~45-90s after
     // the app, so by our first tick the a11y service has normally long since bound.
@@ -128,7 +143,11 @@ public final class KeymapApiHandler {
     // keeps supervising forever, per the "no retry-cap watchdogs" rule) — just a
     // cooldown so a fresh process that itself takes a while to bind can't trigger
     // a restart-loop. A clean bind normally lands within ~10s of the respawn.
-    private static final long WATCHDOG_MIN_RESTART_INTERVAL_MS = 10L * 60_000L;
+    // Tuned DOWN from 600s: the wedge is field-observed to RECUR (a fresh bind can
+    // re-wedge within ~45 min), and a 10-min cooldown meant a second wedge left keys
+    // dead for up to 10 min before recovery was even allowed. 3 min still comfortably
+    // clears a respawn+bind (~10s) with margin, but recovers a recurrence ~3× sooner.
+    private static final long WATCHDOG_MIN_RESTART_INTERVAL_MS = 3L * 60_000L;
     private static final String APP_PACKAGE = "com.overdrive.app";
 
     private static volatile boolean watchdogStarted = false;
@@ -319,7 +338,47 @@ public final class KeymapApiHandler {
             handleFire(out, body);
             return true;
         }
+        if (cleanPath.equals("/api/keymap/inject") && method.equals("POST")) {
+            handleInject(out, body);
+            return true;
+        }
         return false;
+    }
+
+    /**
+     * Replay a native key tap: {@code input keyevent <keycode>} as the UID-2000 daemon.
+     * Used ONLY by the dispatcher's "block native single" double-binding, which consumed
+     * the user's first tap during the double window; when no second tap arrives it asks
+     * us to inject the button's native event so the OEM function still happens. Body:
+     * {@code {"keycode": <int>}}. The keycode is validated to a plain non-negative int
+     * (it goes into a shell {@code input keyevent} argument), fire-and-forget so a slow
+     * {@code input} never stalls the worker.
+     */
+    private static void handleInject(OutputStream out, String body) throws Exception {
+        JSONObject resp = new JSONObject();
+        try {
+            JSONObject req = new JSONObject(body == null ? "{}" : body);
+            int keycode = req.optInt("keycode", -1);
+            // Strict bound: a keycode is a small non-negative int. Reject anything else so
+            // nothing but a bare integer ever reaches the `input keyevent` shell argument.
+            if (keycode < 0 || keycode > 1000) {
+                resp.put("success", false);
+                resp.put("error", "invalid keycode");
+                HttpResponse.sendJson(out, resp.toString());
+                return;
+            }
+            // Fire-and-forget shell, exactly like the UI-nav keyevents in
+            // VehicleControlApiHandler.handleSystem. The int is range-checked above.
+            Runtime.getRuntime().exec(new String[]{"sh", "-c", "input keyevent " + keycode});
+            logger.info("Keymap inject native keyevent " + keycode);
+            resp.put("success", true);
+            HttpResponse.sendJson(out, resp.toString());
+        } catch (Exception e) {
+            logger.warn("Keymap inject failed: " + e.getMessage());
+            resp.put("success", false);
+            resp.put("error", e.getMessage());
+            HttpResponse.sendJson(out, resp.toString());
+        }
     }
 
     /**
@@ -346,6 +405,8 @@ public final class KeymapApiHandler {
         resp.put("success", true);
         resp.put("enabled", enabled);
         resp.put("allowAdvanced", section.optBoolean("allowAdvanced", false));
+        resp.put("doubleTapWindowMs",
+                com.overdrive.app.config.UnifiedConfigManager.getKeymapDoubleTapWindowMs());
         resp.put("bindings", section.optJSONArray("bindings") != null
                 ? section.optJSONArray("bindings") : new org.json.JSONArray());
         resp.put("a11yEnabled", a11yOn);
@@ -428,6 +489,13 @@ public final class KeymapApiHandler {
         JSONObject section = new JSONObject();
         section.put("enabled", req.optBoolean("enabled", false));
         section.put("allowAdvanced", req.optBoolean("allowAdvanced", false));
+        // Single-vs-double disambiguation window (ms). Persist only a sane value; the
+        // accessor (getKeymapDoubleTapWindowMs) clamps on read too, so a hand-edited
+        // config can't push it out of the 250..1500 band. Absent → the accessor's default.
+        if (req.has("doubleTapWindowMs")) {
+            long win = req.optLong("doubleTapWindowMs", 450L);
+            section.put("doubleTapWindowMs", Math.max(250L, Math.min(1500L, win)));
+        }
         org.json.JSONArray bindings = req.optJSONArray("bindings") != null
                 ? req.optJSONArray("bindings") : new org.json.JSONArray();
         String manualClipError = validateManualClipBindings(bindings);
@@ -785,6 +853,8 @@ public final class KeymapApiHandler {
             case "catalog": return runCatalog(req);
             case "vehicle": return runVehicle(req);
             case "api":     return runApi(req);
+            case "automation": return runAutomation(req);
+            case "radio":   return runRadio(req);
             case "manualClip": return runManualClip(req);
             case "openApp": return runOpenApp(req);
             case "shell":   return runShell(req);
@@ -959,10 +1029,24 @@ public final class KeymapApiHandler {
             return response;
         }
 
-        VehicleCommandRouter.CommandResult r =
-                VehicleCommandRouter.getInstance().executeSdkOnly(action.command);
+        // Route selection: a key press is normally SDK-only (instant, offline — no cloud
+        // round-trip). But some catalog commands have NO working local path on this
+        // generation and are cloud-first/cloud-only by design — e.g. all-windows CLOSE
+        // (anti-pinch blocks the local 4-window raise; only the cloud CLOSEWINDOW works),
+        // and lock/unlock/flash/find-car. For those, executeSdkOnly silently no-ops (the
+        // reported "windows-up mapping does nothing" bug). So use the full execute() —
+        // which tries SDK then falls back to cloud (or goes straight to cloud) — whenever
+        // the command can't be satisfied SDK-only. Genuine SDK commands (drl, sunroof,
+        // seat, climate, …) still take the instant SDK-only path.
+        boolean needsCloud = !action.command.hasSdkPath()
+                || action.command.defaultPreference() == VehicleCommandRouter.RoutePreference.CLOUD_ONLY
+                || action.command.defaultPreference() == VehicleCommandRouter.RoutePreference.CLOUD_FIRST;
+        VehicleCommandRouter.CommandResult r = needsCloud
+                ? VehicleCommandRouter.getInstance().execute(action.command)
+                : VehicleCommandRouter.getInstance().executeSdkOnly(action.command);
         logger.info("Keymap catalog '" + key + (sub != null ? "/" + sub : "") + "' payload='" + payload
-                + "' -> " + action.command.name() + " " + r.outcome + " (" + r.latencyMs + "ms)");
+                + "' -> " + action.command.name() + " " + r.outcome + " (" + r.latencyMs + "ms, "
+                + (needsCloud ? "full" : "sdk-only") + ")");
 
         response.put("success", r.outcome == VehicleCommandRouter.Outcome.SUCCESS);
         response.put("outcome", r.outcome.toString());
@@ -1040,6 +1124,62 @@ public final class KeymapApiHandler {
             response.put("error", httpResponse == null
                     ? "API request denied or not handled" : "API request returned an error");
         }
+        return response;
+    }
+
+    /**
+     * Run a saved automation on a keypress. Enqueues the automation id on the shared
+     * {@link com.overdrive.app.automation.AutomationQueue} with zero delay so it drains
+     * on the singleton worker thread (never this HTTP worker — a chain may block for
+     * minutes) and its own conditions/run-stats still apply, exactly as an
+     * event-triggered fire would. Rejects an unknown id up front so a stale binding
+     * reports a clear error rather than silently enqueuing nothing.
+     */
+    private static JSONObject runAutomation(JSONObject req) throws org.json.JSONException {
+        JSONObject response = new JSONObject();
+        String id = req.optString("id", "");
+        if (id == null || id.isBlank()) {
+            response.put("success", false);
+            response.put("error", "Missing automation id");
+            return response;
+        }
+        if (!com.overdrive.app.automation.Automations.automationExists(id)) {
+            response.put("success", false);
+            response.put("error", "Unknown automation: " + id);
+            return response;
+        }
+        // Enqueue with no delay — the worker checks conditions and records stats.
+        com.overdrive.app.automation.AutomationQueue.addToQueue(id, 0);
+        logger.info("Keymap automation enqueued: " + id);
+        response.put("success", true);
+        return response;
+    }
+
+    /**
+     * Toggle a device radio (WiFi / Bluetooth / mobile-data) on a keypress. Delegates
+     * to {@link com.overdrive.app.byd.RadioControl}, which runs the {@code svc} shell
+     * command and — for WiFi — keeps the keep-alive suppression flag in sync so an
+     * explicit off isn't auto-re-enabled by the watchdog. Not advanced-gated: toggling a
+     * radio is a curated, bounded action (the UI offers only wifi/bluetooth/data), not an
+     * arbitrary-exec hatch.
+     */
+    private static JSONObject runRadio(JSONObject req) throws org.json.JSONException {
+        JSONObject response = new JSONObject();
+        com.overdrive.app.byd.RadioControl.Radio radio =
+                com.overdrive.app.byd.RadioControl.parse(req.optString("radio", ""));
+        if (radio == null) {
+            response.put("success", false);
+            response.put("error", "Unknown or missing radio (expected wifi/bluetooth/data)");
+            return response;
+        }
+        // Accept either an explicit boolean or an on/off state string.
+        boolean enable = req.has("enable")
+                ? req.optBoolean("enable", false)
+                : "on".equalsIgnoreCase(req.optString("state", ""));
+        boolean ok = com.overdrive.app.byd.RadioControl.set(radio, enable);
+        logger.info("Keymap radio '" + radio + "' " + (enable ? "on" : "off") + " -> " + (ok ? "SUCCESS" : "FAILED"));
+        response.put("success", ok);
+        if (!ok) response.put("error", "Radio toggle failed");
         return response;
     }
 

@@ -54,6 +54,14 @@ public abstract class BaseAction implements Action {
             }
             json.put("variables", variables);
             json.put("description", getDescription());
+            // Tell the web form this action carries nested child action lists (loop
+            // body / if-then), so it renders a nested action editor. Emitted only for
+            // control-flow actions; ordinary actions omit it (unchanged schema).
+            if (hasChildActions()) {
+                json.put("hasChildActions", true);
+                // "if" additionally has an else branch; "loop" does not.
+                if ("if".equals(getType())) json.put("hasElseActions", true);
+            }
         } catch (Exception e) {
             // JSONObject.put only throws on null key
         }

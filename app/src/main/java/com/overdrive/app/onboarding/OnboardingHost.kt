@@ -140,7 +140,7 @@ class OnboardingHost(
 
     // ---- step machine ----------------------------------------------------------------
 
-    private enum class Step { AUTHORIZE, CAMERA, VEHICLE, DASHBOARD, DONE }
+    private enum class Step { AUTHORIZE, MODE, CAMERA, VEHICLE, DASHBOARD, DONE }
     private var currentStep = Step.AUTHORIZE
 
     private fun routeFirstStep() {
@@ -154,6 +154,7 @@ class OnboardingHost(
                 if (running) state.daemonAuthorized = true
                 currentStep = when {
                     !state.daemonAuthorized -> Step.AUTHORIZE
+                    !state.modeChosen -> Step.MODE
                     state.cameraStep != OnboardingState.CameraStep.SAVED_OK -> Step.CAMERA
                     !state.vehicleStepDone -> Step.VEHICLE
                     !state.dashboardTourDone -> Step.DASHBOARD
@@ -168,6 +169,7 @@ class OnboardingHost(
         val ov = overlay ?: return
         when (currentStep) {
             Step.AUTHORIZE -> renderAuthorize(ov)
+            Step.MODE -> renderModeChoice(ov)
             Step.CAMERA -> launchCameraChapter()
             Step.VEHICLE -> launchVehicleChapter()
             Step.DASHBOARD -> launchDashboardChapter()
@@ -224,8 +226,81 @@ class OnboardingHost(
     }
 
     private fun advanceFromAuthorize() {
+        currentStep = Step.MODE
+        renderCurrent()
+    }
+
+    // ---- Step 1: choose operating mode -----------------------------------------------
+
+    /**
+     * First-run operating-mode choice. Presented AFTER daemon authorization so the
+     * daemon's HTTP server is up and [persistOperatingMode] can POST the value into
+     * UnifiedConfig (the app UID can't write the daemon's config file directly).
+     *
+     * Two mutually-exclusive options mapped to the card's primary/secondary buttons:
+     *   Primary   = "Vehicle ON + OFF" (recommended, default) → operatingMode="onAndOff"
+     *   Secondary = "Vehicle ON only"                          → operatingMode="onOnly"
+     * Never a hard gate: either pick (or a dismiss) advances to CAMERA, and the config
+     * default is already "onAndOff" so no write is strictly required for the default.
+     */
+    private fun renderModeChoice(ov: OnboardingOverlayView) {
+        ov.showCentered()
+        ov.bindStep(
+            title = activity.getString(R.string.onboarding_mode_title),
+            body = activity.getString(R.string.onboarding_mode_body),
+            primaryText = activity.getString(R.string.onboarding_mode_on_off_button),
+            onPrimary = { chooseModeAndAdvance("onAndOff") },
+            secondaryText = activity.getString(R.string.onboarding_mode_on_only_button),
+            onSecondary = { chooseModeAndAdvance("onOnly") },
+        )
+    }
+
+    private fun chooseModeAndAdvance(mode: String) {
+        // "onAndOff" is the config DEFAULT — no write is required for it to take effect,
+        // so mark the step done immediately (a failed/absent write still yields onAndOff)
+        // and clear any stale pending non-default mode.
+        // "onOnly" is only real once durably persisted: record it as pendingOperatingMode
+        // (survives process death + onboarding completion) and defer marking modeChosen
+        // until the POST confirms, so a daemon-not-ready race re-asks / flushes later
+        // instead of silently dropping the choice. Never a hard gate — always advance now.
+        if (mode == "onAndOff") {
+            state.pendingOperatingMode = null
+            state.modeChosen = true
+        } else {
+            state.pendingOperatingMode = mode
+        }
+        persistOperatingMode(mode)
         currentStep = Step.CAMERA
         renderCurrent()
+    }
+
+    /**
+     * Persist the chosen operating mode into UnifiedConfig by POSTing to the daemon's
+     * local HTTP server (127.0.0.1:8080 — CameraDaemon.HTTP_PORT). Off the main thread.
+     * On a fresh install this can fire before the daemon has bound :8080 (it's launched
+     * ~500ms after auth and takes a few more seconds), so we RETRY with backoff. Only on
+     * a confirmed 2xx for "onOnly" do we set modeChosen=true — otherwise the flag stays
+     * false and the MODE step re-shows next launch (routeFirstStep), so a non-default
+     * choice is never silently lost. Forces a direct connection (Proxy.NO_PROXY) so a
+     * live sing-box global proxy doesn't swallow the loopback call — same guard
+     * MainActivity uses for its daemon POSTs.
+     */
+    private fun persistOperatingMode(mode: String) {
+        Thread {
+            val ok = postOperatingModeWithRetry(mode)
+            if (ok) {
+                // Durably written — record the step done + clear the pending marker
+                // (covers the onOnly case chooseModeAndAdvance deliberately left unmarked).
+                state.modeChosen = true
+                state.pendingOperatingMode = null
+            } else {
+                // Not confirmed within the window. modeChosen stays false and (for a
+                // non-default pick) pendingOperatingMode stays set, so it is flushed later
+                // by flushPendingOperatingMode() when the daemon is confirmed up — this
+                // survives onboarding completion, unlike the MODE step re-ask.
+                Log.w(TAG, "persistOperatingMode($mode) never confirmed — left pending for daemon-ready flush")
+            }
+        }.start()
     }
 
     // ---- chapter launchers (delegated to coaches) ------------------------------------
@@ -287,10 +362,178 @@ class OnboardingHost(
     private fun contentRoot(): ViewGroup =
         activity.findViewById(android.R.id.content)
 
-    private companion object {
-        const val TAG = "OnboardingHost"
-        const val ENCODER_POLL_MS = 3000L
-        const val AUTH_WAIT_MS = 20000L
-        const val EXPERT_ENTRY_CAMERA_ADVANCED = "cameraAdvanced"
+    companion object {
+        private const val TAG = "OnboardingHost"
+        private const val ENCODER_POLL_MS = 3000L
+        private const val AUTH_WAIT_MS = 20000L
+        private const val PERSIST_MAX_ATTEMPTS = 5
+        private const val EXPERT_ENTRY_CAMERA_ADVANCED = "cameraAdvanced"
+
+        /**
+         * Blocking POST of operatingMode to the daemon with retry+backoff, trusting only
+         * a confirmed {success:true} body — HTTP 200 alone is NOT enough, since the
+         * daemon's sendJsonError returns 200 {success:false} on a persist failure (mirror
+         * MainActivity.postSurveillanceConfig). MUST be called off the main thread.
+         * Returns true only on a durable write.
+         */
+        private fun postOperatingModeWithRetry(mode: String): Boolean {
+            // ~2s, 4s, 6s, 8s, 10s backoff ≈ 30s total — comfortably covers daemon bring-up.
+            for (attempt in 0 until PERSIST_MAX_ATTEMPTS) {
+                var conn: java.net.HttpURLConnection? = null
+                try {
+                    conn = java.net.URL("http://127.0.0.1:8080/api/surveillance/config")
+                        .openConnection(java.net.Proxy.NO_PROXY) as java.net.HttpURLConnection
+                    conn.requestMethod = "POST"
+                    conn.doOutput = true
+                    conn.connectTimeout = 3000
+                    conn.readTimeout = 3000
+                    conn.setRequestProperty("Content-Type", "application/json")
+                    conn.outputStream.use { it.write("{\"operatingMode\":\"$mode\"}".toByteArray()) }
+                    val code = conn.responseCode
+                    Log.i(TAG, "postOperatingMode($mode) attempt ${attempt + 1} → HTTP $code")
+                    if (code in 200..299) {
+                        // A false 200 keeps retrying (transient lock contention); a
+                        // non-JSON body assumes success (legacy endpoint).
+                        val bodyText = conn.inputStream.bufferedReader().use { it.readText() }
+                        val success = try {
+                            org.json.JSONObject(bodyText).optBoolean("success", true)
+                        } catch (_: Throwable) { true }
+                        if (success) return true
+                        Log.w(TAG, "postOperatingMode($mode) attempt ${attempt + 1}: HTTP 200 but success=false — retrying")
+                    }
+                } catch (t: Throwable) {
+                    Log.w(TAG, "postOperatingMode($mode) attempt ${attempt + 1} failed: ${t.message}")
+                } finally {
+                    conn?.disconnect()
+                }
+                try { Thread.sleep((attempt + 1) * 2000L) } catch (ie: InterruptedException) {
+                    Thread.currentThread().interrupt(); break
+                }
+            }
+            return false
+        }
+
+        /**
+         * Daemon-ready flush of a pending non-default operating-mode choice. Call from
+         * MainActivity once the daemon is confirmed up (onDaemonAuthGranted / daemon-ready
+         * path). If the first-run POST retries all expired before the daemon bound :8080
+         * and the user then completed onboarding (which disables the MODE step re-ask via
+         * onboardingComplete), the choice is still recorded in
+         * OnboardingState.pendingOperatingMode and gets written here — decoupled from the
+         * onboarding step lifecycle. No-op when nothing is pending. Runs its own worker
+         * thread; safe to call repeatedly (idempotent).
+         */
+        @JvmStatic
+        fun flushPendingOperatingMode(context: android.content.Context) {
+            val state = OnboardingState.get(context)
+            val pending = state.pendingOperatingMode ?: return
+            Thread {
+                // Reconcile FIRST: if the user has since explicitly set the operating mode
+                // (via Settings — the daemon marks operatingModeSetByUser=true on any
+                // operatingMode POST), a stale onboarding pending value must NOT clobber
+                // that later choice. Drop the pending marker instead of re-asserting it.
+                // Only when the daemon reports no explicit user choice yet (untouched
+                // default) do we write the pending onboarding pick.
+                when (readOperatingModeSetByUser()) {
+                    true -> {
+                        state.pendingOperatingMode = null
+                        state.modeChosen = true
+                        Log.i(TAG, "flushPendingOperatingMode: mode already set by user — dropping stale pending=$pending")
+                        return@Thread
+                    }
+                    null -> {
+                        // Daemon unreachable — can't reconcile safely. Leave pending for a
+                        // later flush rather than risk clobbering; do NOT POST blindly.
+                        Log.w(TAG, "flushPendingOperatingMode: daemon unreachable for reconcile — leaving pending=$pending")
+                        return@Thread
+                    }
+                    false -> { /* untouched default — safe to write the pending pick below */ }
+                }
+                if (postOperatingModeWithRetry(pending)) {
+                    state.pendingOperatingMode = null
+                    state.modeChosen = true
+                    Log.i(TAG, "flushPendingOperatingMode: persisted pending mode=$pending")
+                } else {
+                    Log.w(TAG, "flushPendingOperatingMode: daemon still unreachable — leaving pending=$pending")
+                }
+            }.start()
+        }
+
+        /**
+         * Clear the daemon-side operatingModeSetByUser marker (POST
+         * {operatingModeSetByUser:false}). Called from onboarding reset/replay so a wiped
+         * session doesn't inherit a PRIOR session's "user chose a mode" flag — without
+         * this, flushPendingOperatingMode would GET a stale true and wrongly drop a
+         * legitimate NEW replay pick. Runs its own worker thread with retry+backoff; the
+         * body-success check means a false 200 keeps retrying. Best-effort: if the daemon
+         * is unreachable the marker stays set, but the immediate persistOperatingMode POST
+         * from the replay pick (which does NOT consult the marker) still normally lands the
+         * new choice — this clear only closes the narrow "immediate POST also failed" window.
+         */
+        @JvmStatic
+        fun clearOperatingModeUserFlag() {
+            Thread {
+                for (attempt in 0 until PERSIST_MAX_ATTEMPTS) {
+                    var conn: java.net.HttpURLConnection? = null
+                    try {
+                        conn = java.net.URL("http://127.0.0.1:8080/api/surveillance/config")
+                            .openConnection(java.net.Proxy.NO_PROXY) as java.net.HttpURLConnection
+                        conn.requestMethod = "POST"
+                        conn.doOutput = true
+                        conn.connectTimeout = 3000
+                        conn.readTimeout = 3000
+                        conn.setRequestProperty("Content-Type", "application/json")
+                        conn.outputStream.use { it.write("{\"operatingModeSetByUser\":false}".toByteArray()) }
+                        if (conn.responseCode in 200..299) {
+                            val bodyText = conn.inputStream.bufferedReader().use { it.readText() }
+                            val success = try {
+                                org.json.JSONObject(bodyText).optBoolean("success", true)
+                            } catch (_: Throwable) { true }
+                            if (success) {
+                                Log.i(TAG, "clearOperatingModeUserFlag: cleared daemon marker")
+                                return@Thread
+                            }
+                        }
+                    } catch (t: Throwable) {
+                        Log.w(TAG, "clearOperatingModeUserFlag attempt ${attempt + 1} failed: ${t.message}")
+                    } finally {
+                        conn?.disconnect()
+                    }
+                    try { Thread.sleep((attempt + 1) * 2000L) } catch (ie: InterruptedException) {
+                        Thread.currentThread().interrupt(); break
+                    }
+                }
+                Log.w(TAG, "clearOperatingModeUserFlag: never confirmed (daemon unreachable)")
+            }.start()
+        }
+
+        /**
+         * GET the daemon's surveillance config and return operatingModeSetByUser.
+         * true  = user has explicitly chosen a mode (onboarding or Settings) — don't clobber.
+         * false = untouched default — safe to write a pending onboarding pick.
+         * null  = daemon unreachable / unparseable — caller must not write blindly.
+         * MUST be called off the main thread.
+         */
+        private fun readOperatingModeSetByUser(): Boolean? {
+            var conn: java.net.HttpURLConnection? = null
+            try {
+                conn = java.net.URL("http://127.0.0.1:8080/api/surveillance/config")
+                    .openConnection(java.net.Proxy.NO_PROXY) as java.net.HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.connectTimeout = 3000
+                conn.readTimeout = 3000
+                if (conn.responseCode !in 200..299) return null
+                val bodyText = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = org.json.JSONObject(bodyText)
+                // GET wraps the payload under "config" (sendConfig); tolerate either shape.
+                val cfg = json.optJSONObject("config") ?: json
+                return cfg.optBoolean("operatingModeSetByUser", false)
+            } catch (t: Throwable) {
+                Log.w(TAG, "readOperatingModeSetByUser failed: ${t.message}")
+                return null
+            } finally {
+                conn?.disconnect()
+            }
+        }
     }
 }

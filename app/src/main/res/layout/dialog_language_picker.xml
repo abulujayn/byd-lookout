@@ -60,7 +60,7 @@
                 android:text="@string/language_picker_subtitle_pending"
                 android:textAppearance="@style/TextAppearance.Material3.BodyMedium"
                 android:textColor="?attr/colorOnSurfaceVariant"
-                tools:text="16 languages available" />
+                tools:text="18 languages available" />
         </LinearLayout>
 
         <com.google.android.material.button.MaterialButton
@@ -74,7 +74,7 @@
 
     </LinearLayout>
 
-    <!-- Language list (Auto + 17 languages, with current selection highlighted) -->
+    <!-- Language list (Auto + 18 languages, with current selection highlighted) -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rvLanguages"
         android:layout_width="match_parent"

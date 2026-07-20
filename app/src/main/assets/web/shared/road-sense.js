@@ -51,6 +51,13 @@ BYD.roadSense = {
         bsEnabled: false,
         // Camera merge mode: 'both' (rear+side stitch), 'side', or 'rear'.
         bsMergeMode: 'both',
+        // On-screen card rotation. Either a fixed quarter turn (0/90/180/270) or
+        // 'auto' (direction-of-travel: holds bsRotationBase moving forward, flips
+        // 180° in reverse). Only applies to the single-camera modes (side/rear);
+        // ignored for the merged 'both' view.
+        bsRotation: 0,
+        // Base quarter turn used as the forward orientation when bsRotation === 'auto'.
+        bsRotationBase: 0,
         bsRearFov: 1.66,
         bsSideFov: 1.98,
         bsYaw: 1.23,
@@ -78,7 +85,13 @@ BYD.roadSense = {
         // Map → cluster projection. autoProjectCluster lives in the UCM `navMap`
         // section (read by the daemon on ACC-on); the live projecting state is NOT
         // a config value — it comes from GET /api/navmap/cluster/status.
-        autoProjectCluster: false
+        autoProjectCluster: false,
+        // The Projection feature's own auto-cast-on-ACC-on preference (UCM
+        // `projection` section, key autoStartOnAcc). Read-only here — its UI lives
+        // in a native fragment. The driver cluster is a single surface, so this and
+        // autoProjectCluster are mutually exclusive: turning the map auto-project ON
+        // while this is set prompts to hand the cluster over (see toggleClusterAuto).
+        projectionAutoStart: false
     },
 
     async init() {
@@ -159,6 +172,8 @@ BYD.roadSense = {
                 const c = this.config;
                 if (typeof bs.enabled === 'boolean') c.bsEnabled = bs.enabled;
                 if (bs.mergeMode === 'both' || bs.mergeMode === 'side' || bs.mergeMode === 'rear') c.bsMergeMode = bs.mergeMode;
+                if (bs.rotation === 0 || bs.rotation === 90 || bs.rotation === 180 || bs.rotation === 270 || bs.rotation === 'auto') c.bsRotation = bs.rotation;
+                if (bs.rotationBase === 0 || bs.rotationBase === 90 || bs.rotationBase === 180 || bs.rotationBase === 270) c.bsRotationBase = bs.rotationBase;
                 if (typeof bs.rearFov === 'number') c.bsRearFov = this._clamp(bs.rearFov, 1.0, 2.2);
                 if (typeof bs.sideFov === 'number') c.bsSideFov = this._clamp(bs.sideFov, 1.0, 2.2);
                 if (typeof bs.yaw === 'number') c.bsYaw = this._clamp(bs.yaw, 0, 1.4);
@@ -189,6 +204,13 @@ BYD.roadSense = {
             if (data && data.success && data.config && data.config.navMap) {
                 const nm = data.config.navMap;
                 if (typeof nm.autoProjectCluster === 'boolean') this.config.autoProjectCluster = nm.autoProjectCluster;
+            }
+            // Projection feature's auto-cast-on-ACC-on preference (its own UCM
+            // section, toggled from a native fragment). Read it so toggleClusterAuto
+            // can detect the cluster conflict; default false when absent.
+            if (data && data.success && data.config && data.config.projection) {
+                const pj = data.config.projection;
+                if (typeof pj.autoStartOnAcc === 'boolean') this.config.projectionAutoStart = pj.autoStartOnAcc;
             }
         } catch (e) {
             console.warn('RoadSense: failed to load config:', e);
@@ -310,6 +332,12 @@ BYD.roadSense = {
         this._setBadge('bsStatusBadge', c.bsEnabled);
         if (c.bsMergeMode !== 'both' && c.bsMergeMode !== 'side' && c.bsMergeMode !== 'rear') c.bsMergeMode = 'both';
         this._bsHighlightMergeMode(c.bsMergeMode);
+        if (c.bsRotation !== 0 && c.bsRotation !== 90 && c.bsRotation !== 180 && c.bsRotation !== 270 && c.bsRotation !== 'auto') c.bsRotation = 0;
+        if (c.bsRotationBase !== 0 && c.bsRotationBase !== 90 && c.bsRotationBase !== 180 && c.bsRotationBase !== 270) c.bsRotationBase = 0;
+        this._bsHighlightRotation(c.bsRotation);
+        this._bsReflectAutoBaseRow(c.bsRotation);
+        this._bsHighlightAutoBase(c.bsRotationBase);
+        this._bsReflectRotationRow(c.bsMergeMode);
         // Live preview is a NATIVE on-car window — only meaningful in the in-app
         // WebView. Hide the preview controls on a tunnel/browser (no AndroidBridge),
         // where tapping them would do nothing. Sliders + Apply still work remotely
@@ -890,14 +918,48 @@ BYD.roadSense = {
         const el = document.getElementById('rsClusterAuto');
         if (!el) return;
         const on = el.checked;
+        // The driver cluster is a single surface — the map auto-project and the
+        // Projection feature's auto-cast can't both own it on ACC-on. When turning
+        // this ON while Projection auto-cast is set, confirm handing the cluster
+        // over. On confirm we clear projection.autoStartOnAcc FIRST, then set our
+        // own flag. Turning OFF is unconditional (frees the cluster, no sibling
+        // write). No conflict / turning off → straight through, no dialog.
+        const conflict = on && this.config.projectionAutoStart === true;
+        if (conflict) {
+            const t = (BYD.i18n && BYD.i18n.t) ? BYD.i18n.t.bind(BYD.i18n) : null;
+            if (BYD.utils && BYD.utils.confirmDialog) {
+                const ok = await BYD.utils.confirmDialog({
+                    title: (t && t('road_sense.map_cluster_auto_conflict_title')) || 'Projection is using the cluster',
+                    body: (t && t('road_sense.map_cluster_auto_conflict_body')) || 'The Projection screen is set to auto-cast an app to the driver cluster on startup. The cluster can only show one thing at a time. Turn that off and auto-project the map instead?',
+                    confirmLabel: (t && t('road_sense.map_cluster_auto_conflict_confirm')) || 'Use the map',
+                    cancelLabel: (t && t('common.cancel')) || 'Cancel'
+                });
+                if (!ok) { el.checked = false; return; }
+            }
+        }
         try {
+            // Free the cluster from Projection FIRST so the two auto-starts never
+            // both fire — only needed when there was a conflict.
+            if (conflict) {
+                const pjResp = await fetch('/api/settings/unified', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ section: 'projection', data: { autoStartOnAcc: false } })
+                });
+                const pjData = await pjResp.json();
+                if (!(pjData && pjData.success)) { el.checked = !on; this._toastFailed(); return; }
+            }
             const resp = await fetch('/api/settings/unified', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ section: 'navMap', data: { autoProjectCluster: on } })
             });
             const data = await resp.json();
-            if (data && data.success) { this.config.autoProjectCluster = on; this._toastSaved(); }
+            if (data && data.success) {
+                this.config.autoProjectCluster = on;
+                if (conflict) this.config.projectionAutoStart = false;
+                this._toastSaved();
+            }
             else { el.checked = !on; this._toastFailed(); }
         } catch (e) {
             console.warn('RoadSense: cluster auto toggle failed:', e);
@@ -1075,9 +1137,10 @@ BYD.roadSense = {
         if (mode === prev) return;
         this.config.bsMergeMode = mode;
         this._bsHighlightMergeMode(mode);
+        this._bsReflectRotationRow(mode);
         const ok = await this._bsSave({ mergeMode: mode });
         if (ok) { this._toastSaved(); }
-        else { this.config.bsMergeMode = prev; this._bsHighlightMergeMode(prev); this._toastFailed(); }
+        else { this.config.bsMergeMode = prev; this._bsHighlightMergeMode(prev); this._bsReflectRotationRow(prev); this._toastFailed(); }
     },
 
     /** Highlight the selected merge mode (M3 tonal selection, same pattern as the
@@ -1087,6 +1150,77 @@ BYD.roadSense = {
         for (var k in map) {
             var el = document.getElementById(map[k]);
             if (el) { if (k === mode) el.classList.add('active'); else el.classList.remove('active'); }
+        }
+    },
+
+    /** Rotation only applies to the single-camera views — show the row for
+     *  side/rear, hide it (and the merged panorama can't rotate) for 'both'. */
+    _bsReflectRotationRow(mode) {
+        var single = (mode === 'side' || mode === 'rear');
+        var row = document.getElementById('bsRotationRow');
+        if (row) row.style.display = single ? '' : 'none';
+        // The auto-base row hangs off the rotation row; hide it whenever rotation is
+        // gated off (merged 'both'), else defer to the rotation value (auto vs fixed).
+        var baseRow = document.getElementById('bsAutoBaseRow');
+        if (baseRow) baseRow.style.display = (single && this.config.bsRotation === 'auto') ? '' : 'none';
+    },
+
+    /** Select the on-screen card rotation: a fixed quarter turn (0/90/180/270) or
+     *  'auto' (direction-of-travel — the daemon holds the base angle moving forward
+     *  and flips 180° in reverse gear). Persists immediately and takes effect live on
+     *  the running card (the daemon re-resolves the SurfaceControl geometry —
+     *  aspect-swapped for a quarter turn). */
+    async bsSetRotation(deg) {
+        var d = (deg === 'auto') ? 'auto' : parseInt(deg, 10);
+        if (d !== 0 && d !== 90 && d !== 180 && d !== 270 && d !== 'auto') return;
+        var prev = this.config.bsRotation;
+        if (d === prev) return;
+        this.config.bsRotation = d;
+        this._bsHighlightRotation(d);
+        this._bsReflectAutoBaseRow(d);
+        const ok = await this._bsSave({ rotation: d });
+        if (ok) { this._toastSaved(); }
+        else { this.config.bsRotation = prev; this._bsHighlightRotation(prev); this._bsReflectAutoBaseRow(prev); this._toastFailed(); }
+    },
+
+    /** Highlight the selected rotation button (M3 tonal selection). */
+    _bsHighlightRotation(deg) {
+        var map = { 0: 'bsRot0', 90: 'bsRot90', 180: 'bsRot180', 270: 'bsRot270', auto: 'bsRotAuto' };
+        for (var k in map) {
+            var el = document.getElementById(map[k]);
+            if (el) {
+                var sel = (k === 'auto') ? (deg === 'auto') : (parseInt(k, 10) === deg);
+                if (sel) el.classList.add('active'); else el.classList.remove('active');
+            }
+        }
+    },
+
+    /** The forward-orientation base row is only meaningful when rotation is 'auto'. */
+    _bsReflectAutoBaseRow(rot) {
+        var row = document.getElementById('bsAutoBaseRow');
+        if (row) row.style.display = (rot === 'auto') ? '' : 'none';
+    },
+
+    /** Select the forward-gear base orientation used by 'auto' (0/90/180/270).
+     *  Reverse gear flips this 180° on-screen; persisted as bsRotationBase. */
+    async bsSetRotationBase(deg) {
+        var d = parseInt(deg, 10);
+        if (d !== 0 && d !== 90 && d !== 180 && d !== 270) return;
+        var prev = this.config.bsRotationBase;
+        if (d === prev) return;
+        this.config.bsRotationBase = d;
+        this._bsHighlightAutoBase(d);
+        const ok = await this._bsSave({ rotationBase: d });
+        if (ok) { this._toastSaved(); }
+        else { this.config.bsRotationBase = prev; this._bsHighlightAutoBase(prev); this._toastFailed(); }
+    },
+
+    /** Highlight the selected auto-base button (M3 tonal selection). */
+    _bsHighlightAutoBase(deg) {
+        var map = { 0: 'bsBase0', 90: 'bsBase90', 180: 'bsBase180', 270: 'bsBase270' };
+        for (var k in map) {
+            var el = document.getElementById(map[k]);
+            if (el) { if (parseInt(k, 10) === deg) el.classList.add('active'); else el.classList.remove('active'); }
         }
     },
 

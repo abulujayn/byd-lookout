@@ -547,6 +547,14 @@ public class OemDashcamPipeline {
         synchronized (recordingStateLock) {
             if (!recording.compareAndSet(false, true)) return false;
             recordingEventOwned.set(eventOwned);
+            // Parked-idle throttle: snap the encode draw-stride back to 1 the
+            // instant we win the CAS — INSIDE the lock so a concurrent
+            // reapplyIdleStrideAfterStop (which re-checks recording under the same
+            // lock) can never clobber it after we've opened a full-rate clip. The
+            // clip body then records at full frame rate from frame 1 (parity with
+            // today). No-op when stride was already 1. triggerEventRecording (below)
+            // issues its own splice IDR, so strided pre-roll frames stay valid.
+            recorderDrawStride = 1;
         }
         String path = generateOutputPath();
         long clampedPost = Math.max(0L, postRecordMs);
@@ -590,6 +598,7 @@ public class OemDashcamPipeline {
             recordingEventOwned.set(false);
         }
         if (encoder != null) encoder.stopEventRecording(true, Math.max(0L, postRecordMs));
+        reapplyIdleStrideAfterStop();
         reconcileTelemetryHold();
     }
 
@@ -621,6 +630,7 @@ public class OemDashcamPipeline {
             recordingEventOwned.set(false);
         }
         if (encoder != null) encoder.stopEventRecording(true, Math.max(0L, postRecordMs));
+        reapplyIdleStrideAfterStop();
         reconcileTelemetryHold();
         return true;
     }
@@ -677,6 +687,40 @@ public class OemDashcamPipeline {
                 .optInt("segmentRotateOffsetMs", 30_000);
         } catch (Throwable t) {
             return 30_000;
+        }
+    }
+
+    /**
+     * Re-arm the parked-idle encode stride after a clip finalizes. Event/
+     * continuous starts snap the stride to 1 for a full-rate clip; once the clip
+     * ends we must return to the throttled idle stride if we are still on the
+     * parked surveillance axis with the throttle on — otherwise the encoder would
+     * keep running at full rate (no power saving) until the next config reapply.
+     * Never throttles while a clip is in flight. No-op when the throttle is off
+     * (resolves to stride 1 = today's behaviour).
+     */
+    private void reapplyIdleStrideAfterStop() {
+        try {
+            // Compute the target stride OUTSIDE the lock (AccMonitor + UCM reads can
+            // take ms), then re-check recording and write the stride TOGETHER under
+            // recordingStateLock. This closes the check-then-act race with
+            // startRecordingInternal: a clip that won the CAS (and set stride=1
+            // inside the same lock) is observed here as recording==true, so we skip
+            // the write and never clobber a freshly-opened full-rate clip's stride.
+            boolean surveillanceAxis = !com.overdrive.app.monitor.AccMonitor.isAccOn();
+            int target;
+            if (surveillanceAxis && UnifiedConfigManager.isOemIdleThrottleWhenParked()) {
+                int idleFps = UnifiedConfigManager.getOemIdleFps();
+                target = (idleFps > 0) ? Math.max(1, Math.round((float) fps / idleFps)) : 1;
+            } else {
+                target = 1;
+            }
+            synchronized (recordingStateLock) {
+                if (recording.get()) return;  // a new clip already opened — leave its stride
+                recorderDrawStride = target;
+            }
+        } catch (Throwable t) {
+            recorderDrawStride = 1;  // fail safe: full rate
         }
     }
 
@@ -900,6 +944,22 @@ public class OemDashcamPipeline {
                 requestedFps = recAxisFps;
             }
             fps = Math.max(15, Math.min(60, requestedFps));
+
+            // Parked-idle encode throttle: on the SURVEILLANCE (parked) axis, when
+            // the OEM throttle is enabled and we are NOT recording, sub-sample the
+            // encoder draw to ~idleFps via the draw-stride. The camera HAL rate
+            // (fps, >=15) is untouched — only the encode rate drops — so an event
+            // can snap to a clean full-rate clip (startRecordingInternal resets
+            // stride to 1). On the drive axis, or with the throttle off, force
+            // stride 1 (today's behaviour). Never override an in-flight clip.
+            if (surveillanceAxis
+                    && UnifiedConfigManager.isOemIdleThrottleWhenParked()
+                    && !recording.get()) {
+                int idleFps = UnifiedConfigManager.getOemIdleFps();
+                recorderDrawStride = (idleFps > 0) ? Math.max(1, Math.round((float) fps / idleFps)) : 1;
+            } else if (!recording.get()) {
+                recorderDrawStride = 1;
+            }
 
             // Recording-axis tier chain (also the surveillance-axis fallback).
             String recAxisQuality = oem.has("recordingQuality")
@@ -1413,6 +1473,23 @@ public class OemDashcamPipeline {
 
     private final AtomicInteger drawSequence = new AtomicInteger(0);
 
+    // Parked-idle throttle: encode draw-stride. MediaCodec encodes exactly the
+    // frames swapped into its input surface, so drawing every Nth iteration
+    // yields ~halFps/N encode fps WITHOUT touching the (HAL-rejectable) camera
+    // setCameraFps or the (immutable) KEY_FRAME_RATE. Default 1 = every frame
+    // (byte-identical to today). Set >1 only while parked-idle keep-warm; snapped
+    // back to 1 on an event so the clip body records full-rate. Written from the
+    // control thread, read on the GL thread — volatile is sufficient.
+    private volatile int recorderDrawStride = 1;
+    // GL-thread-confined stride counter (never touched off the render loop).
+    private int renderStridePhase = 0;
+    // GL-thread-confined: last time we forced an IDR while parked-idle. At the
+    // strided-down encode rate the frame-count GOP stretches past the pre-record
+    // window, so we pulse a sync-frame here (inline in the render loop — glHandler
+    // is occupied by the busy render while-loop, so a posted timer would never
+    // run). Only adds IDRs; never runs unless idle-throttle is active.
+    private long oemLastIdleKeyframeMs = 0;
+
     private void startRenderLoop() {
         startWatchdog();
         glHandler.post(this::renderLoop);
@@ -1567,10 +1644,39 @@ public class OemDashcamPipeline {
                     lastPtsNs = ptsNs;
                 }
 
-                drawPassthrough();
+                // Parked-idle throttle: only draw+swap (i.e. feed the encoder)
+                // every Nth iteration. updateTexImage + PTS resolution above ran
+                // this iteration regardless, so the HAL is fully drained and the
+                // NEXT emitted frame still carries a correct monotonic wall-clock
+                // PTS — playback speed is unchanged, only the encode rate drops.
+                // stride==1 (default / event / not-idle) → byte-identical to today.
+                final int stride = recorderDrawStride;
+                if (stride <= 1 || (renderStridePhase++ % stride) == 0) {
+                    drawPassthrough();
 
-                eglCore.swapBuffersWithTimestamp(encoderEglSurface, ptsNs);
-                drawSequence.incrementAndGet();
+                    eglCore.swapBuffersWithTimestamp(encoderEglSurface, ptsNs);
+                    drawSequence.incrementAndGet();
+
+                    // Idle keyframe pulse: when strided down and NOT recording an
+                    // event, force an IDR every ~preRecordSeconds/2 so the
+                    // pre-record ring always holds a keyframe despite the stretched
+                    // low-rate GOP. Guarded on stride>1 so it never runs at full
+                    // rate; only adds IDRs.
+                    if (stride > 1 && !recordingEventOwned.get()) {
+                        long nowMs = android.os.SystemClock.uptimeMillis();
+                        long periodMs = Math.max(1000L, resolveOemPreRecordSeconds() * 1000L / 2L);
+                        if (oemLastIdleKeyframeMs == 0
+                                || (nowMs - oemLastIdleKeyframeMs) >= periodMs) {
+                            oemLastIdleKeyframeMs = nowMs;
+                            HardwareEventRecorderGpu enc = encoder;
+                            if (enc != null) {
+                                try { enc.requestSyncFrame(); } catch (Throwable ignored) {}
+                            }
+                        }
+                    } else {
+                        oemLastIdleKeyframeMs = 0;
+                    }
+                }
                 consecutiveErrors = 0;
             } catch (Throwable t) {
                 consecutiveErrors++;

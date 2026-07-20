@@ -434,7 +434,17 @@ object ConfigBackupService {
             // re-defaults on the geocoding-migration path). Idempotent.
             UnifiedConfigManager.ensureDefaults(toWrite)
 
-            val saved = UnifiedConfigManager.saveConfig(toWrite)
+            // force=true: bypass the corruption latch. `toWrite` is a COMPLETE,
+            // already-validated user config (validateBundle passed + merged onto a
+            // fresh forceReload base + ensureDefaults), NOT a defaults-merge — so
+            // the latch's "don't clobber recoverable settings with defaults" guard
+            // does not apply. Critically, RESTORE is the recovery path FOR config
+            // corruption: if the live file is corrupt and both .bak copies are
+            // unusable, the latch is set and the forceReload above can't clear it,
+            // so a plain saveConfig would return false and block the very action
+            // meant to fix the corruption ("Could not write settings"). Forcing
+            // writes the good bytes and clears the latch on success.
+            val saved = UnifiedConfigManager.saveConfig(toWrite, /* force = */ true)
             // Refresh the in-memory cache to the bytes we just wrote WHILE STILL
             // HOLDING the lock. Doing the final forceReload outside the lock left
             // a window where a peer daemon's section write could land between our

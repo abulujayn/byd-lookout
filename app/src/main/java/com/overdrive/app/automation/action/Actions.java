@@ -2,6 +2,7 @@ package com.overdrive.app.automation.action;
 
 import com.overdrive.app.automation.type.AppType;
 import com.overdrive.app.automation.type.AudioType;
+import com.overdrive.app.automation.type.StringType;
 import com.overdrive.app.automation.type.ColourType;
 import com.overdrive.app.automation.type.EnumType;
 import com.overdrive.app.automation.type.IntType;
@@ -54,6 +55,11 @@ public class Actions {
         addAction(new VehicleControlAction(
                 new Label("itac", "automation.set_itac"), "automation.set_itac_description",
                 new EnumType(new Label("payload", "automation.action"), new Label("off", "automation.off"), new Label("on", "automation.on"))));
+        // Fold / unfold exterior mirrors — label id MUST equal the catalog key
+        // "mirror_fold". on=fold in, off=unfold. Set-only (no fold-state getter).
+        addAction(new VehicleControlAction(
+                new Label("mirror_fold", "automation.set_mirror_fold"), "automation.set_mirror_fold_description",
+                new EnumType(new Label("payload", "automation.action"), new Label("on", "automation.mirror_fold"), new Label("off", "automation.mirror_unfold"))));
         addAction(new ApiAction(
                 new Label("cpd", "automation.set_cpd"),
                 "automation.set_cpd_description",
@@ -68,6 +74,136 @@ public class Actions {
         addAction(new VehicleControlAction(
                 new Label("drl", "automation.set_drl"), "automation.set_drl_description",
                 new EnumType(new Label("payload", "automation.action"), new Label("off", "automation.off"), new Label("on", "automation.on"))));
+        // Hazard (double-flash) lights on/off — catalog key "hazard". The SET is
+        // unconfirmed on this platform (see VehicleControlCatalog/HazardCommand); the
+        // action reports failure honestly if the HAL refuses the write.
+        addAction(new VehicleControlAction(
+                new Label("hazard", "automation.set_hazard"), "automation.set_hazard_description",
+                new EnumType(new Label("payload", "automation.action"), new Label("off", "automation.off"), new Label("on", "automation.on"))));
+        // ── Expanded ADAS matrix (catalog keys must match VehicleControlCatalog) ──
+        // Warning/info toggles (on/off). Feature ids/polarity unverified per trim —
+        // verify via GET /api/vehicle/adas. The description keys note when a control is
+        // a safety intervention.
+        for (String[] a : new String[][]{
+                {"adas_bsd",  "automation.set_bsd"},
+                {"adas_tsr",  "automation.set_tsr"},
+                {"adas_rcta", "automation.set_rcta"},
+                {"adas_fcta", "automation.set_fcta"},
+                {"adas_tla",  "automation.set_tla"},
+                {"adas_dow",  "automation.set_dow"},
+                {"adas_rcw",  "automation.set_rcw"},
+                {"adas_islc", "automation.set_islc"},
+        }) {
+            addAction(new VehicleControlAction(
+                    new Label(a[0], a[1]), a[1] + "_description",
+                    new EnumType(new Label("payload", "automation.action"),
+                            new Label("off", "automation.off"), new Label("on", "automation.on"))));
+        }
+        // Safety interventions (disabling reduces protection) — same on/off shape, but
+        // their _description strings warn about the safety impact.
+        for (String[] a : new String[][]{
+                {"adas_elka", "automation.set_elka"},
+                {"adas_rctb", "automation.set_rctb"},
+                {"adas_fctb", "automation.set_fctb"},
+        }) {
+            addAction(new VehicleControlAction(
+                    new Label(a[0], a[1]), a[1] + "_description",
+                    new EnumType(new Label("payload", "automation.action"),
+                            new Label("off", "automation.off"), new Label("on", "automation.on"))));
+        }
+        // Forward Collision Warning sensitivity LEVEL (multi-mode, not on/off).
+        addAction(new VehicleControlAction(
+                new Label("adas_fcw", "automation.set_fcw"), "automation.set_fcw_description",
+                new EnumType(new Label("payload", "automation.mode"),
+                        new Label("0", "automation.off"),
+                        new Label("1", "automation.fcw_low"),
+                        new Label("2", "automation.fcw_medium"),
+                        new Label("3", "automation.fcw_high"))));
+        // Automatic Emergency Braking — SAFETY-CRITICAL: ENABLE-ONLY. The only option
+        // is "on" so an automation can re-arm AEB but never silently disable it.
+        addAction(new VehicleControlAction(
+                new Label("adas_aeb", "automation.set_aeb"), "automation.set_aeb_description",
+                new EnumType(new Label("payload", "automation.action"), new Label("on", "automation.on"))));
+        // ── Climate breadth: AC auto / fan-only / steering-wheel heater ──
+        // Each maps the on/off enum into a distinct /api/vehicle/climate action string.
+        addAction(new ApiAction(
+                new Label("acAuto", "automation.set_ac_auto"),
+                "automation.set_ac_auto_description",
+                "POST",
+                "/api/vehicle/climate",
+                "{\"action\":\"auto_${action}\"}",
+                new EnumType(new Label("action", "automation.action"), new Label("off", "automation.off"), new Label("on", "automation.on"))));
+        addAction(new ApiAction(
+                new Label("fanOnly", "automation.set_fan_only"),
+                "automation.set_fan_only_description",
+                "POST",
+                "/api/vehicle/climate",
+                "{\"action\":\"fan_only_${action}\"}",
+                new EnumType(new Label("action", "automation.action"), new Label("off", "automation.off"), new Label("on", "automation.on"))));
+        addAction(new ApiAction(
+                new Label("steeringHeat", "automation.set_steering_heat"),
+                "automation.set_steering_heat_description",
+                "POST",
+                "/api/vehicle/climate",
+                "{\"action\":\"steering_heat_${action}\"}",
+                new EnumType(new Label("action", "automation.action"), new Label("off", "automation.off"), new Label("on", "automation.on"))));
+        // Front / rear windscreen defrost (demist) on/off — AC-device feature writes, same
+        // /api/vehicle/climate routing as the other breadth toggles.
+        addAction(new ApiAction(
+                new Label("frontDefrost", "automation.set_front_defrost"),
+                "automation.set_front_defrost_description",
+                "POST",
+                "/api/vehicle/climate",
+                "{\"action\":\"defrost_front_${action}\"}",
+                new EnumType(new Label("action", "automation.action"), new Label("off", "automation.off"), new Label("on", "automation.on"))));
+        addAction(new ApiAction(
+                new Label("rearDefrost", "automation.set_rear_defrost"),
+                "automation.set_rear_defrost_description",
+                "POST",
+                "/api/vehicle/climate",
+                "{\"action\":\"defrost_rear_${action}\"}",
+                new EnumType(new Label("action", "automation.action"), new Label("off", "automation.off"), new Label("on", "automation.on"))));
+        // Air intake: Recirculate (recycle cabin air) vs Fresh air (draw outside air).
+        // recirculate_on = RECIRCULATION, recirculate_off = FRESH_AIR (AC cycle axis).
+        addAction(new ApiAction(
+                new Label("recirculation", "automation.set_recirculation"),
+                "automation.set_recirculation_description",
+                "POST",
+                "/api/vehicle/climate",
+                "{\"action\":\"recirculate_${mode}\"}",
+                new EnumType(new Label("mode", "automation.air_intake"),
+                        new Label("on", "automation.recirculate"),
+                        new Label("off", "automation.fresh_air"))));
+        // ── Lighting breadth: welcome / reading / ambient-music (on/off), headlight level ──
+        // Lights use target + enable(bool); the enum value maps to true/false in the body.
+        addAction(new ApiAction(
+                new Label("welcomeLight", "automation.set_welcome_light"),
+                "automation.set_welcome_light_description",
+                "POST",
+                "/api/vehicle/lights",
+                "{\"target\":\"welcomeLight\",\"enable\":${action}}",
+                new EnumType(new Label("action", "automation.action"), new Label("false", "automation.off"), new Label("true", "automation.on"))));
+        addAction(new ApiAction(
+                new Label("readingLight", "automation.set_reading_light"),
+                "automation.set_reading_light_description",
+                "POST",
+                "/api/vehicle/lights",
+                "{\"target\":\"readingLight\",\"enable\":${action}}",
+                new EnumType(new Label("action", "automation.action"), new Label("false", "automation.off"), new Label("true", "automation.on"))));
+        addAction(new ApiAction(
+                new Label("ambientMusic", "automation.set_ambient_music"),
+                "automation.set_ambient_music_description",
+                "POST",
+                "/api/vehicle/lights",
+                "{\"target\":\"ambientMusic\",\"enable\":${action}}",
+                new EnumType(new Label("action", "automation.action"), new Label("false", "automation.off"), new Label("true", "automation.on"))));
+        addAction(new ApiAction(
+                new Label("headlightLevel", "automation.set_headlight_level"),
+                "automation.set_headlight_level_description",
+                "POST",
+                "/api/vehicle/lights",
+                "{\"target\":\"headlightLevel\",\"value\":${level}}",
+                new IntType(new Label("level", "automation.headlight_level_value"), 1, 11)));
         // The all windows option can't be done to a specific percentage so not including it
         addAction(new ApiAction(
                 new Label("windows", "automation.open_windows"),
@@ -329,6 +465,48 @@ public class Actions {
                         new Label("comfort", "automation.brake_comfort"),
                         new Label("sport", "automation.brake_sport"),
                         new Label("toggle", "automation.toggle"))));
+        // Media transport (play/pause/next/prev) via AudioManager.dispatchMediaKeyEvent
+        // — controls whatever media app currently holds the session (radio, BT, etc.).
+        addAction(new ApiAction(
+                new Label("mediaControl", "automation.media_control"),
+                "automation.media_control_description",
+                "POST",
+                "/api/vehicle/media",
+                "{\"target\":\"media_key\",\"key\":\"${key}\"}",
+                new EnumType(
+                        new Label("key", "automation.media_key"),
+                        new Label("play_pause", "automation.media_play_pause"),
+                        new Label("play", "automation.media_play"),
+                        new Label("pause", "automation.media_pause"),
+                        new Label("next", "automation.media_next"),
+                        new Label("previous", "automation.media_previous"))));
+        // Volume up / down — one relative step on a chosen channel (value carries the
+        // direction: +1 up / -1 down; the daemon clamps to the stream max).
+        addAction(new ApiAction(
+                new Label("volumeStep", "automation.volume_step"),
+                "automation.volume_step_description",
+                "POST",
+                "/api/vehicle/media",
+                "{\"target\":\"volume_step\",\"channel\":\"${channel}\",\"value\":${direction}}",
+                new EnumType(
+                        new Label("channel", "automation.audio_channel"),
+                        new Label("media", "automation.channel_media"),
+                        new Label("navigation", "automation.channel_navigation"),
+                        new Label("voice", "automation.channel_voice"),
+                        new Label("phone", "automation.channel_phone")),
+                new EnumType(
+                        new Label("direction", "automation.direction"),
+                        new Label("1", "automation.volume_up"),
+                        new Label("-1", "automation.volume_down"))));
+        // Ambient (interior atmosphere) light brightness 0-100 — dedicated setter on
+        // the light HAL, distinct from the colour action.
+        addAction(new ApiAction(
+                new Label("ambientBrightness", "automation.set_ambient_brightness"),
+                "automation.set_ambient_brightness_description",
+                "POST",
+                "/api/vehicle/media",
+                "{\"target\":\"ambient_brightness\",\"value\":${percent}}",
+                new IntType(new Label("percent", "automation.percent"), 0, 100)));
         // Play an uploaded sound (MP3/WAV/MP4) through the daemon MediaPlayer on a
         // chosen channel — AUDIO ONLY (an MP4's picture is not shown; use Play Video
         // for that). The sound is chosen from the audio library via a live dropdown
@@ -382,6 +560,66 @@ public class Actions {
                 "POST",
                 "/api/vehicle/stop-audio",
                 ""));
+        // Speak a spoken message aloud via TextToSpeech (e.g. "Charging complete").
+        // Free text + a channel. Runs in the app process (TTS can't run in the daemon),
+        // routed through the allowlisted /api/vehicle/speak. The ${text} is JSON-escaped
+        // by the variable substitution so quotes/newlines in the message stay valid.
+        addAction(new ApiAction(
+                new Label("speak", "automation.speak"),
+                "automation.speak_description",
+                "POST",
+                "/api/vehicle/speak",
+                "{\"text\":\"${text}\",\"channel\":\"${channel}\"}",
+                new StringType(new Label("text", "automation.speak_text"), 200),
+                new EnumType(
+                        new Label("channel", "automation.audio_channel"),
+                        new Label("voice", "automation.channel_voice"),
+                        new Label("media", "automation.channel_media"),
+                        new Label("navigation", "automation.channel_navigation"),
+                        new Label("alarm", "automation.channel_alarm"))));
+        // Show a brief on-screen TOAST (auto-dismissing pill). Renders as an app-process
+        // overlay that floats over the current app WITHOUT stealing focus (safe while
+        // driving). User sets the message, how long it shows, where, and a severity tint.
+        addAction(new ApiAction(
+                new Label("showToast", "automation.show_toast"),
+                "automation.show_toast_description",
+                "POST",
+                "/api/vehicle/message",
+                "{\"kind\":\"toast\",\"message\":\"${message}\",\"duration\":\"${duration}\",\"position\":\"${position}\",\"severity\":\"${severity}\"}",
+                new StringType(new Label("message", "automation.message_text"), 200),
+                new EnumType(
+                        new Label("duration", "automation.toast_duration"),
+                        new Label("short", "automation.toast_duration_short"),
+                        new Label("long", "automation.toast_duration_long")),
+                new EnumType(
+                        new Label("position", "automation.toast_position"),
+                        new Label("bottom", "automation.toast_position_bottom"),
+                        new Label("center", "automation.toast_position_center"),
+                        new Label("top", "automation.toast_position_top")),
+                new EnumType(
+                        new Label("severity", "automation.message_severity"),
+                        new Label("info", "automation.severity_info"),
+                        new Label("warning", "automation.severity_warning"),
+                        new Label("alert", "automation.severity_alert"))));
+        // Show an on-screen DIALOG (title + body + OK button). Same non-focus-stealing
+        // overlay; holds until the user taps OK (or the scrim), or auto-closes after the
+        // optional timeout so a driver who ignores it isn't left with a stuck card.
+        addAction(new ApiAction(
+                new Label("showDialog", "automation.show_dialog"),
+                "automation.show_dialog_description",
+                "POST",
+                "/api/vehicle/message",
+                "{\"kind\":\"dialog\",\"title\":\"${title}\",\"message\":\"${message}\",\"button\":\"${button}\",\"severity\":\"${severity}\",\"timeoutSec\":${timeoutSec}}",
+                new StringType(new Label("title", "automation.dialog_title"), 80),
+                new StringType(new Label("message", "automation.message_text"), 300),
+                new StringType(new Label("button", "automation.dialog_button"), 30),
+                new EnumType(
+                        new Label("severity", "automation.message_severity"),
+                        new Label("info", "automation.severity_info"),
+                        new Label("warning", "automation.severity_warning"),
+                        new Label("alert", "automation.severity_alert")),
+                // 0 = stay until OK; otherwise auto-dismiss after N seconds (max 5 min).
+                new IntType(new Label("timeoutSec", "automation.dialog_timeout"), 0, 300)));
         // Drive / energy modes — same catalog entities the keymap and MQTT use.
         // The Label id must match the VehicleControlCatalog key so
         // VehicleControlAction.trigger resolves it.
@@ -401,6 +639,13 @@ public class Actions {
                 new EnumType(new Label("payload", "automation.mode"),
                         new Label("ev", "automation.mode_ev"),
                         new Label("hev", "automation.mode_hev"))));
+        // Friendly one-tap "hold battery at current charge" — switches to HEV, the only
+        // SDK lever for this (no settable target-SOC exists). Single "on" option so it
+        // reads as an action, not a mode picker. See VehicleControlCatalog hold_battery.
+        addAction(new VehicleControlAction(
+                new Label("hold_battery", "automation.hold_battery"), "automation.hold_battery_description",
+                new EnumType(new Label("payload", "automation.action"),
+                        new Label("on", "automation.on"))));
         // regen / steering / brake feel expose a "toggle" option that CYCLES to the
         // next mode (the daemon tracks the last-commanded value — no HAL readback
         // exists), so an automation can flip the mode without knowing the current one.
@@ -466,6 +711,55 @@ public class Actions {
                 "/api/apps/launch",
                 "{\"package\":\"${package}\",\"split\":true}",
                 new AppType(new Label("package", "automation.app"))));
+        // ── System UI navigation + screenshot (daemon shell as UID 2000) ─────────
+        // Home / Back / Recents via `input keyevent`; screenshot via `screencap`
+        // (the a11y screenshot API is 30+, unavailable on this API-29 head unit).
+        addAction(new ApiAction(
+                new Label("uiNav", "automation.ui_nav"),
+                "automation.ui_nav_description",
+                "POST",
+                "/api/vehicle/system",
+                "{\"target\":\"${target}\"}",
+                new EnumType(
+                        new Label("target", "automation.action"),
+                        new Label("home", "automation.nav_home"),
+                        new Label("back", "automation.nav_back"),
+                        new Label("recents", "automation.nav_recents"))));
+        addAction(new ApiAction(
+                new Label("screenshot", "automation.screenshot"),
+                "automation.screenshot_description",
+                "POST",
+                "/api/vehicle/system",
+                "{\"target\":\"screenshot\",\"display\":${display}}",
+                new EnumType(
+                        new Label("display", "automation.display"),
+                        new Label("0", "automation.display_head_unit"),
+                        new Label("1", "automation.display_cluster"))));
+        // Move an app onto a chosen display (head-unit ↔ cluster). App from the live
+        // picker; the daemon resolves its launcher component and `am start --display`s it.
+        // For the CLUSTER (display 1) the daemon opens the OEM projection first (the
+        // fission display doesn't exist until then) and holds it open; use "Stop cluster
+        // cast" below (or move back to the head unit) to restore the gauges.
+        addAction(new ApiAction(
+                new Label("moveAppToDisplay", "automation.move_app_display"),
+                "automation.move_app_display_description",
+                "POST",
+                "/api/vehicle/system",
+                "{\"target\":\"move_display\",\"package\":\"${package}\",\"display\":${display}}",
+                new AppType(new Label("package", "automation.app")),
+                new EnumType(
+                        new Label("display", "automation.display"),
+                        new Label("0", "automation.display_head_unit"),
+                        new Label("1", "automation.display_cluster"))));
+        // Stop casting an app to the driver cluster — releases the OEM projection so the
+        // gauges are restored (no-op if nothing is cast). Pairs with the cluster branch
+        // of "Move app to display".
+        addAction(new ApiAction(
+                new Label("stopClusterCast", "automation.stop_cluster_cast"),
+                "automation.stop_cluster_cast_description",
+                "POST",
+                "/api/vehicle/system",
+                "{\"target\":\"cluster_cast_stop\"}"));
         // Show camera view — a native camera feed (front/rear/left/right/all-4) on
         // the SAME SurfaceControl lane the blind-spot feature uses, with position +
         // target. Routes through the allowlisted /api/camview/show; the query params
@@ -532,6 +826,36 @@ public class Actions {
         // automations key off). Pairs with the "variable" trigger/condition.
         addAction(new SetVariableAction(
                 new Label("setVariable", "automation.set_variable"), "automation.set_variable_description"));
+        // Add/subtract a number to a variable (counters + simple arithmetic).
+        addAction(new IncrementVariableAction(
+                new Label("incrementVariable", "automation.increment_variable"),
+                "automation.increment_variable_description"));
+        // Loop — run nested actions N times, or while/until a signal condition holds.
+        addAction(new LoopAction(
+                new Label("loop", "automation.loop"), "automation.loop_description"));
+        // Inline if/else — run nested "then" actions when a condition holds, else the
+        // "else" actions. Mid-sequence branch, distinct from the whole-automation else.
+        addAction(new IfAction(
+                new Label("if", "automation.if"), "automation.if_description"));
+        // Run a reusable action group by id (call-by-reference; editing the group
+        // updates every caller). Cycle-guarded.
+        addAction(new ActionGroupAction(
+                new Label("actionGroup", "automation.action_group_run"),
+                "automation.action_group_run_description"));
+        // Enable / disable / toggle ANOTHER automation (arm/disarm routines from a rule).
+        addAction(new AutomationControlAction(
+                new Label("automationControl", "automation.control_automation"),
+                "automation.control_automation_description"));
+        // Toggle a device radio (WiFi / Bluetooth / mobile-data). A WiFi-off also sets
+        // the keep-alive suppression flag so the watchdog doesn't auto-re-enable it.
+        addAction(new RadioAction(
+                new Label("radio", "automation.radio"),
+                "automation.radio_description"));
+        // Publish an MQTT message (notify Home Assistant / any broker). In-process fan-out
+        // to every active connection; /api/mqtt is deliberately off the API allowlist.
+        addAction(new MqttPublishAction(
+                new Label("mqttPublish", "automation.mqtt_publish"),
+                "automation.mqtt_publish_description"));
 
         // Shell command — the free-text StringType variable is defined inside
         // ShellAction. Autonomous exec, so it self-gates on the dedicated
@@ -597,10 +921,18 @@ public class Actions {
             section.put("description", Messages.get(descriptionKey));
             JSONArray actionsList = new JSONArray();
             for (Action action : this.actions.values()) {
-                actionsList.put(action.toJson());
+                JSONObject opt = action.toJson();
+                // Cosmetic grouping tag (see AutomationCategories). Never stored/resolved.
+                opt.put("category", com.overdrive.app.automation.AutomationCategories.forId(
+                        action.getLabel().getId()));
+                actionsList.put(opt);
             }
             section.put("options", actionsList);
             section.put("required", required);
+            // The engine's control-flow nesting cap, so the web editor stops offering
+            // If/Loop at this depth instead of letting a user build a tree that would be
+            // rejected on save. Read from the schema → client + engine can never drift.
+            section.put("maxActionDepth", com.overdrive.app.automation.Automation.MAX_ACTION_DEPTH);
         } catch (Exception e) {
             // JSONObject.put only throws on null key
         }

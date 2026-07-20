@@ -91,6 +91,50 @@ public class Conditions {
                         new Label("on", "automation.on"),
                         new Label("off", "automation.off"),
                         new Label("delay", "automation.cpd_delay"))));
+        // Drive mode as a trigger (on-change) and condition. The state IS the mode word
+        // (normal/eco/sport/snow) published by BydEvent from the drive-config axis. On
+        // trims without the drive-config getter only eco/sport are seen (energy-getter
+        // fallback) — the value is real when present, so no misfire, just fewer modes.
+        addCondition(new EventCondition(
+                new Label("driveMode", "automation.drive_mode"),
+                "automation.drive_mode_condition_description",
+                new EnumType(
+                        new Label("state", "automation.state"),
+                        new Label("normal", "automation.mode_normal"),
+                        new Label("eco", "automation.mode_eco"),
+                        new Label("sport", "automation.mode_sport"),
+                        new Label("snow", "automation.mode_snow"))));
+        // Powertrain EV/HEV (PHEV only). Unseeded on pure-EV trims (energy_mode never
+        // reports HEV), so the condition simply never matches there.
+        addCondition(new EventCondition(
+                new Label("powertrainMode", "automation.powertrain_mode"),
+                "automation.powertrain_mode_condition_description",
+                new EnumType(
+                        new Label("state", "automation.state"),
+                        new Label("ev", "automation.mode_ev"),
+                        new Label("hev", "automation.mode_hev"))));
+        // Central lock as a trigger (on-change) and condition. The state IS the word
+        // (locked/unlocked) published by CameraDaemon.applyLockEvent from the OTA-device
+        // SDK read (BCM-cached, works parked) with cloud fallback. Delivered only on
+        // definite readings, so it never manufactures a spurious edge.
+        addCondition(new EventCondition(
+                new Label("lock", "automation.lock_state"),
+                "automation.lock_condition_description",
+                new EnumType(
+                        new Label("state", "automation.state"),
+                        new Label("locked", "automation.locked"),
+                        new Label("unlocked", "automation.unlocked"))));
+        // Energy-recuperation (regen) level as a trigger (on-change) and condition. The
+        // state IS the word (standard/high/max) published by BydEvent from the SDK
+        // getEnergyFeedback read, self-gated so it costs nothing unless a regen rule exists.
+        addCondition(new EventCondition(
+                new Label("energyRegen", "automation.energy_regen"),
+                "automation.energy_regen_condition_description",
+                new EnumType(
+                        new Label("state", "automation.state"),
+                        new Label("standard", "automation.regen_standard"),
+                        new Label("high", "automation.regen_high"),
+                        new Label("max", "automation.regen_max"))));
         addCondition(new EventCondition(
                 new Label("seatClimate", "automation.seat_climate"),
                 "automation.seat_climate_description",
@@ -118,6 +162,23 @@ public class Conditions {
                 new Label("outsideTemp", "automation.outside_temperature"),
                 "automation.outside_temperature_description",
                 new IntType(new Label("celsius", "automation.celsius"), -40, 60)));
+        // Rain likelihood (%) over the next few hours (Open-Meteo by GPS). "raise the
+        // windows if rain > 60%". Forecast-ahead, unlike the reactive autoWiper proxy.
+        addCondition(new EventCondition(
+                new Label("rainProbability", "automation.rain_probability"),
+                "automation.rain_probability_description",
+                new IntType(new Label("percent", "automation.percent"), 0, 100)));
+        // Phone call state — relayed from the app process (daemon has no telephony).
+        // "ringing" = incoming or outgoing call alerting; "offhook" = active call;
+        // "idle" = no call. Enables "mute media when a call comes in".
+        addCondition(new EventCondition(
+                new Label("callState", "automation.call_state"),
+                "automation.call_state_description",
+                new EnumType(
+                        new Label("state", "automation.state"),
+                        new Label("idle", "automation.call_idle"),
+                        new Label("ringing", "automation.call_ringing"),
+                        new Label("offhook", "automation.call_active"))));
         addCondition(new EventCondition(
                 new Label("speed", "automation.speed"),
                 "automation.speed_description",
@@ -157,6 +218,40 @@ public class Conditions {
                 new Label("time", "automation.time"),
                 "automation.time_description",
                 new TimeType(new Label("time", "automation.time"))));
+        // Sun phase (day/night) — flips at local sunrise/sunset from GPS. "at sunset" =
+        // trigger on sunPhase becoming "night"; gate "only in daylight" = eq day.
+        // Published only with a GPS fix (see TimeEvent.publishSunPhase).
+        addCondition(new EventCondition(
+                new Label("sunPhase", "automation.sun_phase"),
+                "automation.sun_phase_description",
+                new EnumType(
+                        new Label("state", "automation.state"),
+                        new Label("day", "automation.sun_day"),
+                        new Label("night", "automation.sun_night"))));
+        // Day of month (1-31) — date automations ("on the 1st, remind service").
+        addCondition(new EventCondition(
+                new Label("dayOfMonth", "automation.day_of_month"),
+                "automation.day_of_month_description",
+                new IntType(new Label("day", "automation.day_of_month"), 1, 31)));
+        // Month (1-12) — seasonal automations. Enum of month names keeps the picker
+        // readable while the stored value is the month number the event publishes.
+        addCondition(new EventCondition(
+                new Label("month", "automation.month"),
+                "automation.month_description",
+                new EnumType(
+                        new Label("state", "automation.state"),
+                        new Label("1", "automation.month_jan"),
+                        new Label("2", "automation.month_feb"),
+                        new Label("3", "automation.month_mar"),
+                        new Label("4", "automation.month_apr"),
+                        new Label("5", "automation.month_may"),
+                        new Label("6", "automation.month_jun"),
+                        new Label("7", "automation.month_jul"),
+                        new Label("8", "automation.month_aug"),
+                        new Label("9", "automation.month_sep"),
+                        new Label("10", "automation.month_oct"),
+                        new Label("11", "automation.month_nov"),
+                        new Label("12", "automation.month_dec"))));
         // WiFi connection state + SSID. wifiState is an on/off edge; wifiSsid lets a
         // condition match a specific network name (the "connect to <name>" pattern).
         addCondition(new EventCondition(
@@ -210,6 +305,34 @@ public class Conditions {
                         new Label("normal", "automation.tyre_normal"),
                         new Label("slow", "automation.tyre_leak_slow"),
                         new Label("fast", "automation.tyre_leak_fast"))));
+        // ── Surveillance / sentry (parked-guard) events ──
+        // Armed/disarmed — gate a rule on "while the car is being guarded".
+        addCondition(new EventCondition(
+                new Label("surveillanceArmed", "automation.surveillance_armed"),
+                "automation.surveillance_armed_description",
+                new EnumType(new Label("state", "automation.state"),
+                        new Label("on", "automation.on"),
+                        new Label("off", "automation.off"))));
+        // Threat severity of the last recorded sentry event: notice / alert / critical.
+        // Fires once per event as the clip finalizes. Pair with surveillanceObject for
+        // "person detected" style rules.
+        addCondition(new EventCondition(
+                new Label("surveillanceThreat", "automation.surveillance_threat"),
+                "automation.surveillance_threat_description",
+                new EnumType(new Label("state", "automation.state"),
+                        new Label("notice", "automation.surveillance_notice"),
+                        new Label("alert", "automation.surveillance_alert"),
+                        new Label("critical", "automation.surveillance_critical"))));
+        // Headline object class seen in the last sentry event.
+        addCondition(new EventCondition(
+                new Label("surveillanceObject", "automation.surveillance_object"),
+                "automation.surveillance_object_description",
+                new EnumType(new Label("object", "automation.surveillance_object_kind"),
+                        new Label("person", "automation.surveillance_obj_person"),
+                        new Label("vehicle", "automation.surveillance_obj_vehicle"),
+                        new Label("bike", "automation.surveillance_obj_bike"),
+                        new Label("animal", "automation.surveillance_obj_animal"),
+                        new Label("none", "automation.surveillance_obj_none"))));
         // System boot — a one-shot event published shortly after a genuine device
         // boot. Only "on" is ever published (see NetworkEvent), so this is meant as a
         // trigger; a condition can still gate on it being "on".
@@ -336,6 +459,12 @@ public class Conditions {
         // an enum), so it's a dedicated subclass rather than a plain EventCondition.
         addCondition(new VariableCondition(
                 new Label("variable", "automation.variable"), "automation.variable_description"));
+        // Inbound MQTT channel — free-text channel name + string value. Fired by an
+        // external broker message on <base>/automation/<channel> (Home Assistant, etc.)
+        // via Automations.publishMqttTrigger. Dedicated subclass for the free-text channel
+        // (mirrors VariableCondition), keyed identically to BydEvent.mqttTrigger.
+        addCondition(new MqttTriggerCondition(
+                new Label("mqttTrigger", "automation.mqtt_trigger"), "automation.mqtt_trigger_description"));
     }
 
     /**
@@ -376,13 +505,18 @@ public class Conditions {
             JSONArray triggersList = new JSONArray();
             JSONArray conditionsList = new JSONArray();
             for (EventCondition condition : this.conditions.values()) {
+                String category = com.overdrive.app.automation.AutomationCategories.forId(
+                        condition.getLabel().getId());
                 JSONObject triggerJson = condition.toJson();
                 triggerJson.remove("comparator");
                 triggerJson.remove("value");
+                triggerJson.put("category", category); // cosmetic grouping only
                 triggersList.put(triggerJson);
 
                 // Requires a new copy as removing keys will mutate the object
-                conditionsList.put(condition.toJson());
+                JSONObject conditionJson = condition.toJson();
+                conditionJson.put("category", category);
+                conditionsList.put(conditionJson);
             }
             triggers.put("options", triggersList);
             conditions.put("options", conditionsList);
@@ -400,6 +534,11 @@ public class Conditions {
             logicOptions.put(new JSONObject().put("value", "OR").put("label", Messages.get("automation.logic_or")));
             logic.put("options", logicOptions);
             conditions.put("logic", logic);
+            // Advertise nested-group support: the form may render "add condition group"
+            // (each group = its own AND/OR + condition rows), combined with the flat
+            // conditions under conditionLogic. Older UIs ignore this flag and render the
+            // flat conditions only — still correct, just no group editor.
+            conditions.put("groups", true);
             json.put(triggers);
             json.put(conditions);
         } catch (Exception e) {

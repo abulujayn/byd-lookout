@@ -18,6 +18,22 @@
 
 window.BYD = window.BYD || {};
 
+// Display order of category <optgroup>s in the action/trigger/condition pickers.
+// Mirrors AutomationCategories.ORDER (Java). Kept in sync by hand — it's a fixed,
+// rarely-changing list, and an out-of-sync key just sorts to the end (never hides an
+// item). 'other' is always forced last regardless of this list.
+BYD.AUTOMATION_CATEGORY_ORDER = [
+    'vehicle', 'climate', 'windows_body', 'lighting', 'adas_safety', 'drive',
+    'media', 'displays', 'sensors', 'surveillance', 'system', 'flow', 'other',
+];
+
+// Fallback control-flow (If / Loop) nesting cap, used only until the schema loads. The
+// AUTHORITATIVE value comes from the engine via schema (actions section .maxActionDepth,
+// read by maxActionDepth() below), so the editor's cap can never drift from the parser's
+// Automation.MAX_ACTION_DEPTH. The editor stops offering If/Loop at the cap so a user can't
+// build a tree that would be rejected on save. Depth 1 = a top-level control-flow body.
+const MAX_ACTION_DEPTH_FALLBACK = 8;
+
 const triggerIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5a2 2 0 0 1 3.008-1.728l11.997 6.998a2 2 0 0 1 .003 3.458l-12 7A2 2 0 0 1 5 19z"/></svg>';
 const copyIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
 const editIcon = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
@@ -36,6 +52,15 @@ function sanitizeToken(value) {
     return String(value == null ? '' : value).replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
+// Escape user-provided text before it goes into innerHTML. The automation NAME is
+// free-text and the card summary is built as an HTML string (buildAutomationText →
+// innerHTML), so an unescaped name could inject markup. ES5-safe (no String.raw etc).
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 BYD.automations = {
     automations: {},
     schema: [],
@@ -46,6 +71,18 @@ BYD.automations = {
         this.loadAutomations();
         this.loadAutomationSchema();
         this.loadSettings();
+        this.loadGroups();
+        // Re-sync the Groups tab whenever the user switches TO it. app-tabs only
+        // toggles element visibility; without this the list wouldn't refresh (a group
+        // saved on another visit, or a stale editor pane left open) until a full reload.
+        // Switching to Groups always returns to the LIST view (hideGroupForm) and
+        // reloads it. Guarded so a failure never blocks the tab switch.
+        document.addEventListener('ot-tabs:active-changed', (e) => {
+            try {
+                const id = e && e.detail ? e.detail.id : null;
+                if (id === 'groups') { this.hideGroupForm(); this.loadGroups(); }
+            } catch (_) {}
+        });
     },
 
     // Automation-wide settings (currently just the shell-action gate). Kept
@@ -79,6 +116,73 @@ BYD.automations = {
             if (el) el.checked = !allow;
             if (window.BYD && BYD.utils && BYD.utils.toast) BYD.utils.toast(BYD.i18n.t('automation.settings_save_failed'), 'error');
         }
+    },
+
+    // Export all automations: fetch the backup envelope from the daemon and trigger a
+    // client-side download. No server file is written — the JSON is streamed straight
+    // into a Blob the browser saves, so it works over the tunnel too.
+    async exportAll() {
+        try {
+            const resp = await fetch('/api/automations/export', { cache: 'no-store' });
+            if (!resp.ok) { this.toast(BYD.i18n.t('automation.backup_export_failed'), 'error'); return; }
+            const text = await resp.text();
+            const blob = new Blob([text], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            // Uptime-ish suffix (no Date dependency issues in this WebView): the daemon
+            // already stamped exportedAt inside; the filename just needs to be unique-ish.
+            a.download = 'overdrive-automations.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            this.toast(BYD.i18n.t('automation.backup_exported'), 'success');
+        } catch (e) {
+            this.toast(BYD.i18n.t('automation.backup_export_failed'), 'error');
+        }
+    },
+
+    // Import a backup file (merge). Reads the chosen file client-side and POSTs it to
+    // /api/automations/import; the daemon validates every automation before storing, so
+    // a malformed file is rejected without touching the current set. Refreshes the list
+    // and reports how many were imported.
+    importFile(file) {
+        if (!file) return;
+        const input = document.getElementById('automationImportFile');
+        const done = () => { if (input) input.value = ''; }; // re-select same file re-fires onchange
+        // FileReader (not Blob.text()) — Blob.text() is Chrome 76+, this WebView is 58.
+        const reader = new FileReader();
+        reader.onerror = () => { this.toast(BYD.i18n.t('automation.backup_import_failed'), 'error'); done(); };
+        reader.onload = () => {
+            const text = String(reader.result || '');
+            try {
+                // Accept either the export envelope ({automations:{...}}) or a bare map;
+                // the endpoint handles both. Validate JSON here for a clean early error.
+                JSON.parse(text);
+            } catch (parseErr) {
+                this.toast(BYD.i18n.t('automation.backup_import_invalid'), 'error');
+                done();
+                return;
+            }
+            fetch('/api/automations/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: text
+            })
+            .then(resp => resp.json().catch(() => null))
+            .then(data => {
+                if (data && data.success) {
+                    this.loadAutomations();
+                    this.toast(BYD.i18n.t('automation.backup_imported').replace('{0}', String(data.imported)), 'success');
+                } else {
+                    this.toast((data && data.error) ? data.error : BYD.i18n.t('automation.backup_import_failed'), 'error');
+                }
+            })
+            .catch(() => this.toast(BYD.i18n.t('automation.backup_import_failed'), 'error'))
+            .then(done);
+        };
+        reader.readAsText(file);
     },
 
     async loadAutomations() {
@@ -120,6 +224,32 @@ BYD.automations = {
     schemaSections() {
         if (Array.isArray(this.schema)) return this.schema;
         return [];
+    },
+
+    // The full action catalog (the `options` of the "actions" schema section) — the same
+    // list the automation action rows and the nested if/loop editors use. Shared with the
+    // Action Group editor so a group can hold any action an automation can. [] if the
+    // schema hasn't loaded yet.
+    actionCatalog() {
+        const sec = this.schemaSections().find(s => s.id === 'actions');
+        return (sec && Array.isArray(sec.options)) ? sec.options : [];
+    },
+
+    // The conditions/signals catalog (the `options` of the "conditions" schema section) —
+    // the live-signal list. Used as the Signal-mode source for the dynamic value editor on
+    // the inline flow actions (If / Loop / Wait Until), so their comparison RHS can be a
+    // ${signal:TYPE} just like a real condition. [] if the schema hasn't loaded yet.
+    conditionCatalog() {
+        const sec = this.schemaSections().find(s => s.id === 'conditions');
+        return (sec && Array.isArray(sec.options)) ? sec.options : [];
+    },
+
+    // The engine's control-flow nesting cap, read from the schema (actions section) so the
+    // editor's limit always matches Automation.MAX_ACTION_DEPTH. Falls back until loaded.
+    maxActionDepth() {
+        const sec = this.schemaSections().find(s => s.id === 'actions');
+        const n = sec && sec.maxActionDepth;
+        return (typeof n === 'number' && n > 0) ? n : MAX_ACTION_DEPTH_FALLBACK;
     },
 
     render() {
@@ -236,6 +366,22 @@ BYD.automations = {
 
         let result = '';
         try {
+            // Friendly name (when set) as a bold heading above the trigger/condition
+            // summary, plus an unobtrusive run-count / last-fired line. Both are
+            // optional metadata — absent on older automations, so the card reads
+            // exactly as before for them.
+            if (automation.name) {
+                result += '<strong class="automation-name">' + escapeHtml(automation.name) + '</strong><br>';
+            }
+            const runs = automation.triggerCount || 0;
+            if (runs > 0) {
+                let stats = BYD.i18n.t('automation.stats_runs').replace('{n}', runs);
+                if (automation.lastTriggered) {
+                    stats += ' · ' + BYD.i18n.t('automation.stats_last')
+                        .replace('{when}', this.formatRelativeTime(automation.lastTriggered));
+                }
+                result += '<span class="automation-stats">' + stats + '</span><br>';
+            }
             for (const section of sections) {
                 if (section.options && section.options.length) {
                     const sectionData = (automation[section.id] != null) ? automation[section.id] : [];
@@ -259,26 +405,30 @@ BYD.automations = {
                             result += BYD.i18n.t('automation.extra_row');
                         }
                         result += ' ';
-                        const data = section.options.find(option => option.id === entry.type);
-                        if (!data) continue;
-                        result += data.label + ' ';
-                        const dataVars = (data.variables && data.variables.length) ? data.variables : [];
-                        const entryVars = entry.variables || {};
-                        if (dataVars.length) result += '(';
-                        for (const variable of dataVars) {
-                            result += variable.label + '=' + this.automationValueToText(variable, entryVars[variable.id]) + ',';
-                        }
-                        if (dataVars.length) result = result.slice(0, result.length - 1) + ') ';
-
-                        if (data.comparator && data.value) {
-                            // `variable` is a STRING here ('comparator' | 'value'),
-                            // NOT an object with an .id — the option/value both
-                            // live directly at entry[variable] (e.g. entry.comparator),
-                            // not under entry.variables. Reading entry.variables[variable.id]
-                            // (the old bug) yielded `undefined` for every comparator/value.
-                            for (const variable of ['comparator', 'value']) {
-                                result += this.automationValueToText(data[variable], entry[variable]) + ' ';
+                        result += this.describeActionEntry(entry, section.options);
+                    }
+                    // Nested condition GROUPS (conditions section) — render each group's
+                    // AND/OR-joined leaves so a group-only automation isn't blank on the
+                    // card. Joined to the flat rows above by the section's own AND/OR word.
+                    if (section.groups && Array.isArray(automation.conditionGroups)) {
+                        const secLogic = (automation[(section.logic && section.logic.field)] || (section.logic && section.logic.default) || 'AND');
+                        for (let gi = 0; gi < automation.conditionGroups.length; gi++) {
+                            const grp = automation.conditionGroups[gi] || {};
+                            const gConds = Array.isArray(grp.conditions) ? grp.conditions : [];
+                            if (!gConds.length) continue;
+                            // Joiner before the group: section label if it's the very first
+                            // term (no flat rows preceded it), else the section AND/OR word.
+                            const noFlatRows = !(sectionData && sectionData.length);
+                            result += (gi === 0 && noFlatRows)
+                                ? section.label
+                                : BYD.i18n.t('automation.logic_' + secLogic.toLowerCase());
+                            result += ' (';
+                            const gLogic = (grp.logic || 'AND');
+                            for (let ci = 0; ci < gConds.length; ci++) {
+                                if (ci > 0) result += ' ' + BYD.i18n.t('automation.logic_' + gLogic.toLowerCase()) + ' ';
+                                result += this.describeActionEntry(gConds[ci] || {}, section.options);
                             }
+                            result += ')';
                         }
                     }
                 } else {
@@ -290,6 +440,58 @@ BYD.automations = {
             return BYD.i18n.t('automation.parse_error');
         }
         return result;
+    },
+
+    // Render one action entry (label + variables + comparator/value) AND, for a
+    // control-flow action, its nested child/else action lists — so the list-card
+    // preview describes a loop body / if-then-else instead of omitting it. `options`
+    // is the action catalog (shared by the entry and its nested actions). Recurses.
+    describeActionEntry(entry, options) {
+        entry = entry || {};
+        const data = options.find(option => option.id === entry.type);
+        if (!data) return '';
+        let out = data.label + ' ';
+        const dataVars = (data.variables && data.variables.length) ? data.variables : [];
+        const entryVars = entry.variables || {};
+        if (dataVars.length) out += '(';
+        for (const variable of dataVars) {
+            out += variable.label + '=' + this.automationValueToText(variable, entryVars[variable.id]) + ',';
+        }
+        if (dataVars.length) out = out.slice(0, out.length - 1) + ') ';
+        // comparator/value live directly on the entry (not under .variables).
+        if (data.comparator && data.value) {
+            for (const variable of ['comparator', 'value']) {
+                out += this.automationValueToText(data[variable], entry[variable]) + ' ';
+            }
+        }
+        // Nested lists for loop/if. Render each as "then: a; b" / "else: c" so the
+        // structure reads. Guard against a malformed non-array. Depth is naturally
+        // bounded by the engine's parse cap, so this recursion is finite.
+        const nest = (arr, labelKey) => {
+            if (!Array.isArray(arr) || arr.length === 0) return '';
+            const parts = arr.map(child => this.describeActionEntry(child, options).trim()).filter(Boolean);
+            if (!parts.length) return '';
+            return BYD.i18n.t(labelKey) + ': ' + parts.join('; ') + ' ';
+        };
+        if (Array.isArray(entry.childActions) || Array.isArray(entry.elseActions)) {
+            out += '[ ';
+            out += nest(entry.childActions, entry.type === 'if' ? 'automation.then_actions' : 'automation.loop_body');
+            out += nest(entry.elseActions, 'automation.else_actions');
+            out += '] ';
+        }
+        return out;
+    },
+
+    // Coarse "N minutes/hours/days ago" for the run-stats line. Falls back to the
+    // trigger-count-only display when the timestamp is missing (older automations
+    // that were fired before stats tracking existed have triggerCount but no ts).
+    formatRelativeTime(ts) {
+        if (!ts || ts <= 0) return BYD.i18n.t('automation.stats_never');
+        const diffSec = Math.floor((Date.now() - ts) / 1000);
+        if (diffSec < 60) return BYD.i18n.t('automation.stats_just_now');
+        if (diffSec < 3600) return BYD.i18n.t('automation.stats_minutes_ago').replace('{n}', Math.floor(diffSec / 60));
+        if (diffSec < 86400) return BYD.i18n.t('automation.stats_hours_ago').replace('{n}', Math.floor(diffSec / 3600));
+        return BYD.i18n.t('automation.stats_days_ago').replace('{n}', Math.floor(diffSec / 86400));
     },
 
     renderForm() {
@@ -307,9 +509,127 @@ BYD.automations = {
         }
 
         grid.innerHTML = '';
+        // Optional friendly name — a top-level field (not schema-driven) so a user can
+        // label an automation ("Arm sentry at night") for the list and the
+        // "Control Automation" picker. Absent/blank → the field is simply not emitted,
+        // keeping older automations byte-identical.
+        grid.append(this.createNameField());
         for (let section of sections) {
             grid.append(this.createSection(section));
         }
+        // Cloud-dependency notice: lock/unlock/flash/find-car have NO local SDK path on
+        // this platform — they need BYD Cloud. If the current automation uses one and
+        // cloud isn't configured, surface an inline warning so the rule doesn't silently
+        // no-op at fire time. Fetched lazily + cached; the banner re-evaluates on each
+        // render (adding/removing a cloud action updates it).
+        this._maybeRenderCloudWarning(grid);
+    },
+
+    // Action ids with no local SDK fallback (cloud-only on this generation).
+    _CLOUD_ONLY_ACTIONS: ['lock', 'unlock', 'flash', 'findCar'],
+
+    // Show a warning at the top of the form when the automation uses a cloud-only action
+    // but BYD Cloud isn't configured. Non-blocking: fetches cloud status once (cached on
+    // this._cloudConfigured) and inserts the banner when it resolves.
+    _maybeRenderCloudWarning(grid) {
+        const usesCloud = this._formUsesCloudOnlyAction();
+        if (!usesCloud) return;
+        const show = () => {
+            if (this._cloudConfigured) return; // configured → no warning
+            if (grid.querySelector('.cloud-warning')) return; // already shown
+            const warn = document.createElement('div');
+            warn.classList.add('cloud-warning', 'field-help');
+            warn.textContent = BYD.i18n.t('automation.cloud_required_warning');
+            grid.insertBefore(warn, grid.firstChild);
+        };
+        if (this._cloudConfigured != null) { show(); return; }
+        fetch('/api/vehicle/cloud-status', { cache: 'no-store' })
+            .then(r => r.json())
+            .then(j => { this._cloudConfigured = !!(j && j.configured); })
+            .catch(() => { this._cloudConfigured = true; }) // fail-open: don't nag on a read glitch
+            .then(() => { if (document.getElementById('formGrid') === grid) show(); });
+    },
+
+    // True if any action (incl. nested loop/if child lists) in the current form is a
+    // cloud-only action. Walks the primary + else lists recursively.
+    _formUsesCloudOnlyAction() {
+        const cloud = this._CLOUD_ONLY_ACTIONS;
+        const walk = (list) => {
+            if (!Array.isArray(list)) return false;
+            for (const a of list) {
+                if (!a) continue;
+                if (cloud.indexOf(a.type) >= 0) return true;
+                if (walk(a.childActions) || walk(a.elseActions)) return true;
+            }
+            return false;
+        };
+        return walk(this.formData.actions) || walk(this.formData.elseActions);
+    },
+
+    // True if a single manualClip action's before+after seconds is a valid window:
+    // each 0..60 AND the combined total 1..60. Mirrors the daemon's ManualClipWindow.create
+    // cross-field rule, which per-field IntType validation (and thus the .invalid gate)
+    // cannot express — so without this a "0s + 0s" or "40s + 40s" clip passes the form but
+    // is rejected on save ("failed to save" with no field reason). Absent/blank fields
+    // parse as 0 (matches the daemon reading a missing/edited value); an entry whose window
+    // is invalid returns false here.
+    _manualClipWindowValid(a) {
+        const toInt = (v) => {
+            if (v == null || v === '') return 0;
+            const n = parseInt(v, 10);
+            return isNaN(n) ? 0 : n;
+        };
+        const vars = a.variables || {};
+        const before = toInt(vars.beforeSeconds);
+        const after = toInt(vars.afterSeconds);
+        if (before < 0 || before > 60 || after < 0 || after > 60) return false;
+        const total = before + after;
+        return total >= 1 && total <= 60;
+    },
+
+    // True if ANY manualClip action in `lists` (recursing children/else) has an invalid
+    // window. Used to block Save + show a specific message, since the daemon rejects the
+    // whole automation/group on such an action. Shared by the automation form and the
+    // group editor (pass the group's actions).
+    _hasInvalidManualClip(lists) {
+        const walk = (list) => {
+            if (!Array.isArray(list)) return false;
+            for (const a of list) {
+                if (!a) continue;
+                if (a.type === 'manualClip' && !this._manualClipWindowValid(a)) return true;
+                if (walk(a.childActions) || walk(a.elseActions)) return true;
+            }
+            return false;
+        };
+        for (const l of lists) { if (walk(l)) return true; }
+        return false;
+    },
+
+    // A single free-text "Name" input bound to formData.name. Trimmed on input; an
+    // empty value deletes the key so the saved JSON stays clean (and identical to a
+    // pre-name automation).
+    createNameField() {
+        const section = document.createElement('div');
+        section.classList.add('name-section', 'section');
+
+        const label = document.createElement('div');
+        label.classList.add('row-label');
+        label.textContent = BYD.i18n.t('automation.name_label');
+        section.append(label);
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.classList.add('input', 'text', 'name-input');
+        input.maxLength = 64;
+        input.placeholder = BYD.i18n.t('automation.name_placeholder');
+        input.value = (this.formData && this.formData.name) ? this.formData.name : '';
+        input.addEventListener('input', () => {
+            const v = input.value.trim();
+            if (v) this.formData.name = v;
+            else delete this.formData.name;
+        });
+        section.append(input);
+        return section;
     },
 
     createSection(section) {
@@ -407,6 +727,16 @@ BYD.automations = {
                 this.renderForm();
             });
             sectionDiv.append(addBtn);
+
+            // Nested condition GROUPS — only for a section that advertises `groups`
+            // (the conditions section). Entirely separate from the flat rows above:
+            // groups live in formData.conditionGroups and are combined with the flat
+            // conditions under conditionLogic. This block is additive — when the user
+            // adds no groups, formData.conditionGroups stays absent and the saved
+            // automation is byte-identical to before.
+            if (section.groups) {
+                sectionDiv.append(this.createConditionGroups(section));
+            }
         } else {
             sectionDiv.append(this.createRowLabel(section));
             if (section.description) {
@@ -420,6 +750,333 @@ BYD.automations = {
             sectionDiv.append(row);
         }
         return sectionDiv;
+    },
+
+    // Build the nested-condition-group editor. Renders formData.conditionGroups (an
+    // array of { logic, conditions:[{type,comparator,value,variables}], groups:[] });
+    // the UI edits ONE level of groups (each a set of condition rows + its own AND/OR),
+    // which covers (A AND B) OR (C AND D). Uses the same option catalog + leaf inputs
+    // as flat conditions, but is wholly independent of the flat-row path so it can't
+    // regress it. `section` is the conditions schema section (carries options).
+    createConditionGroups(section) {
+        const wrap = document.createElement('div');
+        wrap.classList.add('condition-groups');
+        const groups = Array.isArray(this.formData.conditionGroups) ? this.formData.conditionGroups : null;
+        // Only materialise the array once the user actually adds a group, so an
+        // untouched automation never gains an empty conditionGroups key on save.
+        const ensureGroups = () => {
+            if (!Array.isArray(this.formData.conditionGroups)) this.formData.conditionGroups = [];
+            return this.formData.conditionGroups;
+        };
+
+        if (groups && groups.length) {
+            for (let gi = 0; gi < groups.length; gi++) {
+                wrap.append(this.createOneConditionGroup(section, groups[gi], gi));
+            }
+        }
+        const addGroup = document.createElement('button');
+        addGroup.classList.add('btn', 'btn-secondary', 'add-group-button');
+        addGroup.innerHTML = BYD.i18n.t('automation.add_group') + ' +';
+        addGroup.addEventListener('click', () => {
+            ensureGroups().push({ logic: 'AND', conditions: [{}], groups: [] });
+            this.renderForm();
+        });
+        wrap.append(addGroup);
+        return wrap;
+    },
+
+    // One group card: an AND/OR toggle + its condition rows + add/delete controls.
+    createOneConditionGroup(section, group, gi) {
+        const card = document.createElement('div');
+        card.classList.add('condition-group', 'card');
+
+        // Header: label + delete-group.
+        const header = document.createElement('div');
+        header.classList.add('condition-group-header', 'row');
+        const title = document.createElement('span');
+        title.classList.add('label');
+        title.textContent = BYD.i18n.t('automation.condition_group') + ' ' + (gi + 1);
+        header.append(title);
+        const del = document.createElement('button');
+        del.classList.add('delete', 'icon-btn', 'danger');
+        del.title = BYD.i18n.t('automation.delete_group');
+        del.innerHTML = deleteIcon;
+        del.addEventListener('click', () => {
+            this.formData.conditionGroups.splice(gi, 1);
+            // Drop the array entirely if it's now empty, so save stays byte-clean.
+            if (this.formData.conditionGroups.length === 0) delete this.formData.conditionGroups;
+            this.renderForm();
+        });
+        header.append(del);
+        card.append(header);
+
+        // Per-group AND/OR toggle → writes group.logic.
+        const logicSel = document.createElement('select');
+        logicSel.classList.add('input', 'enum', 'logic-select');
+        for (const opt of [['AND', 'automation.logic_and'], ['OR', 'automation.logic_or']]) {
+            const o = document.createElement('option');
+            o.value = opt[0];
+            o.textContent = BYD.i18n.t(opt[1]);
+            if ((group.logic || 'AND') === opt[0]) o.selected = true;
+            logicSel.append(o);
+        }
+        logicSel.addEventListener('change', () => { group.logic = logicSel.value; });
+        card.append(logicSel);
+
+        // Condition rows within the group. Reuses the leaf inputs (type/comparator/
+        // value) via createInput, backed by group.conditions[ci].
+        if (!Array.isArray(group.conditions)) group.conditions = [];
+        for (let ci = 0; ci < group.conditions.length; ci++) {
+            card.append(this.createGroupConditionRow(section, group, ci));
+        }
+        const addCond = document.createElement('button');
+        addCond.classList.add('btn', 'btn-secondary', 'add-button');
+        addCond.innerHTML = BYD.i18n.t('automation.add_row') + ' +';
+        addCond.addEventListener('click', () => {
+            group.conditions.push({});
+            this.renderForm();
+        });
+        card.append(addCond);
+        return card;
+    },
+
+    // One condition row inside a group. Mirrors the flat createRow's type→comparator/
+    // value flow but is backed by group.conditions[ci] (NOT formData[section.id]), so
+    // the flat-row code path is untouched. options come from the conditions section.
+    createGroupConditionRow(section, group, ci) {
+        const options = section.options || [];
+        const row = document.createElement('div');
+        row.classList.add('condition-group-row', 'row');
+        const inputs = document.createElement('div');
+        inputs.classList.add('inputs');
+
+        // (Re)build the comparator/value + enum sub-variable inputs for the CURRENT
+        // entry object at group.conditions[ci] and the selected option descriptor.
+        // Always reads the live array slot (not a stale capture), so a type change that
+        // replaces the slot object still binds handlers to the new object.
+        const rebuild = (selected) => {
+            inputs.querySelectorAll('.variable-input').forEach(el => el.remove());
+            inputs.classList.remove('has-cond-value');   // re-added below only if a value editor renders
+            const e = group.conditions[ci];
+            if (!e.variables) e.variables = {};
+            // Enum sub-variables (e.g. area/type) the condition declares.
+            const vars = (selected && selected.variables && selected.variables.length) ? selected.variables : [];
+            for (const variable of vars) {
+                const sel = this.createInput(variable, e.variables[variable.id], (element, value) => {
+                    e.variables[variable.id] = value;
+                });
+                sel.classList.add('variable-input');
+                inputs.append(sel);
+            }
+            // Condition leaves carry comparator + value, exactly like flat conditions.
+            // Value uses the dynamic-capable editor (constant / ${var:…} / ${signal:…}).
+            if (selected && selected.comparator && selected.value) {
+                const compInp = this.createInput(selected.comparator, e.comparator, (element, value) => { e.comparator = value; });
+                compInp.classList.add('variable-input', 'comparator');
+                inputs.append(compInp);
+                const valInp = this.createConditionValueInput(selected.value, e.value,
+                    (value) => { e.value = value; }, options, e.type);
+                valInp.classList.add('variable-input', 'value');
+                // Top-align this row: the value editor is a 2-line stack (mode toggle above
+                // the input), taller than the sibling type/comparator selects. Without this
+                // the row's center-alignment floats the value box below the selects — the
+                // reported "box moves down / misaligned" strip.
+                inputs.classList.add('has-cond-value');
+                inputs.append(valInp);
+            }
+        };
+
+        const typeSel = this.createEnumInput(this.getTypeEnum('cg', options), group.conditions[ci].type,
+            (element, value, selected) => {
+                // Reset the slot on a real type change (mirrors flat createRow's reset).
+                if (group.conditions[ci].type !== value) group.conditions[ci] = { type: value };
+                rebuild(selected);
+            });
+        inputs.append(typeSel);
+        // Edit path: seed the trailing inputs for an already-chosen type.
+        if (group.conditions[ci].type) {
+            const sel = options.find(o => o.id === group.conditions[ci].type);
+            if (sel) rebuild(sel);
+        }
+        row.append(inputs);
+
+        const del = document.createElement('button');
+        del.classList.add('delete', 'icon-btn', 'danger');
+        del.title = BYD.i18n.t('automation.delete_row');
+        del.innerHTML = deleteIcon;
+        del.addEventListener('click', () => {
+            group.conditions.splice(ci, 1);
+            this.renderForm();
+        });
+        row.append(del);
+        return row;
+    },
+
+    // A nested action editor (loop body / if-then / if-else) backed by an arbitrary
+    // array `arr` of {type,variables,...} entries. Independent of the flat action path
+    // (createRow) so it can't regress it. `options` is the action catalog; `labelKey`
+    // localizes the sub-list heading. Recurses: a nested loop/if renders its own
+    // nested editor via createNestedActionRow → the same eventListener-free path.
+    // `rerender` is the callback used to re-draw the surrounding form after an
+    // add/delete. It defaults to renderForm() (the automation editor), but the Action
+    // Group editor passes its own renderGroupForm() so the SAME nested-action widget
+    // drives either form. Nested control-flow (if/loop) inside a group propagates it.
+    // `depth` (default 1) = this list's control-flow nesting level, so the row picker can
+    // hide If/Loop once the engine's MAX_ACTION_DEPTH cap is reached (see getTypeEnum).
+    createNestedActions(options, arr, labelKey, rerender, depth) {
+        const rr = rerender || (() => this.renderForm());
+        const d = depth || 1;
+        const box = document.createElement('div');
+        box.classList.add('nested-actions', 'variable-input'); // variable-input so the row cleanup removes it on type change
+        const heading = document.createElement('div');
+        heading.classList.add('nested-actions-label', 'label');
+        heading.textContent = BYD.i18n.t(labelKey);
+        box.append(heading);
+        for (let i = 0; i < arr.length; i++) {
+            box.append(this.createNestedActionRow(options, arr, i, rr, d));
+        }
+        const add = document.createElement('button');
+        add.classList.add('btn', 'btn-secondary', 'add-button');
+        add.innerHTML = BYD.i18n.t('automation.add_row') + ' +';
+        add.addEventListener('click', () => {
+            arr.push({});
+            rr();
+        });
+        box.append(add);
+        return box;
+    },
+
+    // One nested action row backed by arr[i]. Mirrors createRow's type→variables flow
+    // but writes into arr[i] (not formData[section.id]). Reuses createInput for the
+    // action's variables, and recurses for a nested control-flow action's own children.
+    // `depth` = this row's control-flow nesting level (1 = a top-level If/Loop's body).
+    createNestedActionRow(options, arr, i, rerender, depth) {
+        const rr = rerender || (() => this.renderForm());
+        const d = depth || 1;
+        const row = document.createElement('div');
+        row.classList.add('nested-action-row', 'row');
+        const inputs = document.createElement('div');
+        inputs.classList.add('inputs');
+
+        const rebuild = (selected) => {
+            inputs.querySelectorAll('.nested-var').forEach(el => el.remove());
+            const e = arr[i];
+            if (!e.variables) e.variables = {};
+            const vars = (selected && selected.variables && selected.variables.length) ? selected.variables : [];
+            const nLhsIsVar = e.variables && e.variables.event === 'variable' && selected && selected.nameField;
+            for (const variable of vars) {
+                let inp;
+                if (variable.dynamic) {
+                    // Dynamic RHS for a NESTED inline flow action (an If/Loop/Wait-Until
+                    // inside a group or another flow action) — same Value/Variable/Signal
+                    // editor as the top-level path, so nesting doesn't lose the capability.
+                    // String RHS when the LHS is a variable (see nLhsIsVar).
+                    const nRhs = nLhsIsVar ? this.asStringSchema(variable) : variable;
+                    inp = this.createConditionValueInput(
+                        nRhs, e.variables[variable.id],
+                        (value) => { e.variables[variable.id] = value; },
+                        this.conditionCatalog(), null);
+                } else if (this.isLhsEventVariable(variable, selected)) {
+                    // LHS event picker with a Variable operand — re-render on change so the
+                    // name field + eq/neq comparator swap appear (same as the top-level path).
+                    inp = this.createInput(variable, e.variables[variable.id], (element, value) => {
+                        e.variables[variable.id] = value;
+                        rr();
+                    });
+                } else if (variable.id === 'comparator' && e.variables.event === 'variable') {
+                    // String LHS → constrain the comparator to eq/neq.
+                    inp = this.createInput(this.eqNeqComparator(variable), e.variables[variable.id], (element, value) => {
+                        e.variables[variable.id] = value;
+                    });
+                } else {
+                    inp = this.createInput(variable, e.variables[variable.id], (element, value) => {
+                        e.variables[variable.id] = value;
+                    });
+                }
+                inp.classList.add('nested-var');
+                inputs.append(inp);
+                // After the LHS event picker set to "variable", render the bespoke name field.
+                if (this.isLhsEventVariable(variable, selected)
+                        && e.variables[variable.id] === 'variable'
+                        && selected.nameField) {
+                    const nameInp = this.createInput(selected.nameField, e.variables.name, (element, value) => {
+                        e.variables.name = value;
+                    });
+                    nameInp.classList.add('nested-var');
+                    inputs.append(nameInp);
+                }
+            }
+            // A nested control-flow action gets its OWN nested editors, one level deeper.
+            // Passing d+1 lets the child picker hide If/Loop at the engine's depth cap so
+            // you can't build a tree that would be rejected on save. Propagate rr so a
+            // group-editor context keeps re-rendering the group form, not the automation.
+            if (selected && selected.hasChildActions) {
+                if (!Array.isArray(e.childActions)) e.childActions = [];
+                const child = this.createNestedActions(options, e.childActions,
+                    (e.type === 'if') ? 'automation.then_actions' : 'automation.loop_body', rr, d + 1);
+                child.classList.add('nested-var');
+                inputs.append(child);
+                if (selected.hasElseActions) {
+                    if (!Array.isArray(e.elseActions)) e.elseActions = [];
+                    const elseBox = this.createNestedActions(options, e.elseActions, 'automation.else_actions', rr, d + 1);
+                    elseBox.classList.add('nested-var');
+                    inputs.append(elseBox);
+                }
+            }
+        };
+
+        const typeSel = this.createEnumInput(this.getTypeEnum('na', options, d >= this.maxActionDepth()), arr[i].type,
+            (element, value, selected) => {
+                if (arr[i].type !== value) arr[i] = { type: value };
+                rebuild(selected);
+            });
+        inputs.append(typeSel);
+        if (arr[i].type) {
+            const sel = options.find(o => o.id === arr[i].type);
+            if (sel) rebuild(sel);
+        }
+        row.append(inputs);
+
+        // Reorder + delete controls, mirroring the top-level actions section (createSection).
+        // Actions run top-to-bottom, so a group / if-branch / loop-body needs up/down to
+        // order its steps. Arrows show only with 2+ rows; first has no "up", last no "down"
+        // (rendered disabled so the column stays aligned). Swap adjacent entries in `arr`
+        // and re-render via rr (renderGroupForm for a group, renderForm for an automation).
+        const actionsContainer = document.createElement('div');
+        actionsContainer.classList.add('delete-container');
+        if (arr.length > 1) {
+            const upBtn = document.createElement('button');
+            upBtn.classList.add('move-up', 'icon-btn');
+            upBtn.title = BYD.i18n.t('automation.move_up');
+            upBtn.innerHTML = moveUpIcon;
+            if (i === 0) { upBtn.disabled = true; upBtn.classList.add('unknown'); }
+            else upBtn.addEventListener('click', () => {
+                const tmp = arr[i - 1]; arr[i - 1] = arr[i]; arr[i] = tmp; rr();
+            });
+            actionsContainer.append(upBtn);
+
+            const downBtn = document.createElement('button');
+            downBtn.classList.add('move-down', 'icon-btn');
+            downBtn.title = BYD.i18n.t('automation.move_down');
+            downBtn.innerHTML = moveDownIcon;
+            if (i === arr.length - 1) { downBtn.disabled = true; downBtn.classList.add('unknown'); }
+            else downBtn.addEventListener('click', () => {
+                const tmp = arr[i + 1]; arr[i + 1] = arr[i]; arr[i] = tmp; rr();
+            });
+            actionsContainer.append(downBtn);
+        }
+
+        const del = document.createElement('button');
+        del.classList.add('delete', 'icon-btn', 'danger');
+        del.title = BYD.i18n.t('automation.delete_row');
+        del.innerHTML = deleteIcon;
+        del.addEventListener('click', () => {
+            arr.splice(i, 1);
+            rr();
+        });
+        actionsContainer.append(del);
+        row.append(actionsContainer);
+        return row;
     },
 
     // Render the AND/OR combining selector for a section that advertises a `logic`
@@ -452,6 +1109,175 @@ BYD.automations = {
         return row;
     },
 
+    // Condition VALUE editor with an optional dynamic-reference mode (expression engine).
+    // Renders a small mode toggle (Value / Variable / Signal) above the value input:
+    //   • Value   → the normal typed input (createInput) — the default, unchanged path.
+    //   • Variable→ a text field; emits ${var:NAME} (compares against a Set-Variable).
+    //   • Signal  → a dropdown of the other condition signals; emits ${signal:TYPE}
+    //               (compares one live signal against another, e.g. cabinTemp>outsideTemp).
+    // Backward-compatible: a stored plain value opens in Value mode; only a ${…} token
+    // opens in a dynamic mode. `onChange(value)` receives either the constant or the
+    // ${…} token string. `signalOptions` is the conditions catalog (for the Signal list);
+    // when absent, only Value + Variable modes are offered.
+    // True when `variable` is the LHS "event" picker of a flow action (If/Wait-Until/Loop)
+    // that offers a "variable" operand — detected by the schema carrying a nameField AND the
+    // enum listing a "variable" option. Used to hook a re-render + show the name field.
+    isLhsEventVariable(variable, selected) {
+        return !!(selected && selected.nameField
+            && variable && variable.id === 'event'
+            && Array.isArray(variable.options)
+            && variable.options.some(o => o && o.id === 'variable'));
+    },
+
+    // A shallow copy of a comparator enum schema whose options are narrowed to eq/neq —
+    // the only comparisons meaningful for a string-valued variable LHS.
+    eqNeqComparator(comparatorSchema) {
+        const copy = {};
+        for (const k in comparatorSchema) if (comparatorSchema.hasOwnProperty(k)) copy[k] = comparatorSchema[k];
+        copy.options = (comparatorSchema.options || []).filter(o => o && (o.id === 'eq' || o.id === 'neq'));
+        // strictOptions: an out-of-list stored value here (e.g. a leftover gt/lt from before
+        // the LHS was switched to a string variable) is CONTEXTUALLY excluded — gt/lt still
+        // exist in the base comparator schema, they're just meaningless against a string and
+        // would silently evaluate false. So it must NOT be preserved as "(unavailable on this
+        // device)" (which is both a lie — it IS available — and a footgun: the rule would
+        // save and never fire). Force the strict .invalid path so the user re-picks eq/neq.
+        copy.strictOptions = true;
+        return copy;
+    },
+
+    // A shallow copy of a dynamic value schema forced to STRING type — used for the RHS
+    // constant editor when the LHS is a string-valued variable, so the user can type a word
+    // ("Sport_Mode") instead of being restricted to the numeric picker. Keeps `dynamic` so
+    // the Value/Variable/Signal toggle still layers on. maxLength mirrors a user variable.
+    asStringSchema(valueSchema) {
+        const copy = {};
+        for (const k in valueSchema) if (valueSchema.hasOwnProperty(k)) copy[k] = valueSchema[k];
+        copy.type = 'string';
+        if (copy.maxLength == null) copy.maxLength = 64;
+        return copy;
+    },
+
+    createConditionValueInput(valueSchema, currentValue, onChange, signalOptions, selfType) {
+        const wrap = document.createElement('div');
+        wrap.classList.add('cond-value-wrap');
+
+        // Parse an existing value to decide the initial mode.
+        const parseRef = (v) => {
+            if (typeof v !== 'string') return null;
+            const s = v.trim();
+            if (s.indexOf('${var:') === 0 && s.charAt(s.length - 1) === '}') {
+                return { mode: 'var', name: s.substring(6, s.length - 1) };
+            }
+            if (s.indexOf('${signal:') === 0 && s.charAt(s.length - 1) === '}') {
+                return { mode: 'signal', sig: s.substring(9, s.length - 1) };
+            }
+            return null;
+        };
+        const initRef = parseRef(currentValue);
+        let mode = initRef ? initRef.mode : 'value';
+
+        // Signals the bare `${signal:TYPE}` token CANNOT address: those published under an
+        // ATTRIBUTED EventData (type + {area}/{seat}/{side}/{units}/…) or a free-text key
+        // (variable/mqttTrigger). EventData.equals compares attributes, so resolving a bare
+        // type against an attributed signal always returns null → the condition could never
+        // match. Excluding them keeps the Signal picker honest (only single-instance signals
+        // that resolve). Kept in sync with the attributed EventData constants in BydEvent.java.
+        const ATTRIBUTED_SIGNALS = {
+            lights: 1, occupant: 1, seatbelt: 1, seatClimate: 1, speed: 1,
+            turnSignal: 1, windowOpenPercent: 1, windowState: 1,
+            variable: 1, mqttTrigger: 1, pm25: 1
+        };
+        const signalPickable = (signalOptions || []).filter(o =>
+            o && o.id && o.id !== selfType && !ATTRIBUTED_SIGNALS[o.id]);
+
+        // Mode toggle (segmented). Signal mode only when we have pickable (resolvable) signals.
+        const modes = [['value', 'automation.cond_mode_value'], ['var', 'automation.cond_mode_var']];
+        if (signalPickable.length) modes.push(['signal', 'automation.cond_mode_signal']);
+        const toggle = document.createElement('div');
+        toggle.classList.add('cond-mode-toggle');
+        const body = document.createElement('div');
+        body.classList.add('cond-value-body');
+
+        const render = () => {
+            body.innerHTML = '';
+            if (mode === 'value') {
+                // The normal typed editor. Seed it only when the current value is a real
+                // constant (not a leftover ${…} token from another mode).
+                const seed = parseRef(currentValue) ? undefined : currentValue;
+                const input = this.createInput(valueSchema, seed, (el, value) => onChange(value));
+                body.append(input);
+            } else if (mode === 'var') {
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.classList.add('input', 'text', 'cond-ref-input');
+                input.placeholder = BYD.i18n.t('automation.cond_var_placeholder');
+                input.maxLength = 60;
+                input.value = (initRef && initRef.mode === 'var') ? initRef.name : '';
+                const emit = () => {
+                    const n = input.value.trim();
+                    onChange(n ? '${var:' + n + '}' : '');
+                };
+                input.addEventListener('input', emit);
+                emit();
+                body.append(input);
+            } else { // signal
+                const sel = document.createElement('select');
+                sel.classList.add('input', 'enum', 'cond-ref-signal');
+                const ph = document.createElement('option');
+                ph.value = ''; ph.textContent = BYD.i18n.t('automation.cond_signal_placeholder');
+                ph.disabled = true; ph.selected = true; ph.hidden = true;
+                sel.append(ph);
+                for (const opt of signalPickable) {
+                    const o = document.createElement('option');
+                    o.value = opt.id;
+                    o.textContent = opt.label || opt.id;
+                    sel.append(o);
+                }
+                // A saved signal token (e.g. a hand-edited/imported attributed one) that
+                // isn't in the pickable list: keep it as a "(missing)" option so opening the
+                // form does NOT silently blank the stored value. Only a real user change
+                // (the change listener) rewrites it.
+                if (initRef && initRef.mode === 'signal') {
+                    const present = signalPickable.some(o => o.id === initRef.sig);
+                    if (!present) {
+                        const miss = document.createElement('option');
+                        miss.value = initRef.sig;
+                        miss.textContent = initRef.sig + ' ' + BYD.i18n.t('automation.cond_signal_missing');
+                        sel.append(miss);
+                    }
+                    sel.value = initRef.sig;
+                }
+                // Emit ONLY on a real user change — never on initial render (which would wipe
+                // a stored token the user hasn't touched, e.g. an attributed/missing one).
+                sel.addEventListener('change', () => onChange(sel.value ? '${signal:' + sel.value + '}' : ''));
+                body.append(sel);
+            }
+            this._syncSaveDisabled();
+        };
+
+        for (const [m, key] of modes) {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.classList.add('cond-mode-btn');
+            btn.textContent = BYD.i18n.t(key);
+            btn.classList.toggle('active', m === mode);
+            btn.addEventListener('click', () => {
+                if (mode === m) return;
+                mode = m;
+                // Switching mode clears the stored value so a stale token/constant from the
+                // previous mode can't leak (emit below re-populates for the new mode).
+                currentValue = undefined;
+                toggle.querySelectorAll('.cond-mode-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                render();
+            });
+            toggle.append(btn);
+        }
+        wrap.append(toggle, body);
+        render();
+        return wrap;
+    },
+
     createRow({ id, label, options }, index) {
         const token = sanitizeToken(id);
         const row = this.createRowElement({ id });
@@ -463,7 +1289,10 @@ BYD.automations = {
 
         const eventListener = (element, value, selected) => {
             inputs.querySelectorAll('.variable-input').forEach(input => input.remove());
+            inputs.querySelectorAll('.field-help').forEach(help => help.remove());
+            inputs.querySelectorAll('.nested-actions').forEach(n => n.remove());
             typeSelectorContainer.querySelectorAll('.description-icon').forEach(description => description.remove());
+            inputs.classList.remove('has-cond-value');   // re-added below only if a cond-value editor renders
             if (this.formData[id][index].type !== value) this.formData[id][index] = { type: value };
             if (!this.formData[id][index].variables) this.formData[id][index].variables = {};
             if (selected.description) {
@@ -478,20 +1307,110 @@ BYD.automations = {
                 typeSelectorContainer.append(icon);
             }
             const selectedVars = (selected.variables && selected.variables.length) ? selected.variables : [];
+            // A flow action (If/Wait-Until/Loop) whose LHS "event" is currently set to a
+            // user Variable: the operand is a STRING, so the comparator narrows to eq/neq and
+            // the RHS value editor becomes a text field (a numeric-only picker couldn't hold
+            // e.g. "Sport_Mode"). Detected off the live formData so it re-derives each render.
+            const lhsIsVar = this.formData[id][index].variables
+                && this.formData[id][index].variables.event === 'variable'
+                && selected.nameField;
             for (const variable of selectedVars) {
-                const variableSelector = this.createInput(variable, this.formData[id][index].variables[variable.id], (element, value) => {
-                    this.formData[id][index].variables[variable.id] = value;
-                });
+                let variableSelector;
+                if (variable.dynamic) {
+                    // A dynamic field (the RHS of an inline If/Loop/Wait-Until compare):
+                    // render the same Value / Variable / Signal editor a condition uses, so
+                    // the comparison can target a constant, a ${var:NAME}, or a ${signal:TYPE}.
+                    // The signal list is the conditions catalog; selfType is left null (a flow
+                    // action's LHS is picked in a sibling "event" field, not this row's type).
+                    // When the LHS is a variable, the constant path is a STRING (see lhsIsVar).
+                    const rhsSchema = lhsIsVar ? this.asStringSchema(variable) : variable;
+                    variableSelector = this.createConditionValueInput(
+                        rhsSchema, this.formData[id][index].variables[variable.id],
+                        (value) => { this.formData[id][index].variables[variable.id] = value; },
+                        this.conditionCatalog(), null);
+                    inputs.classList.add('has-cond-value');   // top-align (2-line editor)
+                } else if (this.isLhsEventVariable(variable, selected)) {
+                    // The LHS "event" picker of a flow action that supports a Variable operand
+                    // (If/Wait-Until/Loop). Wrap it so choosing "variable" re-renders the row
+                    // (to show the name field + swap the comparator/value to string mode).
+                    variableSelector = this.createInput(variable, this.formData[id][index].variables[variable.id], (element, value) => {
+                        this.formData[id][index].variables[variable.id] = value;
+                        this.renderForm();
+                    });
+                } else if (variable.id === 'comparator' && lhsIsVar) {
+                    // String LHS → constrain the comparator to eq/neq (gt/lt are meaningless
+                    // against a string and would silently evaluate false).
+                    variableSelector = this.createInput(this.eqNeqComparator(variable), this.formData[id][index].variables[variable.id], (element, value) => {
+                        this.formData[id][index].variables[variable.id] = value;
+                    });
+                } else {
+                    variableSelector = this.createInput(variable, this.formData[id][index].variables[variable.id], (element, value) => {
+                        this.formData[id][index].variables[variable.id] = value;
+                    });
+                }
                 variableSelector.classList.add(token + '-input', 'variable-input');
                 inputs.append(variableSelector);
+                // Right after the LHS event picker, when it's set to "variable", render the
+                // bespoke free-text variable-name field (schema carries it as `nameField`).
+                if (this.isLhsEventVariable(variable, selected)
+                        && this.formData[id][index].variables[variable.id] === 'variable'
+                        && selected.nameField) {
+                    const nameInp = this.createInput(selected.nameField, this.formData[id][index].variables.name, (element, value) => {
+                        this.formData[id][index].variables.name = value;
+                    });
+                    nameInp.classList.add(token + '-input', 'variable-input', 'lhs-var-name');
+                    inputs.append(nameInp);
+                }
             }
             if (selected.comparator && selected.value) {
-                for (const variable of ['comparator', 'value']) {
-                    const selector = this.createInput(selected[variable], this.formData[id][index][variable], (element, value) => {
-                        this.formData[id][index][variable] = value;
-                    });
-                    selector.classList.add(token + '-input', 'variable-input', variable);
-                    inputs.append(selector);
+                // Comparator: normal enum input. Value: the dynamic-capable editor so a
+                // condition can compare against a constant, a ${var:…}, or another
+                // ${signal:…}. `options` here is the conditions catalog (signal list).
+                const compSel = this.createInput(selected.comparator, this.formData[id][index].comparator, (element, value) => {
+                    this.formData[id][index].comparator = value;
+                });
+                compSel.classList.add(token + '-input', 'variable-input', 'comparator');
+                inputs.append(compSel);
+                const valSel = this.createConditionValueInput(selected.value, this.formData[id][index].value,
+                    (value) => { this.formData[id][index].value = value; }, options, value);
+                valSel.classList.add(token + '-input', 'variable-input', 'value');
+                inputs.classList.add('has-cond-value');   // top-align (see createRow eventListener note)
+                inputs.append(valSel);
+            }
+            // "How variables work" help — shown once under the Set Variable action
+            // and the Variable condition (the only two variable-typed items). Purely
+            // informational; removed/re-added with the other dynamic inputs above so
+            // switching type never leaves a stale note. Uses i18n so it localizes.
+            if (value === 'setVariable' || value === 'variable') {
+                const help = document.createElement('div');
+                help.classList.add('field-help', 'variable-input');
+                const body = document.createElement('div');
+                // Three short lines: what a variable is, then the mutex recipe. <code>
+                // spans wrap the literal name/value so they read as literals, not prose.
+                const l1 = document.createElement('p');
+                l1.textContent = BYD.i18n.t('automation.variables_help_intro');
+                const l2 = document.createElement('p');
+                l2.textContent = BYD.i18n.t('automation.variables_help_unset');
+                const l3 = document.createElement('p');
+                l3.textContent = BYD.i18n.t('automation.variables_help_mutex');
+                body.append(l1, l2, l3);
+                help.innerHTML = infoIcon;
+                help.append(body);
+                inputs.append(help);
+            }
+            // Control-flow actions (loop / if) carry nested action lists. Render a
+            // nested action editor for the "then"/body list, and (if the schema says so)
+            // an "else" list. Backed by childActions / elseActions on this entry.
+            // options here is the SAME action catalog, so nested actions can be anything.
+            if (selected.hasChildActions) {
+                const entry = this.formData[id][index];
+                if (!Array.isArray(entry.childActions)) entry.childActions = [];
+                inputs.append(this.createNestedActions(options, entry.childActions,
+                    (value === 'if') ? 'automation.then_actions' : 'automation.loop_body'));
+                if (selected.hasElseActions) {
+                    if (!Array.isArray(entry.elseActions)) entry.elseActions = [];
+                    inputs.append(this.createNestedActions(options, entry.elseActions,
+                        'automation.else_actions'));
                 }
             }
         };
@@ -555,13 +1474,24 @@ BYD.automations = {
         }
     },
 
-    getTypeEnum(id, options) {
+    // `noControlFlow` (optional): drop options that carry nested child actions (If/Loop)
+    // so a picker at the engine's max nesting depth can't offer a deeper control-flow row.
+    getTypeEnum(id, options, noControlFlow) {
         return {
             type: 'enum',
             label: BYD.i18n.t('automation.select'),
             id,
-            options,
+            options: noControlFlow ? (options || []).filter(o => o && !o.hasChildActions) : options,
         };
+    },
+
+    // Localized <optgroup> heading for a category key. Falls back to a title-cased
+    // key so an un-translated / newly-added category still reads sensibly.
+    categoryLabel(cat) {
+        const key = 'automation.category_' + cat;
+        const t = BYD.i18n.t(key);
+        if (t && t !== key) return t;
+        return String(cat).replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
     },
 
     createInput(data, defaultValue, eventListener) {
@@ -573,6 +1503,8 @@ BYD.automations = {
             case 'time': return this.createTimeInput(data, defaultValue, eventListener);
             case 'app': return this.createAppInput(data, defaultValue, eventListener);
             case 'audio': return this.createAudioInput(data, defaultValue, eventListener);
+            case 'actionGroup': return this.createActionGroupInput(data, defaultValue, eventListener);
+            case 'automationRef': return this.createAutomationRefInput(data, defaultValue, eventListener);
             default: return this.createFallbackInput(data);
         }
     },
@@ -601,19 +1533,85 @@ BYD.automations = {
         placeholder.hidden = true;
         selector.append(placeholder);
         const options = data.options || [];
-        for (const option of options) {
+        // Group under <optgroup> headings ONLY when the options carry a `category`
+        // (the action / trigger / condition TYPE picker does; small on/off-style enum
+        // variables do not, so those stay a flat list exactly as before). Category is a
+        // cosmetic hint from the server — the stored value is still option.id, so this
+        // never changes what a saved automation resolves to.
+        const grouped = options.length && options.some(o => o && o.category);
+        const mkOption = (option) => {
             const optionElement = document.createElement('option');
             optionElement.value = option.id;
             optionElement.textContent = option.label;
-            selector.append(optionElement);
+            return optionElement;
+        };
+        if (grouped) {
+            selector.classList.add('categorized');
+            // Bucket by category key, preserving first-seen option order within each.
+            const buckets = new Map();
+            for (const option of options) {
+                const cat = (option && option.category) || 'other';
+                if (!buckets.has(cat)) buckets.set(cat, []);
+                buckets.get(cat).push(option);
+            }
+            // Server-declared display order; unknown categories sort after known ones
+            // (stable), 'other' always last, so a new category never hides its items.
+            const ORDER = (window.BYD && BYD.AUTOMATION_CATEGORY_ORDER) || [];
+            const rank = (cat) => {
+                if (cat === 'other') return Number.MAX_SAFE_INTEGER;
+                const i = ORDER.indexOf(cat);
+                return i < 0 ? Number.MAX_SAFE_INTEGER - 1 : i;
+            };
+            const cats = Array.from(buckets.keys()).sort((a, b) => rank(a) - rank(b));
+            for (const cat of cats) {
+                const group = document.createElement('optgroup');
+                group.label = this.categoryLabel(cat);
+                for (const option of buckets.get(cat)) group.append(mkOption(option));
+                selector.append(group);
+            }
+        } else {
+            for (const option of options) selector.append(mkOption(option));
         }
         if (defaultValue) selector.value = defaultValue;
+        // A stored value the current schema doesn't offer (an action/trigger/condition
+        // TYPE — or any enum value — from a newer build, a feature disabled on this
+        // device, or a cross-version/community import). Without a matching <option> the
+        // <select> can't select it: selectedIndex goes to -1, the row renders EMPTY, and
+        // the .invalid class both styles it as an error AND — because the Save gate keys
+        // off '#formGrid .invalid' (see _syncSaveDisabled / saveForm) — globally blocks
+        // saving, so the whole automation becomes uneditable (can't even rename it).
+        // Mirror the Signal picker (createConditionValueInput): keep the stored value as a
+        // selected "(unavailable)" option so opening the form neither wipes it nor locks
+        // Save. It is NOT marked invalid, so the rest of the form stays editable and the
+        // step round-trips byte-identical on save. Only a real user change (picking a
+        // known option, which fires the eventListener) rewrites it. An empty/placeholder
+        // value (a fresh, unset row) is left to the normal invalid path so the user is
+        // still forced to choose a type. `data.strictOptions` opts a picker OUT of this
+        // preservation (see eqNeqComparator): where the options were CONTEXTUALLY narrowed
+        // from a still-valid base set, an out-of-list value isn't "unavailable on this
+        // device" — it's incompatible with the current context and must stay .invalid so the
+        // user re-picks, exactly as before this change.
+        const preserved = (!data.strictOptions
+            && defaultValue != null && defaultValue !== ''
+            && !options.some(o => o && o.id === defaultValue));
+        if (preserved) {
+            const miss = document.createElement('option');
+            miss.value = defaultValue;
+            miss.textContent = defaultValue + ' ' + BYD.i18n.t('automation.option_unavailable');
+            selector.append(miss);
+            selector.value = defaultValue;
+        }
         // Add invalid class if the selected option is not within the options list
         const changeEvent = () => {
             const selected = options.find(option => option.id === selector.value);
             if (selected) {
                 selector.classList.toggle('invalid', false);
                 if (eventListener) eventListener(selector, selector.value, selected);
+            } else if (preserved && selector.value === defaultValue) {
+                // Preserved unavailable value — keep as-is, don't flag invalid (which would
+                // lock Save) and don't fire the eventListener (there is no schema to render
+                // its sub-fields from; formData already holds the original step intact).
+                selector.classList.toggle('invalid', false);
             } else {
                 selector.classList.toggle('invalid', true);
             }
@@ -689,35 +1687,47 @@ BYD.automations = {
         return input;
     },
 
+    // Ambient-colour picker rendered as a SWATCH GRID matching the Vehicle Control page's
+    // colour picker (round chips + active ring), replacing the old drag-a-gradient range
+    // slider that was hard to aim on the fixed 31-entry BYD palette. The stored value is
+    // still the 1-based palette INDEX the car expects (the ambient light takes an index,
+    // not a free hex), so this is purely a nicer front-end over the same value — no action
+    // or SDK change. Tap a chip to select; the active chip gets the ring. touchend is
+    // handled too for WebView tap reliability (same as vehicle-control's swatches).
     createColourInput(data, defaultValue, eventListener) {
-        const input = document.createElement('input');
-        input.classList.add('input', 'colour');
-        input.type = 'range';
-        input.placeholder = data.label;
-        const min = 1;
-        const max = (data.colourCodes != null && data.colourCodes.length) ? data.colourCodes.length : 1;
-        input.min = min;
-        input.max = max;
-        if (defaultValue != null && !isNaN(defaultValue)) {
-            input.value = defaultValue;
-        } else {
-            input.value = 1;
-        }
-        if (data.colourCodes) input.style.background = 'linear-gradient(to right, ' + data.colourCodes.join(',') + ')';
-        // Add invalid class if the selected value is not within the min and max
-        const changeEvent = () => {
-            const value = parseInt(input.value, 10);
-            if (!isNaN(value) && value >= min && value <= max) {
-                input.classList.toggle('invalid', false);
-                if (data.colourCodes) input.style.setProperty('--color', data.colourCodes[value - 1]);
-                if (eventListener) eventListener(input, value);
-            } else {
-                input.classList.toggle('invalid', true);
+        const wrap = document.createElement('div');
+        wrap.classList.add('input', 'colour-swatches');
+        const codes = (data.colourCodes != null && data.colourCodes.length) ? data.colourCodes : ['#00D4AA'];
+        const min = 1, max = codes.length;
+        let current = (defaultValue != null && !isNaN(defaultValue)
+            && defaultValue >= min && defaultValue <= max) ? parseInt(defaultValue, 10) : 1;
+
+        const swatches = [];
+        const select = (idx) => {
+            current = idx;
+            for (let k = 0; k < swatches.length; k++) {
+                swatches[k].classList.toggle('active', (k + 1) === current);
             }
+            if (eventListener) eventListener(wrap, current);
         };
-        input.addEventListener('input', changeEvent);
-        changeEvent();
-        return input;
+
+        for (let i = 0; i < codes.length; i++) {
+            (function (hex, oneBased) {
+                const sw = document.createElement('div');
+                sw.classList.add('colour-swatch');
+                if (oneBased === current) sw.classList.add('active');
+                sw.style.backgroundColor = hex;
+                sw.title = hex;
+                sw.addEventListener('click', function (e) { e.stopPropagation(); select(oneBased); });
+                sw.addEventListener('touchend', function (e) { e.preventDefault(); e.stopPropagation(); select(oneBased); });
+                swatches.push(sw);
+                wrap.append(sw);
+            })(codes[i], i + 1);
+        }
+        // Emit the initial value so the form has it even if the user never taps (parity
+        // with the old slider, which fired changeEvent() once on build).
+        if (eventListener) eventListener(wrap, current);
+        return wrap;
     },
 
     createTimeInput(data, defaultValue, eventListener) {
@@ -891,6 +1901,110 @@ BYD.automations = {
             .catch(() => []);
     },
 
+    // Live-populated action-group dropdown (mirrors createAudioInput): the stored value
+    // is the group id; the label shows the group name. Fetched fresh each render since
+    // the user may have just created a group. A stored id that no longer resolves is
+    // still shown (marked missing) so the binding reveals what it points at.
+    createActionGroupInput(data, defaultValue, eventListener) {
+        const selector = document.createElement('select');
+        selector.classList.add('input', 'enum', 'action-group');
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = data.label;
+        placeholder.disabled = true;
+        placeholder.selected = true;
+        placeholder.hidden = true;
+        selector.append(placeholder);
+
+        const fill = (groups) => {
+            while (selector.options.length > 1) selector.remove(1);
+            for (const g of groups) {
+                const opt = document.createElement('option');
+                opt.value = g.id;
+                opt.textContent = g.name;
+                selector.append(opt);
+            }
+            if (defaultValue && !groups.some(g => g.id === defaultValue)) {
+                const opt = document.createElement('option');
+                opt.value = defaultValue;
+                opt.textContent = defaultValue + ' (missing)';
+                selector.append(opt);
+            }
+            if (defaultValue) selector.value = defaultValue;
+            changeEvent();
+            this._syncSaveDisabled();
+        };
+        const changeEvent = () => {
+            const ok = !!selector.value;
+            selector.classList.toggle('invalid', !ok);
+            if (ok && eventListener) eventListener(selector, selector.value);
+        };
+        selector.addEventListener('change', changeEvent);
+        this.loadActionGroups().then(fill).catch(() => { changeEvent(); this._syncSaveDisabled(); });
+        changeEvent();
+        return selector;
+    },
+
+    // Fetch the saved action groups. Resolves to [{id, name}]. Fresh each render.
+    loadActionGroups() {
+        return fetch('/api/action-groups/list', { cache: 'no-store' })
+            .then(r => r.json())
+            .then(j => Array.isArray(j) ? j : [])
+            .catch(() => []);
+    },
+
+    // Live-populated OTHER-automation picker for the "Control Automation" action. Value
+    // is the target automation's id; label is its name (or generated fallback). Excludes
+    // the automation currently being edited so a rule can't target itself in the picker.
+    createAutomationRefInput(data, defaultValue, eventListener) {
+        const selector = document.createElement('select');
+        selector.classList.add('input', 'enum', 'automation-ref');
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = data.label;
+        placeholder.disabled = true;
+        placeholder.selected = true;
+        placeholder.hidden = true;
+        selector.append(placeholder);
+
+        const fill = (autos) => {
+            while (selector.options.length > 1) selector.remove(1);
+            for (const a of autos) {
+                const opt = document.createElement('option');
+                opt.value = a.id;
+                opt.textContent = a.name;
+                selector.append(opt);
+            }
+            if (defaultValue && !autos.some(a => a.id === defaultValue)) {
+                const opt = document.createElement('option');
+                opt.value = defaultValue;
+                opt.textContent = defaultValue + ' (missing)';
+                selector.append(opt);
+            }
+            if (defaultValue) selector.value = defaultValue;
+            changeEvent();
+            this._syncSaveDisabled();
+        };
+        const changeEvent = () => {
+            const ok = !!selector.value;
+            selector.classList.toggle('invalid', !ok);
+            if (ok && eventListener) eventListener(selector, selector.value);
+        };
+        selector.addEventListener('change', changeEvent);
+        this.loadAutomationRefs().then(fill).catch(() => { changeEvent(); this._syncSaveDisabled(); });
+        changeEvent();
+        return selector;
+    },
+
+    // Fetch the [{id,name}] picker list, excluding the automation being edited.
+    loadAutomationRefs() {
+        const self = this.editingId ? ('?self=' + encodeURIComponent(this.editingId)) : '';
+        return fetch('/api/automations/picker' + self, { cache: 'no-store' })
+            .then(r => r.json())
+            .then(j => Array.isArray(j) ? j : [])
+            .catch(() => []);
+    },
+
     // Fetch + cache the installed-app list. Resolves to [{package, label}].
     loadAppList() {
         if (this._appList) return Promise.resolve(this._appList);
@@ -916,8 +2030,15 @@ BYD.automations = {
         // every render and whenever a field's validity may have changed.
         const saveBtn = document.getElementById('saveBtn');
         if (!saveBtn) return;
-        const hasInvalid = document.querySelectorAll('.form-grid .invalid').length > 0;
-        saveBtn.classList.toggle('is-disabled', hasInvalid);
+        // Scope to #formGrid — the Action Group editor's #groupFormGrid ALSO carries the
+        // .form-grid class, so an unscoped '.form-grid .invalid' would let a half-built
+        // group (an untyped action row) wrongly disable the automation Save (and vice
+        // versa). Each form validates only its own grid.
+        const hasInvalid = document.querySelectorAll('#formGrid .invalid').length > 0;
+        // Also block on a manualClip whose before+after window is out of the daemon's
+        // 1..60s contract — a cross-field rule the per-field .invalid gate can't catch.
+        const badClip = this._hasInvalidManualClip([this.formData.actions, this.formData.elseActions]);
+        saveBtn.classList.toggle('is-disabled', hasInvalid || badClip);
     },
 
     showForm(id, automation) {
@@ -947,8 +2068,14 @@ BYD.automations = {
     },
 
     async saveForm() {
-        if (document.querySelectorAll('.form-grid .invalid').length) {
+        // Scope to #formGrid so a hidden, half-built group in #groupFormGrid can't block
+        // saving a valid automation (both grids share the .form-grid class).
+        if (document.querySelectorAll('#formGrid .invalid').length) {
             this.toast(BYD.i18n.t('automation.invalid_form'), 'error');
+        } else if (this._hasInvalidManualClip([this.formData.actions, this.formData.elseActions])) {
+            // Specific message (not the generic "invalid form") so the user knows the clip
+            // duration is the problem — the daemon rejects a total outside 1..60s.
+            this.toast(BYD.i18n.t('automation.clip_window_invalid'), 'error');
         } else {
             try {
                 const path = this.editingId
@@ -959,12 +2086,28 @@ BYD.automations = {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(this.formData)
                 });
-                const result = await resp.json();
-                if (result.success) {
-                    await this.loadAutomations();
-                    this.hideForm();
-                    return this.toast(BYD.i18n.t('toast.saved'), 'success');
+                if (resp.ok) {
+                    // Success bodies are JSON; parse defensively.
+                    let result = {};
+                    try { result = await resp.json(); } catch (e) {}
+                    if (result.success !== false) {
+                        await this.loadAutomations();
+                        this.hideForm();
+                        return this.toast(BYD.i18n.t('toast.saved'), 'success');
+                    }
                 }
+                // Rejected (e.g. 400): surface the daemon's actual reason instead of a
+                // generic "save failed". The error endpoint replies text/plain OR a
+                // {error} JSON; read as text and fall back to the generic string. Without
+                // this, a rejected big/deep automation showed only "Failed to save" with
+                // no hint of the cause (the reported "can't save my big automation").
+                let msg = '';
+                try {
+                    const raw = await resp.text();
+                    try { const j = JSON.parse(raw); msg = j.error || j.message || ''; }
+                    catch (e) { msg = raw; }
+                } catch (e) {}
+                return this.toast(msg && msg.trim() ? msg.trim() : BYD.i18n.t('errors.save_failed'), 'error');
             } catch (e) {}
             this.toast(BYD.i18n.t('errors.save_failed'), 'error');
         }
@@ -1023,6 +2166,213 @@ BYD.automations = {
         // the real backend value instead of staying stuck in the flipped position the user just clicked.
         this.render();
         this.toast(BYD.i18n.t('errors.save_failed'), 'error');
+    },
+
+    // ── Action Groups ────────────────────────────────────────────────────────────
+    // A reusable, named action sequence, run by the "Run action group" action / a keymap.
+    // The daemon already had full CRUD (/api/action-groups); this is the missing editor.
+    // groupData holds the group being edited: { id?, name, actions:[...] }. The action
+    // list reuses the SAME createNestedActions widget the if/loop branches use, fed the
+    // shared actionCatalog(), and re-rendered via renderGroupForm (not renderForm).
+
+    groupData: null,      // the group currently open in the editor, or null
+    _groups: [],          // cached [{id, name, actions}] for the list
+
+    // Load + render the saved groups into #groupList (called on init + after any change).
+    async loadGroups() {
+        try {
+            const resp = await fetch('/api/action-groups', { cache: 'no-store' });
+            const map = await resp.json();
+            // Shape: { id: {name, actions:[...]} }. Flatten to an array for the list.
+            this._groups = Object.keys(map || {}).map(id => ({
+                id, name: (map[id] && map[id].name) || id,
+                actions: (map[id] && map[id].actions) || []
+            }));
+        } catch (e) {
+            this._groups = [];
+        }
+        this.renderGroupList();
+    },
+
+    renderGroupList() {
+        const list = document.getElementById('groupList');
+        const empty = document.getElementById('groupEmpty');
+        if (!list) return;
+        list.innerHTML = '';
+        if (!this._groups.length) {
+            if (empty) empty.style.display = '';
+            return;
+        }
+        if (empty) empty.style.display = 'none';
+        for (const g of this._groups) {
+            const card = document.createElement('div');
+            card.classList.add('card', 'group-card');
+            const body = document.createElement('div');
+            body.classList.add('group-card-body');
+            const info = document.createElement('div');
+            info.classList.add('group-card-info');
+            const name = document.createElement('div');
+            name.classList.add('group-card-name');
+            name.textContent = g.name;
+            const meta = document.createElement('div');
+            meta.classList.add('group-card-meta');
+            meta.textContent = BYD.i18n.t('automation.group_action_count').replace('{n}', (g.actions || []).length);
+            info.append(name, meta);
+            const actions = document.createElement('div');
+            actions.classList.add('group-card-actions');
+            const edit = document.createElement('button');
+            edit.classList.add('btn', 'btn-secondary');
+            edit.textContent = BYD.i18n.t('common.edit');
+            edit.addEventListener('click', () => this.showGroupForm(g));
+            const del = document.createElement('button');
+            del.classList.add('delete', 'icon-btn', 'danger');
+            del.title = BYD.i18n.t('automation.delete_row');
+            del.innerHTML = deleteIcon;
+            del.addEventListener('click', () => this.deleteGroup(g.id, g.name));
+            actions.append(edit, del);
+            body.append(info, actions);
+            card.append(body);
+            list.append(card);
+        }
+    },
+
+    // Open the group editor for a new (g == null) or existing group. Deep-clones so
+    // Cancel discards edits, mirroring showForm().
+    showGroupForm(g) {
+        this.groupData = g
+            ? { id: g.id, name: g.name, actions: JSON.parse(JSON.stringify(g.actions || [])) }
+            : { name: '', actions: [] };
+        this.renderGroupForm();
+        this._switchTab('groups');
+        // Reveal the editor, hide the list section within the Groups tab.
+        const ed = document.getElementById('groupEditor');
+        const ls = document.getElementById('groupListSection');
+        if (ed) ed.style.display = '';
+        if (ls) ls.style.display = 'none';
+    },
+
+    hideGroupForm() {
+        this.groupData = null;
+        // Clear the grid so no leftover .invalid action rows linger in the (now hidden)
+        // group editor — otherwise even the #formGrid-scoped checks aside, a stale group
+        // DOM is dead weight and could confuse a future unscoped query.
+        const grid = document.getElementById('groupFormGrid');
+        if (grid) grid.innerHTML = '';
+        const ed = document.getElementById('groupEditor');
+        const ls = document.getElementById('groupListSection');
+        if (ed) ed.style.display = 'none';
+        if (ls) ls.style.display = '';
+    },
+
+    renderGroupForm() {
+        const grid = document.getElementById('groupFormGrid');
+        if (!grid || !this.groupData) return;
+        grid.innerHTML = '';
+
+        // Name field (bound to groupData.name).
+        const nameRow = document.createElement('div');
+        nameRow.classList.add('name-row', 'row');
+        const nameLabel = document.createElement('span');
+        nameLabel.classList.add('label');
+        nameLabel.textContent = BYD.i18n.t('automation.group_name');
+        const nameInput = document.createElement('input');
+        nameInput.type = 'text';
+        nameInput.classList.add('input', 'string');
+        nameInput.placeholder = BYD.i18n.t('automation.group_name_placeholder');
+        nameInput.value = this.groupData.name || '';
+        nameInput.addEventListener('input', () => {
+            this.groupData.name = nameInput.value.trim();
+            this._syncGroupSaveDisabled();
+        });
+        nameRow.append(nameLabel, nameInput);
+        grid.append(nameRow);
+
+        // Action list — the SAME widget as if/loop branches, re-rendering THIS form.
+        const catalog = this.actionCatalog();
+        if (!Array.isArray(this.groupData.actions)) this.groupData.actions = [];
+        grid.append(this.createNestedActions(catalog, this.groupData.actions,
+            'automation.group_actions', () => this.renderGroupForm()));
+
+        // Re-validate Save on ANY change inside the group grid. The action-type <select>
+        // fires 'change' but only calls its own rebuild() (no re-render), and the global
+        // document 'change' listener drives _syncSaveDisabled (the AUTOMATION button), not
+        // this one — so without this grid-scoped listener the group Save button would stay
+        // stuck disabled after picking an action type (the user could only un-stick it by
+        // editing the name). Bound ONCE per grid node (renderGroupForm re-runs on every
+        // add/delete but reuses the same #groupFormGrid element, so guard against stacking
+        // duplicate listeners).
+        if (!grid.dataset.syncBound) {
+            grid.addEventListener('change', () => this._syncGroupSaveDisabled());
+            grid.dataset.syncBound = '1';
+        }
+
+        this._syncGroupSaveDisabled();
+    },
+
+    // Disable Save until the group has a name AND at least one action with a chosen type
+    // (an empty/typeless action is rejected by the daemon and would fail the save).
+    _syncGroupSaveDisabled() {
+        const btn = document.getElementById('groupSaveBtn');
+        if (!btn || !this.groupData) return;
+        const hasName = !!(this.groupData.name && this.groupData.name.trim());
+        const acts = this.groupData.actions || [];
+        const hasAction = acts.length > 0 && acts.every(a => a && a.type);
+        const invalid = document.querySelectorAll('#groupFormGrid .invalid').length > 0;
+        // Same cross-field manualClip window rule as the automation form (daemon 1..60s).
+        const badClip = this._hasInvalidManualClip([acts]);
+        btn.disabled = !(hasName && hasAction && !invalid && !badClip);
+    },
+
+    async saveGroup() {
+        if (!this.groupData) return;
+        if (!this.groupData.name || !this.groupData.name.trim()) {
+            return this.toast(BYD.i18n.t('automation.group_needs_name'), 'error');
+        }
+        const acts = this.groupData.actions || [];
+        if (!acts.length || !acts.every(a => a && a.type)) {
+            return this.toast(BYD.i18n.t('automation.group_needs_action'), 'error');
+        }
+        if (this._hasInvalidManualClip([acts])) {
+            return this.toast(BYD.i18n.t('automation.clip_window_invalid'), 'error');
+        }
+        try {
+            const id = this.groupData.id;
+            const path = id ? '/api/action-groups/' + encodeURIComponent(id) : '/api/action-groups';
+            const resp = await fetch(path, {
+                method: id ? 'PUT' : 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: this.groupData.name.trim(), actions: acts })
+            });
+            const result = await resp.json();
+            if (result && result.success) {
+                await this.loadGroups();
+                this.hideGroupForm();
+                return this.toast(BYD.i18n.t('toast.saved'), 'success');
+            }
+        } catch (e) {}
+        this.toast(BYD.i18n.t('errors.save_failed'), 'error');
+    },
+
+    async deleteGroup(id, name) {
+        const ok = (window.BYD && BYD.utils && BYD.utils.confirmDialog)
+            ? await BYD.utils.confirmDialog({
+                title: BYD.i18n.t('confirm.delete'),
+                body: BYD.i18n.t('automation.confirm_delete_group_body').replace('{name}', name || ''),
+                confirmLabel: BYD.i18n.t('common.delete'),
+                cancelLabel: BYD.i18n.t('common.cancel'),
+                danger: true
+              })
+            : confirm(BYD.i18n.t('confirm.delete'));
+        if (!ok) return;
+        try {
+            const resp = await fetch('/api/action-groups/' + encodeURIComponent(id), { method: 'DELETE' });
+            const result = await resp.json();
+            if (result && result.success) {
+                await this.loadGroups();
+                return this.toast(BYD.i18n.t('toast.deleted'), 'success');
+            }
+        } catch (e) {}
+        this.toast(BYD.i18n.t('errors.delete_failed'), 'error');
     },
 
     toast(message, type) {

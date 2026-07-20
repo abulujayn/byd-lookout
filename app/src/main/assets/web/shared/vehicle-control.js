@@ -1703,7 +1703,7 @@ var VC = {
         // doesn't honor the value (the documented Seal HAL behavior) the GET
         // returns supported=false and we hide the section.
         if (!this.vehicleState.chargeCap) {
-            this.vehicleState.chargeCap = { percent: 80, enabled: null, supported: null };
+            this.vehicleState.chargeCap = { percent: 70, enabled: null, supported: null };
         }
         this.bindBtn('btnChargeCapToggle', function() {
             var s = self.vehicleState.chargeCap;
@@ -1728,8 +1728,17 @@ var VC = {
                 if (capDebounce) clearTimeout(capDebounce);
                 capDebounce = setTimeout(function() {
                     self.apiPost('/api/vehicle/charge-cap', { percent: v }).then(function(result) {
-                        if (result.success && typeof result.supported === 'boolean') {
-                            self.vehicleState.chargeCap.supported = result.supported;
+                        if (result.success) {
+                            // The server echoes the EFFECTIVE cap — the SOC-target
+                            // path caps at 70, so a requested 90 may come back 70.
+                            // Reflect the truth in the slider/readout.
+                            if (typeof result.percent === 'number'
+                                    && result.percent >= 15 && result.percent <= 100) {
+                                self.vehicleState.chargeCap.percent = result.percent;
+                            }
+                            if (typeof result.supported === 'boolean') {
+                                self.vehicleState.chargeCap.supported = result.supported;
+                            }
                             self.updateChargeCapUI();
                         }
                         self.toastFromResult(result, null, null);
@@ -2669,7 +2678,12 @@ var VC = {
             }
             if (!self.vehicleState.chargeCap) self.vehicleState.chargeCap = {};
             var s = self.vehicleState.chargeCap;
-            if (typeof data.percent === 'number') s.percent = data.percent;
+            // Only accept a physically valid cap (15..100). A HAL sentinel that
+            // slipped past the server (e.g. 65535) is ignored so the readout
+            // shows '--' rather than "65535%".
+            if (typeof data.percent === 'number' && data.percent >= 15 && data.percent <= 100) {
+                s.percent = data.percent;
+            }
             if (typeof data.enabled === 'boolean') s.enabled = data.enabled;
             if (typeof data.supported === 'boolean') s.supported = data.supported;
             else s.supported = null;

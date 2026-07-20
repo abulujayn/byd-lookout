@@ -82,6 +82,20 @@ public class AudioApiHandler {
             handleAudioLibraryDelete(out, path);
             return true;
         }
+        // Raw bytes of one uploaded sound, streamed to the app-process media player.
+        // The app UID (SELinux untrusted_app) CANNOT read /data/local/tmp/.overdrive
+        // directly — daemon-written log/config files there are only reachable from the
+        // app via a shell exec, and the locale/device-id managers document the same
+        // cross-UID wall. So the app-process MediaPlaybackService/VideoPlaybackActivity
+        // cannot open the library file by path; instead it streams the bytes from here
+        // (authenticated localhost, same model the recordings player uses for /video/).
+        if (cleanPath.equals("/api/audio/library/raw") && method.equals("GET")) {
+            // Fallback only — HttpServer routes this path to handleRawRanged() first
+            // (with the Range header). Reached here only if that route is bypassed;
+            // serve without range so the endpoint still works.
+            handleAudioLibraryRaw(out, path, null);
+            return true;
+        }
         // Preview an uploaded sound from the web UI (plays on the head unit).
         if (cleanPath.equals("/api/audio/library/play") && method.equals("POST")) {
             handleAudioLibraryPlay(out, body);
@@ -258,6 +272,52 @@ public class AudioApiHandler {
         resp.put("success", ok);
         if (!ok) resp.put("error", "Could not play");
         HttpResponse.sendJson(out, resp.toString());
+    }
+
+    /**
+     * GET /api/audio/library/raw?name=xxx — stream one uploaded sound/video's raw bytes,
+     * with HTTP Range support. Routed directly from {@link HttpServer} (ahead of the
+     * generic handler) so the {@code rangeHeader} reaches us. Consumed by the app-process
+     * media player (which can't open the file by path; see the route comment). The name is
+     * sanitized to a basename, so this can only ever serve a file that already exists
+     * inside {@link #AUDIO_DIR} — no traversal.
+     *
+     * <p>Range matters for VIDEO: a streaming MediaPlayer/VideoView issues Range requests
+     * to locate a non-faststart MP4's trailing {@code moov} atom; without a 206 reply the
+     * extractor stalls and "Play Video" showed nothing (audio still worked because MP3
+     * streams linearly). {@link HttpResponse#sendMediaFileRanged} serves 206 on a Range
+     * request and a plain 200 otherwise.
+     */
+    public static boolean handleRawRanged(String path, String rangeHeader, OutputStream out) throws Exception {
+        handleAudioLibraryRaw(out, path, rangeHeader);
+        return true;
+    }
+
+    private static void handleAudioLibraryRaw(OutputStream out, String path, String rangeHeader) throws Exception {
+        String name = null;
+        int q = path.indexOf("?name=");
+        if (q >= 0) {
+            name = java.net.URLDecoder.decode(path.substring(q + "?name=".length()), "UTF-8");
+        }
+        String safe = safeAudioName(name);
+        if (safe == null) { HttpResponse.sendError(out, 400, "Invalid name"); return; }
+        java.io.File f = new java.io.File(AUDIO_DIR, safe);
+        if (!f.exists() || !f.isFile()) { HttpResponse.sendError(out, 404, "Not found"); return; }
+        String ext = safe.substring(safe.lastIndexOf('.') + 1).toLowerCase();
+        HttpResponse.sendMediaFileRanged(out, f, mimeForAudioExt(ext), rangeHeader);
+    }
+
+    /** MIME type for a validated audio/video extension (used by the raw stream). */
+    private static String mimeForAudioExt(String ext) {
+        switch (ext) {
+            case "mp3":  return "audio/mpeg";
+            case "wav":  return "audio/wav";
+            case "m4a":  return "audio/mp4";
+            case "aac":  return "audio/aac";
+            case "ogg":  return "audio/ogg";
+            case "mp4":  return "video/mp4";
+            default:      return "application/octet-stream";
+        }
     }
 
     // ==================== AVAS EXTERIOR SPEAKER ====================

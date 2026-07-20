@@ -71,6 +71,23 @@
 }
 .field-warning svg { width: 16px; height: 16px; flex: none; color: #ffb300; margin-top: 1px; }
 
+/* Neutral (info) note — same shape as .field-warning but calm blue, used for the
+   "How variables work" help under the Set Variable action / Variable condition. */
+.field-help {
+    display: flex; gap: 8px; align-items: flex-start;
+    padding: 8px 12px; border-radius: 10px; margin-top: 8px;
+    background: rgba(59, 130, 246, 0.10);
+    border: 1px solid rgba(59, 130, 246, 0.30);
+    font-size: 12px; line-height: 1.5; color: var(--text-secondary);
+}
+.field-help svg { width: 16px; height: 16px; flex: none; color: #3b82f6; margin-top: 1px; }
+.field-help p { margin: 0 0 4px; }
+.field-help p:last-child { margin-bottom: 0; }
+.field-help code {
+    font-family: var(--font-mono, monospace); font-size: 11px;
+    padding: 0 3px; border-radius: 4px; background: rgba(127,127,127,0.18);
+}
+
 /* ===== ICON BUTTONS (automation-specific — no shared equivalent) ===== */
 .icon-btn {
     background: none; border: 1px solid var(--border-default); border-radius: var(--radius-sm); padding: 6px;
@@ -270,32 +287,36 @@
     font-size: 13px;
     line-height: 1.4;
 }
-.form-grid .row .inputs > .colour {
-    -webkit-appearance: none; appearance: none;
-    height: 35px;
-    border-radius: 3px;
-    background: var(--vc-tile-bg);
-    outline: none;
+/* Ambient-colour swatch grid — matches the Vehicle Control page's colour picker
+   (round chips + active ring) instead of the old drag-a-gradient slider. The value
+   stored is still the 1-based palette index; this is just a friendlier front-end. */
+.form-grid .row .inputs > .colour-swatches {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
     margin: 0 6px;
-    padding: 0;
+    padding: 4px 0;
     border: none;
+    background: none;
+    height: auto;
 }
-.form-grid .row .inputs > .colour::-webkit-slider-thumb {
-    -webkit-appearance: none; appearance: none;
-    width: 15px; height: 15px;
-    border: 1px solid black;
+.form-grid .row .inputs > .colour-swatches .colour-swatch {
+    width: 24px; height: 24px;
     border-radius: 50%;
-    background: var(--color, #00D4AA);
+    border: 2px solid transparent;
+    /* child margins for spacing — flex `gap` is unsupported on Chrome-58 WebView */
+    margin: 3px;
     cursor: pointer;
-    box-shadow: 0 0 8px rgba(0,212,170,0.4);
+    -webkit-tap-highlight-color: transparent;
+    -webkit-transition: all .15s; transition: all .15s;
 }
-.form-grid .row .inputs > .colour::-moz-range-thumb {
-    width: 15px; height: 15px;
-    border: 1px solid black;
-    border-radius: 50%;
-    background: var(--color, #00D4AA);
-    cursor: pointer;
-    box-shadow: 0 0 8px rgba(0,212,170,0.4);
+.form-grid .row .inputs > .colour-swatches .colour-swatch:hover {
+    -webkit-transform: scale(1.15); transform: scale(1.15);
+}
+.form-grid .row .inputs > .colour-swatches .colour-swatch.active {
+    border-color: var(--vc-text-primary, #fff);
+    box-shadow: 0 0 6px currentColor;
+    -webkit-transform: scale(1.1); transform: scale(1.1);
 }
 .description-tooltip.visible {
     opacity: 1;
@@ -387,3 +408,195 @@
     color: var(--text-secondary);
 }
 #automationList .status-text > * + * { margin-left: 8px; }
+
+/* Nested condition groups — a bordered card per group so the (A AND B) OR (…)
+   structure reads visually. Purely presentational; the flat conditions above are
+   unaffected. */
+.condition-groups { margin-top: 12px; }
+.condition-group.card {
+    border: 1px solid var(--border-subtle);
+    border-radius: 10px;
+    padding: 12px;
+    margin-bottom: 10px;
+    background: var(--surface-2, rgba(255,255,255,0.03));
+}
+.condition-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+.condition-group-header .label { font-weight: 600; }
+.condition-group .logic-select { margin-bottom: 8px; }
+.condition-group-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.condition-group-row .inputs { flex: 1; display: flex; flex-wrap: wrap; gap: 8px; }
+.add-group-button { margin-top: 4px; }
+
+/* Nested action editors (loop body, if then/else). Indented bordered block so the
+   nesting reads clearly. Independent of the flat action rows. */
+.nested-actions {
+    margin: 8px 0 4px 0;
+    padding: 10px;
+    border-left: 3px solid var(--accent, #4a90d9);
+    border-radius: 0 8px 8px 0;
+    background: var(--surface-2, rgba(255,255,255,0.03));
+}
+.nested-actions-label {
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 6px;
+    color: var(--text-secondary);
+}
+.nested-action-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+.nested-action-row .inputs { flex: 1; display: flex; flex-wrap: wrap; gap: 8px; }
+
+/* Dynamic condition-value editor (expression engine). The value box gains a small
+   segmented mode toggle: Value (constant) / Variable (${var:…}) / Signal (${signal:…}).
+   Purely additive — a constant condition looks the same, just with the toggle above. */
+.cond-value-wrap {
+    /* Column: the compact segmented toggle sits ABOVE the value body. As a .inputs
+       flex cell it is stretched to the cell width, so align children to the start
+       (Chrome-58: flex `gap` is ignored — child margins provide the 4px stack gap). */
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+}
+.cond-mode-toggle {
+    /* inline-flex + align-self:flex-start so the pill HUGS its 2-3 buttons instead of
+       stretching to the full cell width (that stretch was the "elongated dark
+       background" — the tinted track ran the whole row with the buttons bunched left).
+       margin-bottom stands in for the column gap (Chrome-58 has no flex gap). */
+    display: inline-flex;
+    align-self: flex-start;
+    max-width: 100%;
+    background: var(--surface-2, rgba(255,255,255,0.05));
+    border-radius: 6px;
+    padding: 2px;
+    margin-bottom: 4px;
+    box-sizing: border-box;
+}
+.cond-mode-btn {
+    font-size: 11px;
+    line-height: 1.2;
+    padding: 3px 8px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary, #9aa);
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+/* Even spacing between the segmented buttons without flex gap (Chrome-58). */
+.cond-mode-toggle > .cond-mode-btn + .cond-mode-btn { margin-left: 2px; }
+.cond-mode-btn.active {
+    background: var(--accent, #4a90d9);
+    color: #fff;
+}
+/* Body fills the cell width so the value input/select lines up with sibling
+   dropdowns in the row, while the toggle above stays compact. */
+.cond-value-body { display: flex; width: 100%; }
+.cond-value-body > .input,
+.cond-value-body > select,
+.cond-value-body > input { width: 100%; min-width: 0; box-sizing: border-box; }
+.cond-ref-input, .cond-ref-signal { min-width: 0; width: 100%; }
+/* A condition row carrying the Value/Variable/Signal editor: that cell is a 2-line
+   stack (a small mode toggle above the input) and is taller than the sibling
+   type/comparator selects. The default `.inputs { align-items: center }` floats those
+   1-line selects to the MIDDLE of the tall cell, so the value box reads below them — the
+   reported "strip misaligns / box moves down". Top-align the row so the toggle and the
+   sibling selects share the same top edge; the value input then sits one line under the
+   toggle as a tidy 2-row cell (no centering drift, no brittle magic offsets). */
+.form-grid .row .inputs.has-cond-value { align-items: flex-start; }
+
+/* Cloud-dependency warning banner — shown at the top of the automation form when a
+   cloud-only action (lock/unlock/flash/find-car) is used but BYD Cloud isn't set up. */
+.cloud-warning {
+    margin: 0 0 12px 0;
+    padding: 10px 12px;
+    border-left: 3px solid var(--warn, #e0a030);
+    border-radius: 0 8px 8px 0;
+    background: var(--warn-bg, rgba(224,160,48,0.12));
+    color: var(--text-primary, #e8e8e8);
+    font-size: 13px;
+    line-height: 1.4;
+}
+
+/* ── Action Groups ──────────────────────────────────────────────────────────
+   Saved-group list cards + the group editor's name field. Chrome-58 safe: plain
+   flexbox with explicit margins (no flex `gap`), no :is()/:has()/logical props. */
+
+/* Group list card: name/meta on the left, Edit + Delete on the right, vertically
+   centred with even spacing. Mirrors the app's card look (matches the binding rows
+   on the key-mapping page). */
+.group-card { margin-bottom: 10px; }
+.group-card .group-card-body {
+    display: flex;
+    align-items: center;
+    padding: 12px 14px;
+}
+.group-card .group-card-info {
+    flex: 1 1 auto;
+    min-width: 0;               /* let long names ellipsize instead of shoving buttons */
+    margin-right: 12px;
+}
+.group-card .group-card-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary, #e8e8e8);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.group-card .group-card-meta {
+    font-size: 12px;
+    color: var(--text-secondary, #9aa);
+    margin-top: 2px;
+}
+.group-card .group-card-actions {
+    display: flex;
+    align-items: center;
+    flex: none;
+}
+/* Edit (text btn) then Delete (icon btn) — even gap without flex gap. */
+.group-card .group-card-actions > * + * { margin-left: 8px; }
+.group-card .group-card-actions .btn { flex: none; }
+.group-card .group-card-actions .icon-btn { flex: none; }
+
+/* Group editor name row — label above a FULL-WIDTH input, matching the Add-tab
+   name box and the rest of the form fields (was rendering at content width). */
+.form-grid .name-row {
+    display: block;
+    margin: 8px 0 16px 0;
+}
+.form-grid .name-row > .label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-secondary, #9aa);
+    margin-bottom: 6px;
+}
+/* Full-width name inputs — the Add-automation name box (.name-section > .name-input)
+   and the group editor name box (.name-row > .input) both sit OUTSIDE a .inputs flex
+   row, so the generic "inputs > input { width:100% }" rule never reached them and they
+   fell back to intrinsic width (the reported inconsistent/narrow box). Pin them full
+   width to line up with every other field. */
+.form-grid .name-section .name-input,
+.form-grid .name-row > .input {
+    width: 100%;
+    box-sizing: border-box;
+}
+.form-grid .name-section .row-label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-secondary, #9aa);
+    margin-bottom: 6px;
+}

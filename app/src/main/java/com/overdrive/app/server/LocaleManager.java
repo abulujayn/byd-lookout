@@ -43,7 +43,7 @@ public final class LocaleManager {
     /** All locales we ship translations for. en is the base. */
     public static final List<String> SUPPORTED = Arrays.asList(
             "en", "zh-CN", "zh-TW", "pt-BR", "es", "de", "fr", "it",
-            "nb", "nl", "ja", "ko", "th", "vi", "hi", "tr", "ru"
+            "nb", "nl", "ja", "ko", "th", "vi", "hi", "tr", "ru", "ar"
     );
 
     private static final Set<String> SUPPORTED_SET = new HashSet<>(SUPPORTED);

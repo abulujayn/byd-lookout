@@ -2,6 +2,11 @@
 
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Call-state automations ("mute media on incoming call"). Detection only — the
+         app-process CallStateMonitor listens for RINGING/OFFHOOK/IDLE and relays them
+         to the daemon. No call CONTROL (that would need ANSWER_PHONE_CALLS). Self-gated:
+         the monitor no-ops if this isn't granted. -->
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
     <uses-permission android:name="android.permission.FORCE_STOP_PACKAGES" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
@@ -45,7 +50,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     
     <!-- ==================== BYD HAL Permissions ==================== -->
-    <!-- Matches AutoCommander manifest for full BYD SDK access -->
+    <!-- Full BYD SDK access -->
 
     <!-- AC (climate control) -->
     <uses-permission android:name="android.permission.BYDAUTO_AC_COMMON" />
@@ -356,6 +361,39 @@
             android:showOnLockScreen="true"
             android:turnScreenOn="true" />
 
+        <!-- Video Playback Activity - fullscreen player for the "Play Video"
+             automation/keymap action. exported=true is REQUIRED: the CameraDaemon
+             (shell uid 2000) launches it via `am start -n com.overdrive.app/.ui.VideoPlaybackActivity`
+             (same bridge as DeterrentActivity) — the daemon can't render video itself.
+             singleTask + clear-task so a repeat play replaces the current clip in one
+             instance. Library clips stream from the daemon's authenticated raw endpoint. -->
+        <activity
+            android:name="com.overdrive.app.ui.VideoPlaybackActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.NoTitleBar.Fullscreen"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:taskAffinity="com.overdrive.app.mediaplayer"
+            android:screenOrientation="unspecified"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|navigation|fontScale|locale|layoutDirection|uiMode|density" />
+
+        <!-- App Launcher Ghost Activity - Transparent, no-content anchor for the
+             split-screen re-dock path. exported=true is REQUIRED: the CameraDaemon
+             (shell uid 2000) launches it in windowing mode 3 (SPLIT_SCREEN_PRIMARY)
+             via `am start` targeting
+             com.overdrive.app/com.overdrive.app.launcher.AppLauncherGhostActivity
+             to force a split-screen-primary stack, then moves an already-running app's
+             task into it. singleInstance keeps the docked half a distinct task;
+             excludeFromRecents so the invisible anchor never shows in Recents. It
+             self-finishes after a short grace window (see AppLauncherGhostActivity). -->
+        <activity
+            android:name="com.overdrive.app.launcher.AppLauncherGhostActivity"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:resizeableActivity="true"
+            android:launchMode="singleInstance"
+            android:excludeFromRecents="true"
+            android:exported="true" />
+
         <!-- Location Starter Activity - Transparent, starts Location service and finishes immediately -->
         <!-- Used by SentryDaemon to restart Location service without bringing app to foreground -->
         <activity
@@ -371,14 +409,6 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
-
-        <activity
-            android:name=".AppLauncherGhostActivity"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar"
-            android:resizeableActivity="true"
-            android:launchMode="singleInstance"
-            android:excludeFromRecents="true"
-            android:exported="true" />
 
         <receiver
             android:name="com.overdrive.app.receiver.BootReceiver"
@@ -485,6 +515,34 @@
             android:name="com.overdrive.app.overlay.StatusOverlayService"
             android:foregroundServiceType="specialUse"
             android:exported="false" />
+
+        <!-- Media Playback Service - plays the "Play Audio" automation/keymap sound
+             in the REAL app process. exported=true is REQUIRED: the CameraDaemon
+             (shell uid 2000, synthetic context) launches it via
+             `am start-foreground-service -n com.overdrive.app/.services.MediaPlaybackService`
+             — the daemon CANNOT play a MediaPlayer itself (prepare() fails 0x80000000
+             on this firmware) nor startForegroundService cross-process. Same proven
+             bridge the RoadSense/Location sidecars use. Library sounds are streamed
+             from the daemon's authenticated /api/audio/library/raw (the app UID can't
+             read /data/local/tmp), so exporting carries no file-access surface. -->
+        <service
+            android:name="com.overdrive.app.services.MediaPlaybackService"
+            android:foregroundServiceType="mediaPlayback"
+            android:exported="true" />
+
+        <!-- Message Overlay Service - draws the "Show Toast" / "Show Dialog"
+             automation/keymap message as a TYPE_APPLICATION_OVERLAY in the REAL app
+             process. exported=true is REQUIRED: the CameraDaemon (shell uid 2000)
+             launches it via
+             `am start-foreground-service -n com.overdrive.app/.overlay.MessageOverlayService`
+             — the daemon has no UI surface. Same proven bridge as MediaPlaybackService /
+             the RoadSense overlay. Non-focusable window so it never steals focus from the
+             foreground app; all content comes from the launching Intent extras (no file
+             or data-access surface), so exporting carries no additional risk. -->
+        <service
+            android:name="com.overdrive.app.overlay.MessageOverlayService"
+            android:foregroundServiceType="specialUse|dataSync"
+            android:exported="true" />
 
 
         <!-- AccessibilityService Keep-Alive - Highest process priority protection.

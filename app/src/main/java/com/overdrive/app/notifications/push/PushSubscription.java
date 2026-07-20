@@ -1,5 +1,6 @@
 package com.overdrive.app.notifications.push;
 
+import com.overdrive.app.notifications.CategoryRegistry;
 import com.overdrive.app.notifications.NotificationEvent;
 
 import org.json.JSONArray;
@@ -48,6 +49,34 @@ public final class PushSubscription {
         this.mutedCategories = new HashSet<>();
         this.minSeverity = NotificationEvent.Severity.INFO;
         this.quietHours = null;
+    }
+
+    /**
+     * The set of category ids a BRAND-NEW device should start out muting —
+     * every registry entry marked {@code defaultEnabled:false} (e.g.
+     * {@code surveillance.motion.notice}, the legacy {@code surveillance.motion},
+     * and the two door categories).
+     *
+     * <p>Historically {@code defaultEnabled} was dead metadata: a fresh
+     * subscription began with an EMPTY mute set, so a category the registry
+     * declared off-by-default actually delivered until the user hunted it down
+     * on the Notifications page and muted it manually. This seeds the mute set
+     * so "off by default" is honoured on first subscribe, for ALL such
+     * categories, not just surveillance notices.
+     *
+     * <p>Only ever called for a genuinely new device — re-subscribe keeps the
+     * device's existing explicit choices (see {@code NotificationApiHandler}),
+     * so a user who deliberately turned a default-off category ON is never
+     * re-muted. Null-safe: a null registry yields an empty set (fail-open to
+     * the pre-existing "nothing muted" behaviour rather than muting blindly).
+     */
+    public static Set<String> defaultMutedCategories(CategoryRegistry registry) {
+        Set<String> muted = new HashSet<>();
+        if (registry == null) return muted;
+        for (CategoryRegistry.Entry e : registry.all().values()) {
+            if (!e.defaultEnabled) muted.add(e.id);
+        }
+        return muted;
     }
 
     public boolean isMuted(String category) {

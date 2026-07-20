@@ -60,6 +60,10 @@ public class Automations {
     static {
         // Load config from the file at startup
         loadFromFile();
+        // Load reusable action groups too (separate file). Order doesn't matter — an
+        // actionGroup action resolves its group by id lazily at run time — but loading
+        // here makes them ready before the first automation fires.
+        ActionGroups.loadFromFile();
 
         // Start publishing the current time-of-day / day-of-week into the state so
         // time and day conditions can be evaluated.
@@ -80,6 +84,17 @@ public class Automations {
         // ticking a cheap map check. Publishes turnSignal on/off far more promptly than
         // the ~5s stationary snapshot cadence used to.
         com.overdrive.app.automation.condition.TurnSignalEvent.scheduleTurnSignalEvent();
+
+        // Start the FAST dynamic-input poll (accelerator / brake / steering). Same
+        // self-gating as TurnSignalEvent — reads a signal at 250ms ONLY while an enabled
+        // automation actually references it, otherwise a parked thread ticking cheap map
+        // checks. Fixes the up-to-5s lag those triggers had on the stationary snapshot.
+        com.overdrive.app.automation.condition.DynamicsEvent.scheduleDynamicsEvent();
+
+        // Start the FAST energy-recuperation (regen) poll. Same self-gating: reads the
+        // regen level at 1s ONLY while an enabled automation references energyRegen,
+        // otherwise a parked thread. Fixes the 2-4s lag regen had on the ~5s snapshot.
+        com.overdrive.app.automation.condition.EnergyRegenEvent.scheduleEnergyRegenEvent();
 
         // Subscribe to raw door open/close edges (event-driven, no poll) so door-state
         // triggers fire the instant a door/lid opens. Self-gates on isDisabled().
@@ -155,7 +170,10 @@ public class Automations {
         for (Automation a : automations.values()) {
             // Triggers + conditions that reference a variable event.
             for (EventData key : a.getTriggers()) seedIfVariable(key);
-            for (AutomationCondition c : a.getConditions()) seedIfVariable(c.getEventData());
+            // getAllConditions (not getConditions) so a variable referenced only inside
+            // a nested condition group is still seeded — else its "!= true" guard would
+            // read null and never pass on first run.
+            for (AutomationCondition c : a.getAllConditions()) seedIfVariable(c.getEventData());
             // Also seed variables a "Set Variable" action DEFINES, so a condition on a
             // variable only ever set (never triggered/conditioned) elsewhere still reads
             // empty rather than null before its first set.
@@ -172,14 +190,33 @@ public class Automations {
     }
 
     private static void seedVariablesDefinedByActions(java.util.List<AutomationAction> actions) {
+        // Recurse into nested children so a setVariable INSIDE a loop/if/group is still
+        // seeded — otherwise its variable would read null (not "") on first run and a
+        // "!= true" guard would never pass. forEachAction walks the whole tree.
+        forEachAction(actions, action -> {
+            if (!"setVariable".equals(action.getType()) && !"incrementVariable".equals(action.getType())) return;
+            Object name = action.getVariables() == null ? null : action.getVariables().get("name");
+            if (name == null) return;
+            String n = name.toString().trim();
+            if (n.isEmpty()) return;
+            seedIfVariable(com.overdrive.app.automation.action.SetVariableAction.variableEvent(n));
+        });
+    }
+
+    /**
+     * Depth-first walk of an action list AND every nested child/else-child list,
+     * applying {@code visitor} to each action. The single place that knows the action
+     * tree shape, so every walker (variable seeding, manual-clip sizing, shell scans)
+     * recurses consistently and a control-flow-nested action is never missed.
+     */
+    private static void forEachAction(java.util.List<AutomationAction> actions,
+                                      java.util.function.Consumer<AutomationAction> visitor) {
         if (actions == null) return;
         for (AutomationAction action : actions) {
-            if (action == null || !"setVariable".equals(action.getType())) continue;
-            Object name = action.getVariables() == null ? null : action.getVariables().get("name");
-            if (name == null) continue;
-            String n = name.toString().trim();
-            if (n.isEmpty()) continue;
-            seedIfVariable(com.overdrive.app.automation.action.SetVariableAction.variableEvent(n));
+            if (action == null) continue;
+            visitor.accept(action);
+            forEachAction(action.getChildActions(), visitor);
+            forEachAction(action.getElseChildActions(), visitor);
         }
     }
 
@@ -207,16 +244,18 @@ public class Automations {
     }
 
     private static int maxManualClipRetention(List<AutomationAction> actions) {
-        if (actions == null) return 0;
-        int max = 0;
-        for (AutomationAction action : actions) {
-            if (action == null || !"manualClip".equals(action.getType())) continue;
+        // int[] so the lambda can accumulate. Recurse (forEachAction) so a manualClip
+        // nested in a loop/if is counted too — otherwise the pre-record ring would be
+        // undersized and that replay would silently fail to capture its window.
+        final int[] max = {0};
+        forEachAction(actions, action -> {
+            if (!"manualClip".equals(action.getType())) return;
             Map<String, Object> variables = action.getVariables();
-            if (variables == null) continue;
-            max = Math.max(max,
+            if (variables == null) return;
+            max[0] = Math.max(max[0],
                     intVar(variables, "beforeSeconds") + intVar(variables, "afterSeconds"));
-        }
-        return max;
+        });
+        return max[0];
     }
 
     private static int intVar(Map<String, Object> variables, String key) {
@@ -259,6 +298,46 @@ public class Automations {
      */
     public static Action getAction(String key) {
         return actions().getAction(key);
+    }
+
+    // Runtime re-entrancy guard for nested action execution (loops / if / action groups
+    // all run their children back through runActionList). Bounds a cyclic/over-deep tree
+    // that slipped past the parse-time MAX_ACTION_DEPTH (e.g. an action group calling
+    // itself). Per-thread because actions run on the single AutomationQueue worker (and
+    // the /test executor); each independent run starts at 0.
+    // Must sit ABOVE the parse-time control-flow cap (Automation.MAX_ACTION_DEPTH=8) with
+    // headroom, so a LEGAL max-depth automation that ALSO runs action groups (each an extra
+    // runActionList re-entry) executes fully without falsely tripping this guard; it only
+    // fires on a genuine runaway/cycle. 16 = 8 (static cap) + generous action-group headroom.
+    private static final int MAX_RUN_DEPTH = 16;
+    private static final ThreadLocal<Integer> RUN_DEPTH = ThreadLocal.withInitial(() -> 0);
+
+    /**
+     * Run a list of actions in order, re-entrantly: a control-flow action's
+     * {@code trigger} calls back here with its child list, so loops / if-branches /
+     * action groups all execute through one path with a shared depth guard. A flat list
+     * runs at depth 1, identical to the original inline loop. Null/unknown-type elements
+     * are skipped (defense-in-depth for a hand-edited config), and the depth guard stops
+     * runaway nesting without killing the worker.
+     */
+    public static void runActionList(java.util.List<AutomationAction> actionList) {
+        if (actionList == null) return;
+        int depth = RUN_DEPTH.get();
+        if (depth >= MAX_RUN_DEPTH) {
+            logger.warn("Action nesting depth cap (" + MAX_RUN_DEPTH + ") hit — stopping to avoid runaway/cycle");
+            return;
+        }
+        RUN_DEPTH.set(depth + 1);
+        try {
+            for (AutomationAction automationAction : actionList) {
+                if (automationAction == null) continue;
+                Action action = getAction(automationAction.getType());
+                if (action == null) continue;
+                action.trigger(automationAction);
+            }
+        } finally {
+            RUN_DEPTH.set(depth);
+        }
     }
 
     /**
@@ -312,7 +391,10 @@ public class Automations {
         for (Automation a : automations.values()) {
             if (a.isDisabled()) continue;
             if (a.isTriggered(key)) return true;
-            for (AutomationCondition c : a.getConditions()) {
+            // getAllConditions so an event used only inside a nested group still marks
+            // this event as "referenced" — otherwise its fast-poll (e.g. turn signal)
+            // would stay parked and the group condition would read stale state.
+            for (AutomationCondition c : a.getAllConditions()) {
                 if (key.equals(c.getEventData())) return true;
             }
         }
@@ -351,6 +433,44 @@ public class Automations {
     }
 
     /**
+     * Bulk-import automations from an exported map (id → automation JSON), the exact
+     * shape {@link #toJson} produces. Each entry is validated via {@link Automation#fromJson}
+     * (same gate as a single create), so a malformed entry is skipped, never persisted.
+     *
+     * @param json    the exported {id: automation} map
+     * @param replace true = replace the whole set (clear first); false = merge (add/overwrite by id)
+     * @return the number of automations successfully imported (validated + stored)
+     */
+    public static int importAutomations(JSONObject json, boolean replace) {
+        if (json == null) return 0;
+        // Validate ALL entries first so a partial/garbage file can't half-wipe the set:
+        // we only clear (replace mode) once we know we have a valid parse to install.
+        java.util.LinkedHashMap<String, Automation> parsed = new java.util.LinkedHashMap<>();
+        java.util.Iterator<String> keys = json.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            Automation a = Automation.fromJson(json.optJSONObject(key));
+            if (a != null) {
+                // Mint a fresh id for a blank/duplicate-on-merge key so an import can't
+                // collide with or silently overwrite an unrelated existing automation.
+                String id = (key == null || key.isBlank()) ? UUID.randomUUID().toString() : key;
+                parsed.put(id, a);
+            }
+        }
+        if (parsed.isEmpty()) return 0;
+        synchronized (SAVE_LOCK) {
+            if (replace) automations.clear();
+            automations.putAll(parsed);
+            refreshEnabledCount();
+        }
+        saveToFile();
+        AutomationQueue.checkWorkerState();
+        applyManualClipRetention();
+        logger.info("Imported " + parsed.size() + " automations (replace=" + replace + ")");
+        return parsed.size();
+    }
+
+    /**
      * Delete an automation with a specific id
      * Only persists and re-evaluates the worker state when a mapping actually existed, so a delete of
      * an unknown id is a true no-op (no needless file write / worker churn) and the caller can report
@@ -386,6 +506,46 @@ public class Automations {
         applyManualClipRetention();
         logger.info((disabled ? "Disabled" : "Enabled") + " automation: " + id);
         return true;
+    }
+
+    /**
+     * Flip an automation's enabled state (for the AUTOMATION_CONTROL "toggle" action).
+     * Returns false if the id is unknown.
+     */
+    public static boolean toggleAutomation(String id) {
+        Automation automation = automations.get(id);
+        if (automation == null) return false;
+        return disableAutomation(id, !automation.isDisabled());
+    }
+
+    /**
+     * Whether an automation with this id exists (for the automation-control action's
+     * unknown-target guard).
+     */
+    public static boolean automationExists(String id) {
+        return automations.containsKey(id);
+    }
+
+    /**
+     * Lightweight [{id, name}] list for the automation-control target picker. {@code name}
+     * is the user-given name, or a short generated fallback ("Automation <8-char id>")
+     * when unnamed, so the picker is never blank. Excludes {@code selfId} (an automation
+     * shouldn't target itself in the picker) when provided.
+     */
+    public static JSONArray listForPicker(String selfId) {
+        JSONArray arr = new JSONArray();
+        try {
+            for (Map.Entry<String, Automation> e : automations.entrySet()) {
+                if (selfId != null && selfId.equals(e.getKey())) continue;
+                String nm = e.getValue().getName();
+                if (nm.isEmpty()) {
+                    String k = e.getKey();
+                    nm = "Automation " + (k.length() > 8 ? k.substring(0, 8) : k);
+                }
+                arr.put(new JSONObject().put("id", e.getKey()).put("name", nm));
+            }
+        } catch (Exception ignored) {}
+        return arr;
     }
 
     /**
@@ -636,6 +796,86 @@ public class Automations {
     }
 
     /**
+     * Publish an EXTERNAL event relayed from the app process (signals the daemon can't
+     * observe itself). WHITELISTED: only the keys below are honoured, and each is
+     * mapped to its curated {@link BydEvent} EventData with a validated value — so the
+     * app→daemon bridge can never inject arbitrary automation state.
+     *
+     * @param event the external event key (e.g. "callState")
+     * @param value the string value (validated per event)
+     * @return true if the event was recognised and published
+     */
+    public static boolean publishExternalEvent(String event, String value) {
+        if (event == null) return false;
+        switch (event) {
+            case "callState":
+                // Only accept the three real telephony states; anything else is dropped
+                // rather than published (no spurious edge on a garbled relay).
+                if ("idle".equals(value) || "ringing".equals(value) || "offhook".equals(value)) {
+                    update(com.overdrive.app.automation.condition.BydEvent.CALL_STATE, value);
+                    return true;
+                }
+                return false;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Publish an INBOUND MQTT message as an automation signal. The daemon's MQTT
+     * subscriber calls this when a broker message lands on {@code <base>/automation/<channel>}
+     * (see MqttPublisherService), letting an external system (Home Assistant, Node-RED, …)
+     * trigger an OverDrive automation. Distinct from {@link #publishExternalEvent}: the
+     * channel is caller-defined, so this is its own guarded seam rather than a fixed
+     * whitelist. The channel is validated (bounded, safe charset) so a malformed/hostile
+     * topic can't inject arbitrary automation state; the value is bounded in length. The
+     * value flows through {@link #update} (level-triggered: fires on a value transition),
+     * so publishing distinct values (or toggling) drives repeated triggers.
+     *
+     * @param channel the channel segment from the topic (validated)
+     * @param value   the message payload as a string (bounded)
+     * @return true if accepted and published, false if the channel/value was rejected
+     */
+    public static boolean publishMqttTrigger(String channel, String value) {
+        if (!isValidMqttChannel(channel)) return false;
+        if (value == null) value = "";
+        if (value.length() > 256) value = value.substring(0, 256);
+        // Bound distinct-channel growth: update() inserts a permanent state entry per
+        // channel, and the channel is external (broker-writable). A chatty/hostile broker
+        // publishing to <base>/automation/<random-N> would otherwise grow the state map
+        // unbounded. Cap the number of DISTINCT channels we'll ever seed; once at the cap,
+        // only already-known channels continue to publish (a real automation watches a
+        // fixed, small set of channels, so this never limits legitimate use). The set only
+        // grows, mirroring update()'s own permanence — no pruning needed for a ≤cap set.
+        if (mqttChannelsSeen.size() >= MAX_MQTT_CHANNELS && !mqttChannelsSeen.contains(channel)) {
+            return false;
+        }
+        mqttChannelsSeen.add(channel);
+        update(com.overdrive.app.automation.condition.BydEvent.mqttTrigger(channel), value);
+        return true;
+    }
+
+    // Distinct inbound-MQTT channels ever seeded, capped so a broker can't grow the state
+    // map without bound (see publishMqttTrigger). A concurrent set — publishMqttTrigger runs
+    // on the Paho callback thread.
+    private static final int MAX_MQTT_CHANNELS = 64;
+    private static final java.util.Set<String> mqttChannelsSeen =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** A safe channel id: non-empty, &le;64 chars, [A-Za-z0-9._-] only (a single MQTT
+     *  topic segment). Rejects wildcards/slashes so it maps to exactly one channel. */
+    private static boolean isValidMqttChannel(String channel) {
+        if (channel == null || channel.isEmpty() || channel.length() > 64) return false;
+        for (int i = 0; i < channel.length(); i++) {
+            char c = channel.charAt(i);
+            boolean ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                    || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+            if (!ok) return false;
+        }
+        return true;
+    }
+
+    /**
      * Run the actions for a specific automation
      * Can run the actions without checking the conditions for testing the actions
      * A disabled automation never fires from this choke point: both the queue worker
@@ -681,13 +921,29 @@ public class Automations {
             // response at all. Swallowing it here (mirroring the queue worker) means the caller still
             // gets a proper response and the daemon stays up. We return true (the automation EXISTS) so
             // the failure is never misreported as a 404 by callers that map false -> 404.
+            // Record the fire (real triggers only — not the /test path). Bumps the
+            // in-memory count + timestamp for the list "last fired / N times"; the value
+            // is persisted lazily (below) rather than on every fire to avoid a disk
+            // write per trigger on a hot automation.
+            if (checkConditions) automation.recordTriggered(System.currentTimeMillis());
             try {
                 if (runElse) automation.triggerElseActions();
                 else automation.triggerActions();
             } catch (Throwable t) {
                 logger.error("Automation action threw while triggering: " + id);
             }
+            // Persist the bumped stats opportunistically: only every STATS_PERSIST_EVERY
+            // fires (per automation) so a busy rule doesn't hammer the disk, while the
+            // count still survives a restart with at most a few lost increments.
+            if (checkConditions && (automation.getTriggerCount() % STATS_PERSIST_EVERY) == 0) {
+                saveToFile();
+            }
         }
         return true;
     }
+
+    // Persist run-stats to disk every N fires per automation (not every fire — that
+    // would be a disk write per trigger on a hot rule). A restart loses at most N-1
+    // increments of the display counter, which is acceptable for a cosmetic stat.
+    private static final long STATS_PERSIST_EVERY = 10L;
 }

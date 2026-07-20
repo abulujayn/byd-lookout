@@ -49,7 +49,21 @@ import java.util.concurrent.TimeUnit
 object KeyMapDispatcher {
 
     private const val TAG = "KeyMapDispatcher"
-    private const val DOUBLE_WINDOW_MS = 300L
+    // Disambiguation window for single-vs-double, measured from the FIRST DOWN of the
+    // first tap. A deliberate hardware double-tap on a steering-wheel/dash button spans
+    // longer than a touchscreen double-tap (Android's 300ms default): each press is a
+    // firmware BURST delivered through a laggy a11y input path, so tap 1's burst + hold
+    // already consumes part of the window before the user releases. At 300ms a second tap
+    // whose DOWN landed just past 300ms was missed — the parked single had already fired,
+    // so "double often did the single instead" (field report). 450ms comfortably covers a
+    // real inter-tap interval measured from the first DOWN. Trade-off: a single tap on a
+    // key that ALSO has a double mapped waits this long before firing (we can't fire the
+    // single early and un-fire it for a vehicle action) — acceptable, since the whole
+    // point of mapping a double is that it must win. This is the DEFAULT; the live value
+    // is user-tunable (keymap.doubleTapWindowMs, clamped 250..1500ms) and carried on the
+    // snapshot as doubleWindowMs, so a user whose buttons need a slower double can raise it
+    // (e.g. 1000ms) from Settings without a rebuild.
+    private const val DOUBLE_WINDOW_MS = 450L
     // Debounce for a fired action, per keycode. Many BYD wheel/dash buttons emit
     // a BURST of discrete down/up pairs (each repeatCount==0) for a single human
     // press rather than one down + auto-repeat — so firing on every fresh DOWN
@@ -63,7 +77,7 @@ object KeyMapDispatcher {
     // auto-repeat. Two DOWNs of the same keycode closer together than this are the
     // same physical press's burst, NOT a deliberate double-tap, so the second must
     // be swallowed rather than promoted to the "double" action. This MUST stay well
-    // under DOUBLE_WINDOW_MS (300ms) so a genuinely deliberate double-press — which
+    // under DOUBLE_WINDOW_MS (450ms) so a genuinely deliberate double-press — which
     // by definition lands within DOUBLE_WINDOW_MS but is spaced by human reaction
     // time (>>100ms) — still promotes. ~90ms comfortably clears the mechanical burst
     // span yet sits far below a real inter-tap gap. Distinct from FIRE_DEBOUNCE_MS
@@ -75,6 +89,10 @@ object KeyMapDispatcher {
     // this longer window so the long-press repeat — which cancels the pending
     // single — reliably arrives first and wins the race.
     private const val LONG_WINDOW_MS = 600L
+    // How long an inject-guard entry stays valid (see injectGuard). The injected native
+    // tap round-trips through onKeyEvent within a few ms; 1s is a generous ceiling after
+    // which a never-delivered injection is treated as absent so the button isn't left dead.
+    private const val INJECT_GUARD_TTL_MS = 1000L
     // Don't re-read config from disk more often than this, regardless of key rate.
     private const val REFRESH_THROTTLE_MS = 2000L
     // Much coarser poll used ONLY while the feature is disabled: it exists solely
@@ -99,8 +117,11 @@ object KeyMapDispatcher {
         Thread(r, "KeyMapSched").apply { isDaemon = true }
     }
 
-    /** Immutable in-memory view of the keymap config, read on the input thread. */
-    private class Snapshot(val enabled: Boolean, val bindings: List<JSONObject>)
+    /** Immutable in-memory view of the keymap config, read on the input thread.
+     *  doubleWindowMs is the user-tunable single-vs-double disambiguation window
+     *  (falls back to DOUBLE_WINDOW_MS when unset), captured per-snapshot so a live
+     *  edit propagates on the next refresh without a restart. */
+    private class Snapshot(val enabled: Boolean, val bindings: List<JSONObject>, val doubleWindowMs: Long)
 
     @Volatile private var cache: Snapshot? = null
     @Volatile private var lastRefreshKickMs = 0L
@@ -153,6 +174,29 @@ object KeyMapDispatcher {
     // double-only) so the NEXT tap must itself complete a cycle. Guarded by `this`;
     // cleared alongside pending/pendingEpoch/lastDownAtMs in refresh()/teardown().
     private val upSeenSinceDown = HashSet<Int>()
+
+    // Per-keycode flag: the most recent DOWN for this keycode was PASSED THROUGH to the
+    // OEM (not consumed) — used so the trailing UP is handled symmetrically. When a
+    // keycode has ONLY a double/long binding (no "single"), a plain single tap must fall
+    // through to the OEM's own function for that button (e.g. the 360-camera button whose
+    // double-tap is remapped but whose single tap should still open the 360 view). We let
+    // the DOWN pass; this flag then lets the matching UP pass too, so the OEM sees a
+    // complete down-up pair rather than a dangling UP. Cleared when the DOWN is consumed.
+    // Guarded by `this`; cleared alongside the other transient maps in refresh()/teardown().
+    private val downPassedThrough = HashSet<Int>()
+
+    // Keycodes for which we injected a synthetic native tap (the "block native single"
+    // replay — see the double-only branch) and are waiting for that injected event to
+    // round-trip back through onKeyEvent. FLAG_REQUEST_FILTER_KEY_EVENTS re-delivers
+    // `input keyevent`-injected keys to our filter, so without this guard the replay
+    // would be re-captured, re-armed as a double, and re-injected — an infinite loop.
+    // A keycode here makes the NEXT down+up pair pass straight through to the OEM
+    // (consuming the guard), so exactly one injected tap reaches the OEM and is not
+    // re-processed. Guarded by `this`; time-boxed by injectGuardUntilMs so a mispaired
+    // event (injection that never round-trips) can't strand the guard and swallow a
+    // later real gesture. Cleared in refresh()/teardown() with the other transient maps.
+    private val injectGuard = HashSet<Int>()
+    private val injectGuardUntilMs = HashMap<Int, Long>()
 
     // Instant-propagation watcher. The keymap config is written by the DAEMON
     // (UID 2000) when the settings page POSTs /api/keymap/config, but this
@@ -312,6 +356,36 @@ object KeyMapDispatcher {
         // is still made below from `owned`.
         if (!isDown) synchronized(this) { suppressLongUntilUp.remove(keyCode); upSeenSinceDown.add(keyCode) }
 
+        // Inject-guard: if we just injected a synthetic native tap for this keycode
+        // (the "block native single" replay), let its round-tripped event pass STRAIGHT
+        // through to the OEM without any mapping logic — otherwise FLAG_REQUEST_FILTER_
+        // KEY_EVENTS would re-deliver our own injection, we'd re-arm the double, and
+        // re-inject forever. One guarded down+up pair is consumed per injection (the UP
+        // clears the guard so both halves pass, then the guard is gone for the next real
+        // gesture). Time-boxed so an injection that never round-trips can't
+        // strand the guard. Checked BEFORE the enabled/owned gates because the replay must
+        // pass even while the feature is enabled and owns the keycode.
+        run {
+            val passThrough = synchronized(this) {
+                if (injectGuard.contains(keyCode)) {
+                    val until = injectGuardUntilMs[keyCode] ?: 0L
+                    if (System.currentTimeMillis() <= until) {
+                        // Pass the whole injected down+up pair. Clear on the UP (not the
+                        // DOWN) so BOTH halves pass — clearing on DOWN would leave the
+                        // paired UP to be consumed as an owned key, handing the OEM a
+                        // dangling DOWN. After the UP the guard is gone for the next gesture.
+                        if (!isDown) { injectGuard.remove(keyCode); injectGuardUntilMs.remove(keyCode) }
+                        true
+                    } else {
+                        // Expired (injection never came back) — drop it and process normally.
+                        injectGuard.remove(keyCode); injectGuardUntilMs.remove(keyCode)
+                        false
+                    }
+                } else false
+            }
+            if (passThrough) return false
+        }
+
         val snap = cache
         // Not loaded yet → prime once (this is the FIRST-load path, so the observer
         // gate that skips known-disabled snapshots cannot help here) and pass through.
@@ -344,10 +418,16 @@ object KeyMapDispatcher {
         }
         if (!owned) return false
 
-        // We consume the trailing UP for any owned key so the OEM never sees a
-        // dangling UP for a DOWN we swallowed. (The UP's suppressLongUntilUp clear
-        // already ran unconditionally at the top of onKey.)
-        if (!isDown) return true
+        // Trailing UP handling. Normally we consume the UP for an owned key so the OEM
+        // never sees a dangling UP for a DOWN we swallowed. BUT if the matching DOWN was
+        // PASSED THROUGH (a single tap on a double/long-only binding — see the branches
+        // below), the OEM already got that DOWN and must get the UP too, or its button
+        // handler sees a stuck key. So pass the UP through iff we passed its DOWN through.
+        // (The UP's suppressLongUntilUp clear already ran unconditionally at the top.)
+        if (!isDown) {
+            val passed = synchronized(this) { downPassedThrough.remove(keyCode) }
+            return !passed
+        }
 
         // Long-press: platform sets repeatCount>0 once held past the timeout.
         // Fire once on the first repeat and swallow the rest of the stream.
@@ -431,6 +511,10 @@ object KeyMapDispatcher {
                 // into a long-press, suppress that long: one gesture must actuate
                 // exactly one command. Cleared on the trailing UP.
                 if (longB != null) suppressLongUntilUp.add(keyCode)
+                // We CONSUME this promoting DOWN, so its trailing UP must also be consumed
+                // — clear any passed-through flag left by the first (passed-to-OEM) DOWN of
+                // this double, or the promote's UP would wrongly leak to the OEM.
+                downPassedThrough.remove(keyCode)
                 // Burst DOWNs were already swallowed above (BURST_COALESCE_MS), so this is a
                 // genuine deliberate second press — fire it even if it lands inside the
                 // single-press debounce window. Still stamp lastFiredAtMs so any co-existing
@@ -447,12 +531,16 @@ object KeyMapDispatcher {
                 // (→ long, cleared in the repeat>0 branch) consume it first. If the
                 // window elapses with neither, the scheduled task fires the single.
                 //
-                // With a long binding present we wait LONG_WINDOW_MS (> the
+                // With a long binding present we wait at least LONG_WINDOW_MS (> the
                 // platform long-press timeout) so the long-press repeat reliably
-                // clears `pending` before this fires; otherwise DOUBLE_WINDOW_MS is
-                // enough to disambiguate a double.
+                // clears `pending` before this fires; otherwise the (user-tunable)
+                // double window is enough to disambiguate a double. Never park the
+                // single for LESS than the double window even when a long co-exists —
+                // a custom double window larger than LONG_WINDOW_MS must still let the
+                // second tap land before the single resolves.
                 val s = singleB
-                val window = if (longB != null) LONG_WINDOW_MS else DOUBLE_WINDOW_MS
+                val dbl = snap.doubleWindowMs
+                val window = if (longB != null) maxOf(LONG_WINDOW_MS, dbl) else dbl
                 val myEpoch = ++epochSeq
                 pending[keyCode] = s
                 pendingEpoch[keyCode] = myEpoch
@@ -512,25 +600,55 @@ object KeyMapDispatcher {
             }
 
             if (doubleB != null) {
-                // Double-only binding: first press arms the window, second fires.
-                val d = doubleB
+                // Double-only binding (no "single" on this keycode). Two modes, per the
+                // binding's "blockNativeSingle" flag:
+                //
+                //  • DEFAULT (flag off): the FIRST tap FALLS THROUGH to the OEM's own
+                //    function for this button — otherwise a button whose double-tap is
+                //    remapped (e.g. 360-camera → windows) would have its single-tap OEM
+                //    action (open 360) silently eaten. We arm the double-window but PASS
+                //    THIS DOWN THROUGH (return false); the trailing UP passes too. The
+                //    trade-off: the native single fires ~immediately, THEN the confirmed
+                //    second press promotes to the double action (GitHub #156).
+                //
+                //  • BLOCK NATIVE (flag on): the user wants the native single SUPPRESSED
+                //    on a double. We CONSUME the first tap (return true) so the OEM never
+                //    sees it during the window; if no second tap arrives, the timer REPLAYS
+                //    a synthetic native tap (daemon `input keyevent`) so a lone tap still
+                //    works — just deferred by the double window (~300ms). The injected tap
+                //    round-trips through onKeyEvent and is let through by injectGuard.
+                val blockNative = doubleB.optBoolean("blockNativeSingle", false)
                 val myEpoch = ++epochSeq
-                pending[keyCode] = d
+                pending[keyCode] = doubleB
                 pendingEpoch[keyCode] = myEpoch
                 // Fresh parking DOWN: reset the completed-cycle flag so the NEXT DOWN
                 // must itself see an intervening UP before it can promote to double.
                 upSeenSinceDown.remove(keyCode)
+                if (!blockNative) downPassedThrough.add(keyCode)   // let the matching UP through too
+                else downPassedThrough.remove(keyCode)             // consumed → no passthrough for the UP
                 scheduler.schedule({
-                    // Double-only: if no second press arrived, just drop it. Match on
-                    // the per-arming epoch, not the binding reference, so a stale
-                    // timer can't evict a later re-arm of the same binding object.
-                    synchronized(this) {
+                    // No second press arrived within the window. Drop the arming; if the
+                    // binding blocks the native single, replay the native tap now so the
+                    // button's own function still happens (just deferred). Match on the
+                    // per-arming epoch so a stale timer can't evict a later re-arm.
+                    val replay = synchronized(this) {
                         if (pendingEpoch[keyCode] == myEpoch) {
                             pending.remove(keyCode); pendingEpoch.remove(keyCode)
-                        }
+                            if (blockNative) {
+                                // Arm the guard BEFORE injecting so the round-tripped event
+                                // (which may arrive before the injecting call even returns)
+                                // is recognised and passed through, not re-processed.
+                                injectGuard.add(keyCode)
+                                injectGuardUntilMs[keyCode] = System.currentTimeMillis() + INJECT_GUARD_TTL_MS
+                                true
+                            } else false
+                        } else false
                     }
-                }, DOUBLE_WINDOW_MS, TimeUnit.MILLISECONDS)
-                return true
+                    if (replay) injectNativeKey(keyCode)
+                }, snap.doubleWindowMs, TimeUnit.MILLISECONDS)
+                // block-native CONSUMES the first tap (return true); default PASSES it
+                // through to the OEM (return false).
+                return blockNative
             }
 
             if (singleB != null) {
@@ -550,9 +668,15 @@ object KeyMapDispatcher {
                 return true
             }
         }
-        // Owned only by a long binding, but this was a tap (no repeat): consume
-        // so the OEM tap doesn't leak through while the user learns the mapping.
-        return longB != null
+        // Owned only by a long binding, and this was a tap (no repeat, no single/double
+        // binding): pass it through to the OEM. A long-only mapping should not eat the
+        // button's normal single-tap function (same principle as the double-only branch
+        // above). The long action still fires from the repeatCount>0 branch. We pass the
+        // DOWN through and flag it so the trailing UP passes too.
+        if (longB != null) {
+            synchronized(this) { downPassedThrough.add(keyCode) }
+        }
+        return false
     }
 
     /** Kick an async refresh at most once per [REFRESH_THROTTLE_MS]. Never blocks.
@@ -596,7 +720,7 @@ object KeyMapDispatcher {
             for (i in 0 until arr.length()) {
                 arr.optJSONObject(i)?.let { list.add(it) }
             }
-            cache = Snapshot(enabled, list)
+            cache = Snapshot(enabled, list, UnifiedConfigManager.getKeymapDoubleTapWindowMs())
             // Lazily toggle the instant-propagation watcher off this refresh so a
             // disabled feature holds no inotify watch (zero observer-thread wakes)
             // while an enabled one still gets the moment-the-daemon-writes push.
@@ -619,7 +743,8 @@ object KeyMapDispatcher {
                     // Drop DOWN timestamps and the completed-cycle flags too: a
                     // disabled feature must carry no stale burst-coalesce gap or
                     // half-seen cycle into a later re-enable.
-                    lastDownAtMs.clear(); upSeenSinceDown.clear()
+                    lastDownAtMs.clear(); upSeenSinceDown.clear(); downPassedThrough.clear()
+                    injectGuard.clear(); injectGuardUntilMs.clear()
                 } else {
                     val liveLongKeys = HashSet<Int>()
                     for (b in list) {
@@ -665,7 +790,38 @@ object KeyMapDispatcher {
             // Also drop per-keycode DOWN timestamps and completed-cycle flags so a
             // burst-coalesce gap or half-seen cycle measured before teardown can't
             // misclassify the first DOWN after re-enable.
-            lastDownAtMs.clear(); upSeenSinceDown.clear()
+            lastDownAtMs.clear(); upSeenSinceDown.clear(); downPassedThrough.clear()
+            injectGuard.clear(); injectGuardUntilMs.clear()
+        }
+    }
+
+    /**
+     * Replay a synthetic NATIVE key tap for [keyCode] via the daemon (UID 2000 runs
+     * `input keyevent <code>` — the app process can't inject system keys). Used by the
+     * "block native single" double-binding: we consumed the user's first tap during the
+     * double window, and no second tap came, so the button's own OEM function must still
+     * happen — deferred by the window. The injected event round-trips through
+     * onKeyEvent; injectGuard (armed by the caller BEFORE this runs) lets it pass to the
+     * OEM without re-processing. Off-thread, tight timeouts — mirrors [fire].
+     */
+    private fun injectNativeKey(keyCode: Int) {
+        io.submit {
+            try {
+                val payload = JSONObject().put("keycode", keyCode)
+                val conn = DaemonHttpClient.open("/api/keymap/inject", "POST", 2000, 3000)
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.outputStream.use { it.write(payload.toString().toByteArray()) }
+                val code = conn.responseCode
+                Log.i(TAG, "keymap inject native keycode=$keyCode -> HTTP $code")
+                conn.disconnect()
+            } catch (t: Throwable) {
+                // Injection failed — clear the guard we optimistically armed so a later
+                // real press of this key isn't swallowed waiting for an event that will
+                // never arrive. (The TTL would also clear it, but do it promptly.)
+                synchronized(this) { injectGuard.remove(keyCode); injectGuardUntilMs.remove(keyCode) }
+                Log.w(TAG, "keymap inject native failed keycode=$keyCode: ${t.message}")
+            }
         }
     }
 

@@ -18,16 +18,20 @@ window.BYD = window.BYD || {};
  * Why a custom runtime instead of i18next:
  *   - APK perf budget; i18next + Intl.PluralRules polyfill ~80KB minified.
  *   - Chrome 58 lacks Intl.PluralRules and modern template strings; we hand-roll
- *     plural rules from CLDR for our 16 supported langs (~3KB total).
+ *     plural rules from CLDR for our supported langs (~3KB total).
  *   - One synchronous load before first paint avoids the flash-of-English.
  */
 BYD.i18n = (function () {
     var SUPPORTED = [
         'en', 'zh-CN', 'zh-TW', 'pt-BR', 'es', 'de', 'fr', 'it',
-        'nb', 'nl', 'ja', 'ko', 'th', 'vi', 'hi', 'tr', 'ru'
+        'nb', 'nl', 'ja', 'ko', 'th', 'vi', 'hi', 'tr', 'ru', 'ar'
     ];
     var DEFAULT_LANG = 'en';
     var STORAGE_KEY = 'overdrive_locale';
+
+    // Right-to-left locales. Drives <html dir="rtl">. Arabic is the only RTL
+    // language we ship; add he/fa/ur here if they're ever onboarded.
+    var RTL_LANGS = { 'ar': true };
 
     // Native-script display labels (sidebar picker shows these — no flags by design).
     var DISPLAY_NAMES = {
@@ -47,7 +51,8 @@ BYD.i18n = (function () {
         'vi':    'Tiếng Việt',
         'hi':    'हिन्दी',
         'tr':    'Türkçe',
-        'ru':    'Русский'
+        'ru':    'Русский',
+        'ar':    'العربية'
     };
 
     // CLDR plural rules condensed to two-form (one/other) and language-specific quirks.
@@ -75,6 +80,21 @@ BYD.i18n = (function () {
                 if (mod10 === 1 && mod100 !== 11) return 'one';
                 if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'few';
                 return 'many';
+            case 'ar':
+                // Arabic six-form plural per CLDR. If a catalog entry only
+                // carries one/other (the common case), plural()'s lookup falls
+                // back to `other`, so these extra forms are harmless until a
+                // translator supplies zero/two/few/many for a key.
+                //   zero → 0        two → 2
+                //   few  → n%100 in 3..10        many → n%100 in 11..99
+                //   one  → 1        other → everything else (incl. fractions)
+                if (n === 0) return 'zero';
+                if (n === 1) return 'one';
+                if (n === 2) return 'two';
+                var arMod100 = i % 100;
+                if (arMod100 >= 3 && arMod100 <= 10) return 'few';
+                if (arMod100 >= 11 && arMod100 <= 99) return 'many';
+                return 'other';
             default:
                 // en, es, de, it, nb, nl
                 return n === 1 ? 'one' : 'other';
@@ -273,7 +293,14 @@ BYD.i18n = (function () {
             }
         }
         // Update <html lang="..."> so screen readers and CSS :lang() work.
-        if (document.documentElement) document.documentElement.setAttribute('lang', state.lang);
+        if (document.documentElement) {
+            document.documentElement.setAttribute('lang', state.lang);
+            // RTL scripts need <html dir="rtl"> so the browser mirrors the
+            // (start/end-based) layout. Only Arabic is RTL in our set; every
+            // other locale stays 'ltr'. Set it explicitly (not just for 'ar')
+            // so switching AWAY from Arabic restores 'ltr' in the same WebView.
+            document.documentElement.setAttribute('dir', RTL_LANGS[state.lang] ? 'rtl' : 'ltr');
+        }
     }
 
     function onChange(fn) { state.listeners.push(fn); }

@@ -926,7 +926,7 @@ BYD.events = {
      * Render the trailing "n places match" pill at the end of the place
      * row. Only shown while a substring search is active — otherwise the
      * unmodified chip set is self-explanatory. Uses BYD.i18n.plural for
-     * proper plural rules across the 16 supported langs.
+     * proper plural rules across the supported langs.
      */
     _renderPlaceSearchHits(count) {
         const pill = document.getElementById('placeSearchHits');

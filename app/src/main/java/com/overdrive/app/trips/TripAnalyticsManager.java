@@ -85,6 +85,7 @@ public class TripAnalyticsManager {
      * 3. Log shutdown
      */
     public void shutdown() {
+        if (!initialized) return;  // already shut down or never started
         logger.info("Shutting down TripAnalyticsManager");
 
         // 1. Finalize active trip
@@ -220,6 +221,10 @@ public class TripAnalyticsManager {
         return enabled;
     }
 
+    public boolean isInitialized() {
+        return initialized;
+    }
+
     /**
      * Check if a trip is currently being tracked (ACTIVE or PARK_PENDING).
      */
@@ -263,7 +268,50 @@ public class TripAnalyticsManager {
         } catch (Exception e) {
             logger.warn("Orphaned trip cleanup failed: " + e.getMessage());
         }
-        
+
+        // FIX: Auto-recover trips from surviving .jsonl.gz files on disk whose
+        // DB row was lost to a mid-drive daemon crash. The crash kills the process
+        // before TripDetector.finalizeActiveTrip() can insert the row, but the
+        // telemetry file survives on USB/SD. recoverTripsFromDisk() is idempotent
+        // (dedup by basename, start-time, signature), skips the currently-active
+        // trip file, and respects minimum-trip thresholds — safe to run at every
+        // startup. Runs on a background thread so it doesn't delay ACC-ON
+        // responsiveness (FUSE listing can take seconds on large trip dirs).
+        try {
+            final StorageManager sm = StorageManager.getInstance();
+            final java.util.List<File> tripsDirs = sm.getAllTripsDirs();
+            boolean haveAnyDir = false;
+            if (tripsDirs != null) {
+                for (File d : tripsDirs) {
+                    if (d != null && d.isDirectory()) { haveAnyDir = true; break; }
+                }
+            }
+            if (haveAnyDir) {
+                final TripDatabase db = database;
+                Thread recoveryThread = new Thread(() -> {
+                    try {
+                        TripDatabase.RecoveryResult r = db.recoverTripsFromDisk(tripsDirs);
+                        if (r.recovered > 0) {
+                            logger.info("Auto-recovery: recovered " + r.recovered
+                                + " orphaned trips from disk (scanned=" + r.scanned
+                                + ", skipped=" + r.skipped + ")");
+                            // Re-enforce storage limit after recovering trips
+                            try { sm.ensureTripsSpace(0); }
+                            catch (Exception ex) {
+                                logger.warn("Post-recovery trips cleanup failed: " + ex.getMessage());
+                            }
+                        }
+                    } catch (Throwable t) {
+                        logger.warn("Auto-recovery failed: " + t.getMessage());
+                    }
+                }, "TripAutoRecover");
+                recoveryThread.setDaemon(true);
+                recoveryThread.start();
+            }
+        } catch (Throwable t) {
+            logger.warn("Trip auto-recovery setup failed: " + t.getMessage());
+        }
+
         // Backfill route_id for existing trips (idempotent — skips already-assigned trips)
         database.backfillRouteIds();
 
